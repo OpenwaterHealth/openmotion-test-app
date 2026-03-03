@@ -43,6 +43,40 @@ R230 = 300E3
 R234 = 300E3
 R_s = 0.020 #(R217)
 
+def solve_R_TH(v):
+    """
+    Solves for R_TH given voltage v (VOUT1 from ADC).
+
+    Args:
+        v     : ADC voltage (VOUT1)
+        V_REF : Reference voltage
+        R_1   : Resistance R1
+        R_2   : Resistance R2
+        R_3   : Resistance R3
+
+    Returns:
+        R_TH  : Thermistor resistance
+    """
+    R_TH = 1 / ((v / (V_REF / 2 * R_3)) - 1/R_3 + 1/R_1) - R_2
+    return R_TH
+
+def solve_v(R_TH):
+    """
+    Solves for v (VOUT1) given R_TH.
+
+    Args:
+        R_TH  : Thermistor resistance
+        V_REF : Reference voltage
+        R_1   : Resistance R1
+        R_2   : Resistance R2
+        R_3   : Resistance R3
+
+    Returns:
+        v     : ADC voltage (VOUT1)
+    """
+    v = (1/(R_TH + R_2) + 1/R_3 - 1/R_1) * (V_REF / 2) * R_3
+    return v
+
 # Global loggers - will be configured by _configure_logging method
 logger = None
 run_logger = None
@@ -530,7 +564,7 @@ class MOTIONConnector(QObject):
     tecStatusChanged = pyqtSignal()
     tecDacChanged = pyqtSignal()
     
-    taGainValueChanged = pyqtSignal()
+    laserTempTripValueChanged = pyqtSignal()
     taGainSetFailed = pyqtSignal(str)
 
     def __init__(self, config_dir="config", log_level=logging.INFO):
@@ -2093,17 +2127,17 @@ class MOTIONConnector(QObject):
         finally:
             self._console_mutex.unlock()
 
-    @pyqtProperty(int, notify=taGainValueChanged)
-    def taGainValue(self):
+    @pyqtProperty(int, notify=laserTempTripValueChanged)
+    def laserTempTripValue(self):
         return getattr(self, '_ta_gain_value', 0)
 
     def set_ta_gain_value(self, value):
         if getattr(self, '_ta_gain_value', 0) != value:
             self._ta_gain_value = value
-            self.taGainValueChanged.emit()
+            self.laserTempTripValueChanged.emit()
 
     @pyqtSlot()
-    def queryTAGainValue(self):
+    def queryLaserTempTripValue(self):
         """
         try:
             value = motion_interface.console_module.get_ta_gain_resistor()
@@ -2115,8 +2149,8 @@ class MOTIONConnector(QObject):
         self.set_ta_gain_value(0)
         
     @pyqtSlot(int, result=bool)
-    def setTAGain(self, res: int) -> bool:
-        """Set TA gain resistance (0-2500) via console module.
+    def setLaserTempTrip(self, res: int) -> bool:
+        """Set Laser Temp Trip Point.
 
         Calls the underlying SDK method `set_ta_gain_resistor` and
         returns True on success.

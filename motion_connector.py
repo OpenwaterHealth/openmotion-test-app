@@ -1067,13 +1067,50 @@ class MOTIONConnector(QObject):
          
     def set_laser_power_from_config(self, interface):
         logger.info("[Connector] Setting laser power from config...")
+
+        # ------------------------------------------------------------------
+        # Read user config to discover which laser_params.json entries should
+        # be skipped and replaced by user-defined values.
+        # EE_THRESH / EE_GAIN  → Safety EE  DRIVE CL (channel 6, offset 0x10)
+        # OPT_THRESH / OPT_GAIN → Safety OPT DRIVE CL (channel 7, offset 0x10)
+        # ------------------------------------------------------------------
+        user_cfg: dict = {}
+        try:
+            cfg_obj = interface.console_module.read_config()
+            if cfg_obj is not None:
+                user_cfg = cfg_obj.json_data or {}
+        except Exception as _e:
+            logger.warning(f"[Connector] Could not read user config before laser init: {_e}")
+
+        ee_thresh  = user_cfg.get("EE_THRESH")
+        ee_gain    = user_cfg.get("EE_GAIN")
+        opt_thresh = user_cfg.get("OPT_THRESH")
+        opt_gain   = user_cfg.get("OPT_GAIN")
+
+        # (channel, offset) entries to skip in the JSON pass
+        _EE_DRIVE_CL  = (6, 0x10)   # Safety EE  DRIVE CL
+        _OPT_DRIVE_CL = (7, 0x10)   # Safety OPT DRIVE CL
+
+        skip_entries: set = set()
+        if ee_thresh  is not None or ee_gain  is not None:
+            skip_entries.add(_EE_DRIVE_CL)
+        if opt_thresh is not None or opt_gain is not None:
+            skip_entries.add(_OPT_DRIVE_CL)
+
         self._console_mutex.lock()
         for idx, laser_param in enumerate(self.laser_params, start=1):
-            muxIdx = laser_param["muxIdx"]
-            channel = laser_param["channel"]
-            i2cAddr = laser_param["i2cAddr"]
-            offset = laser_param["offset"]
+            muxIdx     = laser_param["muxIdx"]
+            channel    = laser_param["channel"]
+            i2cAddr    = laser_param["i2cAddr"]
+            offset     = laser_param["offset"]
             dataToSend = bytearray(laser_param["dataToSend"])
+
+            if (channel, offset) in skip_entries:
+                logger.info(
+                    f"[Connector] Skipping JSON entry ch={channel} off=0x{offset:02X} "
+                    f"(overridden by user config)"
+                )
+                continue
 
             logger.debug(
                 f"[Connector] ({idx}/{len(self.laser_params)}) "
@@ -1089,6 +1126,38 @@ class MOTIONConnector(QObject):
             ):
                 logger.error(f"Failed to set laser power (muxIdx={muxIdx}, channel={channel})")
                 return False
+
+        # ------------------------------------------------------------------
+        # Write user-config DRIVE CL overrides after the JSON pass.
+        # Default scale matches the static FpgaModel value (1.86 mA/LSB).
+        # Data format: 16-bit LSB-first (isMsbFirst=false in FpgaModel).
+        # thresh is a raw uint16 register value; gain is a float scale factor
+        # used only for the QML FpgaData scale override (not for raw calculation).
+        # ------------------------------------------------------------------
+
+        def _write_drive_cl(ch: int, thresh, gain: float, label: str) -> bool:
+            if thresh is None:
+                return True
+            raw = max(0, min(0xFFFF, int(thresh)))          # uint16 raw value
+            data = bytearray([raw & 0xFF, (raw >> 8) & 0xFF])  # LSB first
+            gain_f = float(gain) if gain is not None else 0.0
+            logger.info(
+                f"[Connector] Writing user-config {label} DRIVE CL: "
+                f"raw={raw}, gain={gain_f} → {list(data)}"
+            )
+            return interface.console_module.write_i2c_packet(
+                mux_index=1, channel=ch,
+                device_addr=0x41, reg_addr=0x10,
+                data=data
+            )
+
+        if not _write_drive_cl(6, ee_thresh,  ee_gain,  "Safety EE"):
+            logger.error("Failed to write user-config Safety EE DRIVE CL")
+            return False
+        if not _write_drive_cl(7, opt_thresh, opt_gain, "Safety OPT"):
+            logger.error("Failed to write user-config Safety OPT DRIVE CL")
+            return False
+
         logger.info("Laser power set successfully.")
         self._console_mutex.unlock()
         return True

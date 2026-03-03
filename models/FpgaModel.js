@@ -1,5 +1,34 @@
 // FpgaModel.js
 
+// Runtime scale overrides – keyed as "<fpgaLabel>|<funcName>"
+// Populated from user config on console connect so display and write
+// conversions use the device-stored scale instead of the static default.
+var scaleOverrides = {};
+
+/**
+ * Return the effective scale for a given FPGA label + function name.
+ * Falls back to the static model value if no override exists.
+ */
+function getScale(fpgaLabel, funcName) {
+    var key = fpgaLabel + "|" + funcName;
+    if (scaleOverrides.hasOwnProperty(key))
+        return scaleOverrides[key];
+    var fpga = fpgaAddressModel.find(function(f) { return f.label === fpgaLabel; });
+    if (!fpga) return 1.0;
+    var fn = fpga.functions.find(function(f) { return f.name === funcName; });
+    return (fn && fn.scale) ? fn.scale : 1.0;
+}
+
+/**
+ * Set a runtime scale override. Pass scale <= 0 to remove it and revert
+ * to the static model default.
+ */
+function setScaleOverride(fpgaLabel, funcName, scale) {
+    var key = fpgaLabel + "|" + funcName;
+    if (scale > 0) scaleOverrides[key] = scale;
+    else           delete scaleOverrides[key];
+}
+
 var fpgaAddressModel = [
     {
         label: "TA",

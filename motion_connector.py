@@ -2182,7 +2182,12 @@ class MOTIONConnector(QObject):
 
     @pyqtSlot()
     def readUserConfig(self):
-        """Read user configuration from the console device and emit userConfigLoaded."""
+        """Read user configuration from the console device and emit userConfigLoaded.
+        Runs on a background thread so the UI remains responsive."""
+        import threading
+        threading.Thread(target=self._do_read_user_config, daemon=True).start()
+
+    def _do_read_user_config(self):
         self._console_mutex.lock()
         try:
             config = motion_interface.console_module.read_config()
@@ -2211,7 +2216,16 @@ class MOTIONConnector(QObject):
     @pyqtSlot(float, float, float, float, float)
     def setUserConfig(self, tec_trip: float, opt_gain: float, opt_thresh: float,
                       ee_gain: float, ee_thresh: float) -> None:
-        """Write user configuration to the console device."""
+        """Write user configuration to the console device.
+        Runs on a background thread so the UI remains responsive."""
+        import threading
+        threading.Thread(
+            target=self._do_write_user_config,
+            args=(tec_trip, opt_gain, opt_thresh, ee_gain, ee_thresh),
+            daemon=True
+        ).start()
+
+    def _do_write_user_config(self, tec_trip, opt_gain, opt_thresh, ee_gain, ee_thresh):
         self._console_mutex.lock()
         try:
             config = motion_interface.console_module.read_config()

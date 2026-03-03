@@ -59,6 +59,9 @@ Rectangle {
     property real userEEGain: 0.00
     property real userEEThresh: 0.00
 
+    // Busy state while reading user config from device
+    property bool userConfigLoading: false
+
     // Modal dialog styling (firmware update)
     property int modalMaxWidth: 520
     property int modalMinWidth: 420
@@ -116,14 +119,18 @@ Rectangle {
         // Mirrors Sensor.qml/Console.qml behavior: on any connection change, clear disconnected
         // fields immediately and query device info for connected modules.
         function onConnectionStatusChanged() {
-            if (!MOTIONInterface.consoleConnected)
+            if (!MOTIONInterface.consoleConnected) {
                 _clearConsoleInfo()
+                userConfigLoading = false
+            }
             if (!MOTIONInterface.leftSensorConnected)
                 _clearLeftSensorInfo()
             if (!MOTIONInterface.rightSensorConnected)
                 _clearRightSensorInfo()
 
             if (MOTIONInterface.consoleConnected || MOTIONInterface.leftSensorConnected || MOTIONInterface.rightSensorConnected) {
+                if (MOTIONInterface.consoleConnected)
+                    userConfigLoading = true
                 settingsInfoTimer.restart()
                 if (MOTIONInterface.consoleConnected)
                     MOTIONInterface.queryConsoleLatestVersionInfo()
@@ -263,6 +270,7 @@ Rectangle {
         }
 
         function onUserConfigLoaded(tecTrip, optGain, optThresh, eeGain, eeThresh) {
+            userConfigLoading = false
             userTecTrip   = tecTrip
             userOptGain   = optGain
             userOptThresh = optThresh
@@ -273,6 +281,10 @@ Rectangle {
             optThreshField.text = optThresh.toFixed(2)
             eeGainField.text    = eeGain.toFixed(2)
             eeThreshField.text  = eeThresh.toFixed(2)
+        }
+
+        function onUserConfigError(message) {
+            userConfigLoading = false
         }
     }
 
@@ -292,8 +304,11 @@ Rectangle {
 
     Component.onCompleted: {
         // Populate immediately if user navigates here while already connected
-        if (MOTIONInterface.consoleConnected || MOTIONInterface.leftSensorConnected || MOTIONInterface.rightSensorConnected)
+        if (MOTIONInterface.consoleConnected || MOTIONInterface.leftSensorConnected || MOTIONInterface.rightSensorConnected) {
+            if (MOTIONInterface.consoleConnected)
+                userConfigLoading = true
             settingsInfoTimer.start()
+        }
     }
 
     Dialog {
@@ -1472,5 +1487,30 @@ Rectangle {
     FontLoader {
         id: iconFont
         source: "../assets/fonts/keenicons-outline.ttf"
+    }
+
+    // Busy overlay shown while reading user config from device
+    Rectangle {
+        anchors.fill: parent
+        radius: parent.radius
+        color: "#80000000"
+        visible: userConfigLoading
+        z: 100
+
+        BusyIndicator {
+            anchors.centerIn: parent
+            running: userConfigLoading
+            width: 64
+            height: 64
+        }
+
+        Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.top: parent.verticalCenter
+            anchors.topMargin: 44
+            text: "Reading device configuration…"
+            color: "#BDC3C7"
+            font.pixelSize: 14
+        }
     }
 }

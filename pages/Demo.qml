@@ -22,6 +22,15 @@ Rectangle {
     property bool powerConfigLoaded: false
     property real pdcMin: NaN
     property real pdcMax: NaN
+    property bool demoLoading: false
+
+    // Show loading overlay whenever this page becomes visible while connected
+    onVisibleChanged: {
+        if (visible && MOTIONInterface.consoleConnected) {
+            demoLoading = true
+            consoleUpdateTimer.restart()
+        }
+    }
     
     // Track PDC min/max whenever the value changes
     Connections {
@@ -262,20 +271,10 @@ Rectangle {
     }
 
     // Ensure laser power config is loaded once when console connects.
-
     Connections {
         target: MOTIONInterface
         function onConsoleConnectedChanged() {
-            if (MOTIONInterface.consoleConnected) {
-                if (!powerConfigLoaded) {
-                    try {
-                        MOTIONInterface.setLaserPowerFromConfig();
-                        powerConfigLoaded = true;
-                    } catch (e) {
-                        console.error("setLaserPowerFromConfig failed:", e);
-                    }
-                }
-            } else {
+            if (!MOTIONInterface.consoleConnected) {
                 powerConfigLoaded = false;
             }
         }
@@ -1878,6 +1877,7 @@ Rectangle {
                             color: "#BDC3C7"
                             ToolTip.text: "PDC (Power Draw Current)\n" +
                                           "Min: " + (isNaN(page1.pdcMin) ? "--" : (Math.round(page1.pdcMin) + " mA (" + ("0x" + Math.round(page1.pdcMin).toString(16).toUpperCase()) + ")")) + "\n" +
+                                          "Cur: " + (isNaN(MOTIONInterface.pdc) ? "--" : (Math.round(MOTIONInterface.pdc) + " mA (" + ("0x" + Math.round(MOTIONInterface.pdc).toString(16).toUpperCase()) + ")")) + "\n" +
                                           "Max: " + (isNaN(page1.pdcMax) ? "--" : (Math.round(page1.pdcMax) + " mA (" + ("0x" + Math.round(page1.pdcMax).toString(16).toUpperCase()) + ")"))
                             ToolTip.visible: maPdc.containsMouse
                             ToolTip.delay: 500
@@ -2087,6 +2087,16 @@ Rectangle {
         running: false
         onTriggered: {            
             if (MOTIONInterface.consoleConnected) {
+                // Load laser power config once per connect (deferred so overlay renders first)
+                if (!powerConfigLoaded) {
+                    try {
+                        MOTIONInterface.setLaserPowerFromConfig();
+                        powerConfigLoaded = true;
+                    } catch (e) {
+                        console.error("setLaserPowerFromConfig failed:", e);
+                    }
+                }
+
                 const config = MOTIONInterface.queryTriggerConfig()
                 if (config && Object.keys(config).length > 0) {
                     fsFrequency.text = config.TriggerFrequencyHz.toString()
@@ -2097,6 +2107,7 @@ Rectangle {
                 
                 updateLaserUI();
             }
+            demoLoading = false
         }
     }
     
@@ -2136,7 +2147,10 @@ Rectangle {
             if (MOTIONInterface.leftSensorConnected) {
             }   
             if (MOTIONInterface.consoleConnected) {
+                demoLoading = true
                 consoleUpdateTimer.start()
+            } else {
+                demoLoading = false
             }            
         }
         
@@ -2171,18 +2185,8 @@ Rectangle {
         if (MOTIONInterface.leftSensorConnected) {
         }
         if (MOTIONInterface.consoleConnected) {
-            // start monitoring timer
+            demoLoading = true
             consoleUpdateTimer.start()
-
-            // load laser power config once per connect
-            if (!powerConfigLoaded) {
-                try {
-                    MOTIONInterface.setLaserPowerFromConfig();
-                    powerConfigLoaded = true;
-                } catch (e) {
-                    console.error("setLaserPowerFromConfig failed:", e);
-                }
-            }
         }
         updatePatternOptions()
     }
@@ -2199,6 +2203,31 @@ Rectangle {
             case 1: break;
             case 2: break;
             }
+        }
+    }
+
+    // Busy overlay shown while loading device data
+    Rectangle {
+        anchors.fill: parent
+        radius: parent.radius
+        color: "#80000000"
+        visible: demoLoading
+        z: 100
+
+        BusyIndicator {
+            anchors.centerIn: parent
+            running: demoLoading
+            width: 64
+            height: 64
+        }
+
+        Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.top: parent.verticalCenter
+            anchors.topMargin: 44
+            text: "Loading device data…"
+            color: "#BDC3C7"
+            font.pixelSize: 14
         }
     }
 }

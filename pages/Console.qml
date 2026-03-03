@@ -25,7 +25,7 @@ Rectangle {
     property int fan_speed: 0
     property var fn: null
     property int rawValue: 0 
-    property int taGainValue: 0 
+    property int tecTripValue: 0 
     
     readonly property int dataSize: {
         if (fn && fn.data_size) {
@@ -98,7 +98,7 @@ Rectangle {
         MOTIONInterface.queryRGBState() // Query Indicator state
         MOTIONInterface.queryFans() // Query Indicator state        
         MOTIONInterface.queryConsoleTemperature()
-        MOTIONInterface.queryTAGainValue();
+        MOTIONInterface.queryTecTripValue();
     }
 
 
@@ -1082,9 +1082,9 @@ Rectangle {
                             }
                         }
 
-                        // TA Gain Box (right half)
+                        // Console User Configuration (right half)
                         Rectangle {
-                            id: taGainBox
+                            id: tecTripBox
                             Layout.preferredWidth: 320
                             height: 140
                             radius: 8
@@ -1095,7 +1095,7 @@ Rectangle {
 
                             // Title
                             Text {
-                                text: "TA Gain"
+                                text: "User Config Values"
                                 color: "#BDC3C7"
                                 font.pixelSize: 18
                                 anchors.top: parent.top
@@ -1118,7 +1118,7 @@ Rectangle {
                                     Layout.fillWidth: true
 
                                     Text {
-                                        text: "Resistance:" 
+                                        text: "TEC_TRIP:" 
                                         color: "#BDC3C7"
                                         font.pixelSize: 14
                                         Layout.alignment: Qt.AlignVCenter
@@ -1127,17 +1127,17 @@ Rectangle {
                                     IntValidator {
                                         id: taIntVal
                                         bottom: 0
-                                        top: 2500
+                                        top: 125
                                     }
 
                                     TextField {
-                                        id: taResistanceInput
-                                        Layout.fillWidth: true
-                                        Layout.preferredHeight: 32
-                                        placeholderText: "0 - 2500"
+                                        id: tecTripInput
+                                        Layout.preferredWidth: 80
+                                        Layout.preferredHeight: 40
+                                        placeholderText: "0-125"
                                         validator: taIntVal
                                         inputMethodHints: Qt.ImhDigitsOnly
-                                        text: MOTIONInterface.taGainValue.toString()
+                                        text: MOTIONInterface.tecTripValue.toString()
 
                                         onAccepted: {
                                             // Clamp and normalize
@@ -1146,45 +1146,45 @@ Rectangle {
                                                 text = ""
                                             } else {
                                                 if (v < 0) v = 0
-                                                if (v > 2500) v = 2500
+                                                if (v > 125) v = 125
                                                 text = v.toString()
-                                                let ok = MOTIONInterface.setTAGain(v)
+                                                let ok = MOTIONInterface.setTecTrip(v)
                                                 if (!ok) {
                                                   
                                                 }
                                             }
                                         }
 
-                                        property string taGainError: ""
+                                        property string tecTripSetError: ""
                                         Timer {
-                                            id: taGainErrorTimer
+                                            id: tecTripSetErrorTimer
                                             interval: 2500
                                             running: false
                                             repeat: false
-                                            onTriggered: taResistanceInput.taGainError = ""
+                                            onTriggered: tecTripInput.tecTripSetError = ""
                                         }
                                         Connections {
                                             target: MOTIONInterface
-                                            function onTaGainValueChanged() {
-                                                taResistanceInput.text = MOTIONInterface.taGainValue.toString()
+                                            function onTecTripValueChanged() {
+                                                tecTripInput.text = MOTIONInterface.tecTripValue.toString()
                                             }
                                             function onTaGainSetFailed(msg) {
-                                                taResistanceInput.text = MOTIONInterface.taGainValue.toString()
-                                                taResistanceInput.taGainError = msg
-                                                taGainErrorTimer.restart()
+                                                tecTripInput.text = MOTIONInterface.tecTripValue.toString()
+                                                tecTripInput.tecTripSetError = msg
+                                                tecTripSetErrorTimer.restart()
                                             }
                                         }
 
                                         Rectangle {
-                                            anchors.top: taResistanceInput.bottom
-                                            anchors.left: taResistanceInput.left
-                                            width: taResistanceInput.width
-                                            height: taResistanceInput.taGainError ? 20 : 0
+                                            anchors.top: tecTripInput.bottom
+                                            anchors.left: tecTripInput.left
+                                            width: tecTripInput.width
+                                            height: tecTripInput.tecTripSetError ? 20 : 0
                                             color: "transparent"
-                                            visible: taResistanceInput.taGainError.length > 0
+                                            visible: tecTripInput.tecTripSetError.length > 0
                                             Text {
                                                 anchors.fill: parent
-                                                text: taResistanceInput.taGainError
+                                                text: tecTripInput.tecTripSetError
                                                 color: "red"
                                                 font.pixelSize: 12
                                                 verticalAlignment: Text.AlignVCenter

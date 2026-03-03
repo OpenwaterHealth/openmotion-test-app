@@ -43,6 +43,40 @@ R230 = 300E3
 R234 = 300E3
 R_s = 0.020 #(R217)
 
+def solve_R_TH(v):
+    """
+    Solves for R_TH given voltage v (VOUT1 from ADC).
+
+    Args:
+        v     : ADC voltage (VOUT1)
+        V_REF : Reference voltage
+        R_1   : Resistance R1
+        R_2   : Resistance R2
+        R_3   : Resistance R3
+
+    Returns:
+        R_TH  : Thermistor resistance
+    """
+    R_TH = 1 / ((v / (V_REF / 2 * R_3)) - 1/R_3 + 1/R_1) - R_2
+    return R_TH
+
+def solve_v(R_TH):
+    """
+    Solves for v (VOUT1) given R_TH.
+
+    Args:
+        R_TH  : Thermistor resistance
+        V_REF : Reference voltage
+        R_1   : Resistance R1
+        R_2   : Resistance R2
+        R_3   : Resistance R3
+
+    Returns:
+        v     : ADC voltage (VOUT1)
+    """
+    v = (1/(R_TH + R_2) + 1/R_3 - 1/R_1) * (V_REF / 2) * R_3
+    return v
+
 # Global loggers - will be configured by _configure_logging method
 logger = None
 run_logger = None
@@ -530,14 +564,17 @@ class MOTIONConnector(QObject):
     tecStatusChanged = pyqtSignal()
     tecDacChanged = pyqtSignal()
     
-    taGainValueChanged = pyqtSignal()
+    tecTripValueChanged = pyqtSignal()
     taGainSetFailed = pyqtSignal(str)
+
+    userConfigLoaded = pyqtSignal(float, float, float, float, float)  # tec_trip, opt_gain, opt_thresh, ee_gain, ee_thresh
+    userConfigError  = pyqtSignal(str)
 
     def __init__(self, config_dir="config", log_level=logging.INFO):
         super().__init__()
         self._interface = motion_interface
 
-        self._ta_gain_value = 0
+        self._tec_trip_value = 0
         
         # Configure logging with the provided level
         self._configure_logging(log_level)
@@ -2093,34 +2130,31 @@ class MOTIONConnector(QObject):
         finally:
             self._console_mutex.unlock()
 
-    @pyqtProperty(int, notify=taGainValueChanged)
-    def taGainValue(self):
-        return getattr(self, '_ta_gain_value', 0)
+    @pyqtProperty(int, notify=tecTripValueChanged)
+    def tecTripValue(self):
+        return getattr(self, '_tec_trip_value', 0)
 
-    def set_ta_gain_value(self, value):
-        if getattr(self, '_ta_gain_value', 0) != value:
-            self._ta_gain_value = value
-            self.taGainValueChanged.emit()
+    def set_tec_trip_value(self, value):
+        if getattr(self, '_tec_trip_value', 0) != value:
+            self._tec_trip_value = value
+            self.tecTripValueChanged.emit()
 
     @pyqtSlot()
-    def queryTAGainValue(self):
+    def queryTecTripValue(self):
         """
-        try:
-            value = motion_interface.console_module.get_ta_gain_resistor()
-            self.set_ta_gain_value(value)
-        except Exception as e:
-            logger.error(f"Error querying TA gain resistor: {e}")
-            self.set_ta_gain_value(0)
+        Query current TEC trip value from the console module.
+        Currently stubbed; prefer implementing actual SDK call.
         """
-        self.set_ta_gain_value(0)
+        # TODO: replace stub with actual SDK query when available
+        self.set_tec_trip_value(0)
         
     @pyqtSlot(int, result=bool)
-    def setTAGain(self, res: int) -> bool:
-        """Set TA gain resistance (0-2500) via console module.
+    def setTecTrip(self, res: int) -> bool:
+        """Set TEC trip point.
 
-        Calls the underlying SDK method `set_ta_gain_resistor` and
-        returns True on success.
-        
+        Calls the underlying SDK method `set_ta_gain_resistor` (TA resistor
+        setting used for TEC trip) and returns True on success.
+        """
         self._console_mutex.lock()
         try:
             # Delegate to console module
@@ -2145,9 +2179,82 @@ class MOTIONConnector(QObject):
             return False
         finally:
             self._console_mutex.unlock()
-        """
-        return False
-    
+
+    @pyqtSlot()
+    def readUserConfig(self):
+        """Read user configuration from the console device and emit userConfigLoaded.
+        Runs on a background thread so the UI remains responsive."""
+        import threading
+        threading.Thread(target=self._do_read_user_config, daemon=True).start()
+
+    def _do_read_user_config(self):
+        self._console_mutex.lock()
+        try:
+            config = motion_interface.console_module.read_config()
+            if config is None:
+                msg = "Failed to read user configuration from device"
+                logger.error(msg)
+                self.userConfigError.emit(msg)
+                return
+            tec_trip   = float(config.get("TEC_TRIP")   or 0.0)
+            opt_gain   = float(config.get("OPT_GAIN")   or 0.0)
+            opt_thresh = float(config.get("OPT_THRESH") or 0.0)
+            ee_gain    = float(config.get("EE_GAIN")    or 0.0)
+            ee_thresh  = float(config.get("EE_THRESH")  or 0.0)
+            logger.info(
+                f"User config read: TEC_TRIP={tec_trip}, OPT_GAIN={opt_gain}, "
+                f"OPT_THRESH={opt_thresh}, EE_GAIN={ee_gain}, EE_THRESH={ee_thresh}"
+            )
+            self.userConfigLoaded.emit(tec_trip, opt_gain, opt_thresh, ee_gain, ee_thresh)
+        except Exception as e:
+            msg = f"Error reading user configuration: {e}"
+            logger.error(msg)
+            self.userConfigError.emit(msg)
+        finally:
+            self._console_mutex.unlock()
+
+    @pyqtSlot(float, float, float, float, float)
+    def setUserConfig(self, tec_trip: float, opt_gain: float, opt_thresh: float,
+                      ee_gain: float, ee_thresh: float) -> None:
+        """Write user configuration to the console device.
+        Runs on a background thread so the UI remains responsive."""
+        import threading
+        threading.Thread(
+            target=self._do_write_user_config,
+            args=(tec_trip, opt_gain, opt_thresh, ee_gain, ee_thresh),
+            daemon=True
+        ).start()
+
+    def _do_write_user_config(self, tec_trip, opt_gain, opt_thresh, ee_gain, ee_thresh):
+        self._console_mutex.lock()
+        try:
+            config = motion_interface.console_module.read_config()
+            if config is None:
+                msg = "Failed to read user configuration before writing"
+                logger.error(msg)
+                self.userConfigError.emit(msg)
+                return
+            config.set("TEC_TRIP",  tec_trip)
+            config.set("OPT_GAIN",  opt_gain)
+            config.set("OPT_THRESH", opt_thresh)
+            config.set("EE_GAIN",   ee_gain)
+            config.set("EE_THRESH", ee_thresh)
+            updated = motion_interface.console_module.write_config(config)
+            if updated is None:
+                msg = "Failed to write user configuration to device"
+                logger.error(msg)
+                self.userConfigError.emit(msg)
+                return
+            logger.info(
+                f"User config written: seq={updated.header.seq}, crc=0x{updated.header.crc:04X}"
+            )
+        except Exception as e:
+            msg = f"Error writing user configuration: {e}"
+            logger.error(msg)
+            self.userConfigError.emit(msg)
+        finally:
+            self._console_mutex.unlock()
+
     @pyqtSlot("QVariantList")
     def saveHistogramToCSV(self, data):
         try:

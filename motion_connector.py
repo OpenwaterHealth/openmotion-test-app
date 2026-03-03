@@ -567,6 +567,9 @@ class MOTIONConnector(QObject):
     tecTripValueChanged = pyqtSignal()
     taGainSetFailed = pyqtSignal(str)
 
+    userConfigLoaded = pyqtSignal(float, float, float, float, float)  # tec_trip, opt_gain, opt_thresh, ee_gain, ee_thresh
+    userConfigError  = pyqtSignal(str)
+
     def __init__(self, config_dir="config", log_level=logging.INFO):
         super().__init__()
         self._interface = motion_interface
@@ -2176,7 +2179,68 @@ class MOTIONConnector(QObject):
             return False
         finally:
             self._console_mutex.unlock()
-    
+
+    @pyqtSlot()
+    def readUserConfig(self):
+        """Read user configuration from the console device and emit userConfigLoaded."""
+        self._console_mutex.lock()
+        try:
+            config = motion_interface.console_module.read_config()
+            if config is None:
+                msg = "Failed to read user configuration from device"
+                logger.error(msg)
+                self.userConfigError.emit(msg)
+                return
+            tec_trip   = float(config.get("TEC_TRIP")   or 0.0)
+            opt_gain   = float(config.get("OPT_GAIN")   or 0.0)
+            opt_thresh = float(config.get("OPT_THRESH") or 0.0)
+            ee_gain    = float(config.get("EE_GAIN")    or 0.0)
+            ee_thresh  = float(config.get("EE_THRESH")  or 0.0)
+            logger.info(
+                f"User config read: TEC_TRIP={tec_trip}, OPT_GAIN={opt_gain}, "
+                f"OPT_THRESH={opt_thresh}, EE_GAIN={ee_gain}, EE_THRESH={ee_thresh}"
+            )
+            self.userConfigLoaded.emit(tec_trip, opt_gain, opt_thresh, ee_gain, ee_thresh)
+        except Exception as e:
+            msg = f"Error reading user configuration: {e}"
+            logger.error(msg)
+            self.userConfigError.emit(msg)
+        finally:
+            self._console_mutex.unlock()
+
+    @pyqtSlot(float, float, float, float, float)
+    def setUserConfig(self, tec_trip: float, opt_gain: float, opt_thresh: float,
+                      ee_gain: float, ee_thresh: float) -> None:
+        """Write user configuration to the console device."""
+        self._console_mutex.lock()
+        try:
+            config = motion_interface.console_module.read_config()
+            if config is None:
+                msg = "Failed to read user configuration before writing"
+                logger.error(msg)
+                self.userConfigError.emit(msg)
+                return
+            config.set("TEC_TRIP",  tec_trip)
+            config.set("OPT_GAIN",  opt_gain)
+            config.set("OPT_THRESH", opt_thresh)
+            config.set("EE_GAIN",   ee_gain)
+            config.set("EE_THRESH", ee_thresh)
+            updated = motion_interface.console_module.write_config(config)
+            if updated is None:
+                msg = "Failed to write user configuration to device"
+                logger.error(msg)
+                self.userConfigError.emit(msg)
+                return
+            logger.info(
+                f"User config written: seq={updated.header.seq}, crc=0x{updated.header.crc:04X}"
+            )
+        except Exception as e:
+            msg = f"Error writing user configuration: {e}"
+            logger.error(msg)
+            self.userConfigError.emit(msg)
+        finally:
+            self._console_mutex.unlock()
+
     @pyqtSlot("QVariantList")
     def saveHistogramToCSV(self, data):
         try:

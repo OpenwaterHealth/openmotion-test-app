@@ -25,7 +25,7 @@ Rectangle {
     property int fan_speed: 0
     property var fn: null
     property int rawValue: 0 
-    property int laserTempTripValue: 0 
+    property int tecTripValue: 0 
     
     readonly property int dataSize: {
         if (fn && fn.data_size) {
@@ -98,7 +98,7 @@ Rectangle {
         MOTIONInterface.queryRGBState() // Query Indicator state
         MOTIONInterface.queryFans() // Query Indicator state        
         MOTIONInterface.queryConsoleTemperature()
-        MOTIONInterface.queryLaserTempTripValue();
+        MOTIONInterface.queryTecTripValue();
     }
 
 
@@ -1084,7 +1084,7 @@ Rectangle {
 
                         // Console User Configuration (right half)
                         Rectangle {
-                            id: laserTempBox
+                            id: tecTripBox
                             Layout.preferredWidth: 320
                             height: 140
                             radius: 8
@@ -1101,7 +1101,7 @@ Rectangle {
                                 anchors.top: parent.top
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 anchors.topMargin: 5
-                                visible: true
+                                visible: false
                             }
 
                             Column {
@@ -1111,7 +1111,7 @@ Rectangle {
                                 anchors.right: parent.right
                                 anchors.margins: 12
                                 spacing: 8
-                                visible: true
+                                visible: false
 
                                 RowLayout {
                                     spacing: 8
@@ -1131,13 +1131,13 @@ Rectangle {
                                     }
 
                                     TextField {
-                                        id: laserTempInput
+                                        id: tecTripInput
                                         Layout.preferredWidth: 80
                                         Layout.preferredHeight: 40
                                         placeholderText: "0-125"
                                         validator: taIntVal
                                         inputMethodHints: Qt.ImhDigitsOnly
-                                        text: MOTIONInterface.laserTempTripValue.toString()
+                                        text: MOTIONInterface.tecTripValue.toString()
 
                                         onAccepted: {
                                             // Clamp and normalize
@@ -1148,43 +1148,43 @@ Rectangle {
                                                 if (v < 0) v = 0
                                                 if (v > 125) v = 125
                                                 text = v.toString()
-                                                let ok = MOTIONInterface.setLaserTempTrip(v)
+                                                let ok = MOTIONInterface.setTecTrip(v)
                                                 if (!ok) {
                                                   
                                                 }
                                             }
                                         }
 
-                                        property string laserTempSetError: ""
+                                        property string tecTripSetError: ""
                                         Timer {
-                                            id: laserTempSetErrorTimer
+                                            id: tecTripSetErrorTimer
                                             interval: 2500
                                             running: false
                                             repeat: false
-                                            onTriggered: laserTempInput.laserTempSetError = ""
+                                            onTriggered: tecTripInput.tecTripSetError = ""
                                         }
                                         Connections {
                                             target: MOTIONInterface
-                                            function ononLaserTempTripValueChanged() {
-                                                laserTempInput.text = MOTIONInterface.laserTempTripValue.toString()
+                                            function onTecTripValueChanged() {
+                                                tecTripInput.text = MOTIONInterface.tecTripValue.toString()
                                             }
                                             function onTaGainSetFailed(msg) {
-                                                laserTempInput.text = MOTIONInterface.laserTempTripValue.toString()
-                                                laserTempInput.laserTempSetError = msg
-                                                laserTempSetErrorTimer.restart()
+                                                tecTripInput.text = MOTIONInterface.tecTripValue.toString()
+                                                tecTripInput.tecTripSetError = msg
+                                                tecTripSetErrorTimer.restart()
                                             }
                                         }
 
                                         Rectangle {
-                                            anchors.top: laserTempInput.bottom
-                                            anchors.left: laserTempInput.left
-                                            width: laserTempInput.width
-                                            height: laserTempInput.laserTempSetError ? 20 : 0
+                                            anchors.top: tecTripInput.bottom
+                                            anchors.left: tecTripInput.left
+                                            width: tecTripInput.width
+                                            height: tecTripInput.tecTripSetError ? 20 : 0
                                             color: "transparent"
-                                            visible: laserTempInput.laserTempSetError.length > 0
+                                            visible: tecTripInput.tecTripSetError.length > 0
                                             Text {
                                                 anchors.fill: parent
-                                                text: laserTempInput.laserTempSetError
+                                                text: tecTripInput.tecTripSetError
                                                 color: "red"
                                                 font.pixelSize: 12
                                                 verticalAlignment: Text.AlignVCenter

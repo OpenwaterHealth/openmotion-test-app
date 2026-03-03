@@ -564,14 +564,14 @@ class MOTIONConnector(QObject):
     tecStatusChanged = pyqtSignal()
     tecDacChanged = pyqtSignal()
     
-    laserTempTripValueChanged = pyqtSignal()
+    tecTripValueChanged = pyqtSignal()
     taGainSetFailed = pyqtSignal(str)
 
     def __init__(self, config_dir="config", log_level=logging.INFO):
         super().__init__()
         self._interface = motion_interface
 
-        self._ta_gain_value = 0
+        self._tec_trip_value = 0
         
         # Configure logging with the provided level
         self._configure_logging(log_level)
@@ -2127,34 +2127,31 @@ class MOTIONConnector(QObject):
         finally:
             self._console_mutex.unlock()
 
-    @pyqtProperty(int, notify=laserTempTripValueChanged)
-    def laserTempTripValue(self):
-        return getattr(self, '_ta_gain_value', 0)
+    @pyqtProperty(int, notify=tecTripValueChanged)
+    def tecTripValue(self):
+        return getattr(self, '_tec_trip_value', 0)
 
-    def set_ta_gain_value(self, value):
-        if getattr(self, '_ta_gain_value', 0) != value:
-            self._ta_gain_value = value
-            self.laserTempTripValueChanged.emit()
+    def set_tec_trip_value(self, value):
+        if getattr(self, '_tec_trip_value', 0) != value:
+            self._tec_trip_value = value
+            self.tecTripValueChanged.emit()
 
     @pyqtSlot()
-    def queryLaserTempTripValue(self):
+    def queryTecTripValue(self):
         """
-        try:
-            value = motion_interface.console_module.get_ta_gain_resistor()
-            self.set_ta_gain_value(value)
-        except Exception as e:
-            logger.error(f"Error querying TA gain resistor: {e}")
-            self.set_ta_gain_value(0)
+        Query current TEC trip value from the console module.
+        Currently stubbed; prefer implementing actual SDK call.
         """
-        self.set_ta_gain_value(0)
+        # TODO: replace stub with actual SDK query when available
+        self.set_tec_trip_value(0)
         
     @pyqtSlot(int, result=bool)
-    def setLaserTempTrip(self, res: int) -> bool:
-        """Set Laser Temp Trip Point.
+    def setTecTrip(self, res: int) -> bool:
+        """Set TEC trip point.
 
-        Calls the underlying SDK method `set_ta_gain_resistor` and
-        returns True on success.
-        
+        Calls the underlying SDK method `set_ta_gain_resistor` (TA resistor
+        setting used for TEC trip) and returns True on success.
+        """
         self._console_mutex.lock()
         try:
             # Delegate to console module
@@ -2179,8 +2176,6 @@ class MOTIONConnector(QObject):
             return False
         finally:
             self._console_mutex.unlock()
-        """
-        return False
     
     @pyqtSlot("QVariantList")
     def saveHistogramToCSV(self, data):

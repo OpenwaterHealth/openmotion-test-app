@@ -798,16 +798,6 @@ Rectangle {
         anchors.margins: 20
         spacing: 15
 
-        // Title
-        Text {
-            text: "Settings"
-            font.pixelSize: 20
-            font.weight: Font.Bold
-            color: "white"
-            horizontalAlignment: Text.AlignHCenter
-            Layout.alignment: Qt.AlignHCenter
-        }
-
         // Remaining content area (split into App Info top, Modules bottom)
         Item {
             id: contentArea
@@ -850,13 +840,13 @@ Rectangle {
                             columnSpacing: 10
                             rowSpacing: 6
 
-                            Text { text: "App Version:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                            Text { text: "App Version:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                             Text { text: "" + appVersion; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                            Text { text: "SDK Version:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                            Text { text: "SDK Version:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                             Text { text: "" + MOTIONInterface.get_sdk_version(); color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                            Text { text: "System State:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                            Text { text: "System State:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                             Text {
                                 text: {
                                     const c = MOTIONInterface.consoleConnected
@@ -1041,12 +1031,85 @@ Rectangle {
                 }
             }
 
+            RowLayout {
+                id: fpgaRow
+                anchors.top: appRow.bottom
+                anchors.left: parent.left
+                anchors.right: parent.right
+                height: parent.height * 0.18
+                anchors.topMargin: 15
+
+                Rectangle {
+                    id: appFpgaContainer
+                    Layout.preferredWidth: fpgaRow.width
+                    Layout.fillWidth: false
+                    Layout.fillHeight: true
+                    color: "#1E1E20"
+                    radius: 10
+                    border.color: "#3E4E6F"
+                    border.width: 2
+                
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 16
+                        spacing: 10
+
+                        RowLayout {
+                            spacing: 8
+                            Layout.fillWidth: true
+
+                            Text { text: "FPGAs"; font.pixelSize: 16; color: "#BDC3C7" }
+                            Rectangle {
+                                width: 14
+                                height: 14
+                                radius: 7
+                                color: MOTIONInterface.consoleConnected ? "green" : "red"
+                                border.color: "black"
+                                border.width: 1
+                            }
+
+                            Item { Layout.fillWidth: true }
+
+                            Rectangle {
+                                width: 30
+                                height: 30
+                                radius: 15
+                                color: enabled ? "#2C3E50" : "#7F8C8D"
+                                enabled: MOTIONInterface.consoleConnected
+
+                                Text {
+                                    text: "\u21BB"
+                                    anchors.centerIn: parent
+                                    font.pixelSize: 20
+                                    font.family: iconFont.name
+                                    color: enabled ? "white" : "#BDC3C7"
+                                }
+
+                                MouseArea {
+                                    id: refreshFpgaMouseArea
+                                    anchors.fill: parent
+                                    enabled: parent.enabled
+                                    hoverEnabled: true
+                                    onClicked: refreshConsoleInfo()
+                                    onEntered: if (parent.enabled) parent.color = "#34495E"
+                                    onExited: parent.color = parent.enabled ? "#2C3E50" : "#7F8C8D"
+                                }
+
+                                ToolTip.visible: refreshFpgaMouseArea.containsMouse
+                                ToolTip.text: "Refresh"
+                                ToolTip.delay: 400
+                            }
+                        }
+                    }
+                }
+            }
+
             Item {
                 id: modulesArea
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
-                anchors.top: appRow.bottom
+                anchors.top: fpgaRow.bottom
                 anchors.topMargin: 15
 
                 RowLayout {
@@ -1124,22 +1187,22 @@ Rectangle {
                                 columnSpacing: 10
                                 rowSpacing: 6
 
-                                Text { text: "Device ID:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Device ID:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: consoleDeviceId; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                                Text { text: "Board Rev ID:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Board Rev ID:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: consoleBoardRevId; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                                Text { text: "Firmware:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Firmware:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: consoleFirmwareVersion; color: "#2ECC71"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                                Text { text: "Latest Release:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Latest Release:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: consoleLatestFirmware; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                                Text { text: "Published:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Published:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: consoleLatestFirmwareDate; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                                Text { text: "Select Release:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Select Release:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 ComboBox {
                                     id: consoleLatestCombo
                                     model: consoleReleasesModel.concat(["Upload File..."])
@@ -1270,19 +1333,19 @@ Rectangle {
                                 columnSpacing: 10
                                 rowSpacing: 6
 
-                                Text { text: "Device ID:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Device ID:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: leftSensorDeviceId; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                                Text { text: "Firmware:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Firmware:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: leftSensorFirmwareVersion; color: "#2ECC71"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                                Text { text: "Latest Release:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Latest Release:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: leftLatestFirmware; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                                Text { text: "Published:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Published:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: leftLatestFirmwareDate; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                                Text { text: "Select Release:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Select Release:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 ComboBox {
                                     id: leftLatestCombo
                                     model: leftReleasesModel.concat(["Upload File..."])
@@ -1410,19 +1473,19 @@ Rectangle {
                                 columnSpacing: 10
                                 rowSpacing: 6
 
-                                Text { text: "Device ID:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Device ID:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: rightSensorDeviceId; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                                Text { text: "Firmware:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Firmware:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: rightSensorFirmwareVersion; color: "#2ECC71"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                                Text { text: "Latest Release:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Latest Release:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: rightLatestFirmware; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                                Text { text: "Published:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Published:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: rightLatestFirmwareDate; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                                Text { text: "Select Release:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Select Release:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 ComboBox {
                                     id: rightLatestCombo
                                     model: rightReleasesModel.concat(["Upload File..."])

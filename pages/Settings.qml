@@ -40,6 +40,12 @@ Rectangle {
     property string rightSensorFirmwareVersion: "N/A"
     property string rightSensorDeviceId: "N/A"
 
+    // Console FPGA firmware versions
+    property string taFpgaFirmwareVersion: "N/A"
+    property string seedFpgaFirmwareVersion: "N/A"
+    property string safetyEeFpgaFirmwareVersion: "N/A"
+    property string safetyOptFpgaFirmwareVersion: "N/A"
+
     // Console firmware update UI state
     property string consoleFwToken: ""
     property string consoleFwSelectedTag: ""
@@ -83,6 +89,7 @@ Rectangle {
         if (MOTIONInterface.consoleConnected) {
             MOTIONInterface.queryConsoleInfo()
             MOTIONInterface.queryConsoleLatestVersionInfo()
+            MOTIONInterface.queryFpgaVersions()
         }
     }
 
@@ -104,6 +111,10 @@ Rectangle {
             consoleFirmwareVersion = "N/A"
             consoleDeviceId = "N/A"
             consoleBoardRevId = "N/A"
+            taFpgaFirmwareVersion = "N/A"
+            seedFpgaFirmwareVersion = "N/A"
+            safetyEeFpgaFirmwareVersion = "N/A"
+            safetyOptFpgaFirmwareVersion = "N/A"
         }
 
         function _clearLeftSensorInfo() {
@@ -173,6 +184,15 @@ Rectangle {
             } catch (e) {
                 console.log('Error parsing latest version info', e)
             }
+        }
+
+        function onFpgaVersionsReceived(versions) {
+            if (!versions) return
+
+            taFpgaFirmwareVersion = versions["TA"] || "N/A"
+            seedFpgaFirmwareVersion = versions["Seed"] || "N/A"
+            safetyEeFpgaFirmwareVersion = versions["SafetyEE"] || "N/A"
+            safetyOptFpgaFirmwareVersion = versions["SafetyOPT"] || "N/A"
         }
 
         function onLatestSensorVersionInfoReceived(target, info) {
@@ -1142,7 +1162,7 @@ Rectangle {
                                     rowSpacing: 6
 
                                     Text { text: "FW:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 70 }
-                                    Text { text: "N/A"; color: "#2ECC71"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    Text { text: taFpgaFirmwareVersion; color: "#2ECC71"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
                                     Text { text: "Latest:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 70 }
                                     Text { text: "N/A"; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
@@ -1191,7 +1211,7 @@ Rectangle {
                                     rowSpacing: 6
 
                                     Text { text: "FW:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 70 }
-                                    Text { text: "N/A"; color: "#2ECC71"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    Text { text: seedFpgaFirmwareVersion; color: "#2ECC71"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
                                     Text { text: "Latest:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 70 }
                                     Text { text: "N/A"; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
@@ -1240,7 +1260,13 @@ Rectangle {
                                     rowSpacing: 6
 
                                     Text { text: "FW:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 70 }
-                                    Text { text: "N/A"; color: "#2ECC71"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    Text {
+                                        text: "EE " + safetyEeFpgaFirmwareVersion + " | OPT " + safetyOptFpgaFirmwareVersion
+                                        color: "#2ECC71"
+                                        font.pixelSize: 14
+                                        elide: Text.ElideRight
+                                        Layout.fillWidth: true
+                                    }
 
                                     Text { text: "Latest:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 70 }
                                     Text { text: "N/A"; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }

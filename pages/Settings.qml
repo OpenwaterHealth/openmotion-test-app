@@ -1048,32 +1048,31 @@ Rectangle {
                     radius: 10
                     border.color: "#3E4E6F"
                     border.width: 2
-                
-                    ColumnLayout {
+
+                    RowLayout {
                         anchors.fill: parent
-                        anchors.margins: 16
-                        spacing: 10
+                        anchors.margins: 12
+                        spacing: 8
 
-                        RowLayout {
+                        // ── Left narrow column: FPGAs label + indicator, refresh below ──
+                        ColumnLayout {
+                            Layout.preferredWidth: implicitWidth
+                            Layout.minimumWidth: 110
+                            Layout.fillHeight: true
                             spacing: 8
-                            Layout.fillWidth: true
 
-                            Text { text: "FPGAs"; font.pixelSize: 16; color: "#BDC3C7" }
-                            Rectangle {
-                                width: 14
-                                height: 14
-                                radius: 7
-                                color: MOTIONInterface.consoleConnected ? "green" : "red"
-                                border.color: "black"
-                                border.width: 1
+                            RowLayout {
+                                spacing: 6
+                                Text { text: "FPGAs"; font.pixelSize: 16; color: "#BDC3C7" }
+                                Rectangle {
+                                    width: 14; height: 14; radius: 7
+                                    color: MOTIONInterface.consoleConnected ? "green" : "red"
+                                    border.color: "black"; border.width: 1
+                                }
                             }
 
-                            Item { Layout.fillWidth: true }
-
                             Rectangle {
-                                width: 30
-                                height: 30
-                                radius: 15
+                                width: 30; height: 30; radius: 15
                                 color: enabled ? "#2C3E50" : "#7F8C8D"
                                 enabled: MOTIONInterface.consoleConnected
 
@@ -1098,6 +1097,155 @@ Rectangle {
                                 ToolTip.visible: refreshFpgaMouseArea.containsMouse
                                 ToolTip.text: "Refresh"
                                 ToolTip.delay: 400
+                            }
+
+                            Item { Layout.fillHeight: true }
+                        }
+
+                        // Vertical divider
+                        Rectangle { width: 1; Layout.fillHeight: true; color: "#3E4E6F" }
+
+                        // ── TA panel ──
+                        Item {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                spacing: 8
+
+                                RowLayout {
+                                    spacing: 8
+                                    Layout.fillWidth: true
+                                    Text { text: "TA"; font.pixelSize: 16; color: "#BDC3C7" }
+                                    Item { Layout.fillWidth: true }
+                                    Rectangle {
+                                        width: 80; height: 28; radius: 8
+                                        color: enabled ? "#E74C3C" : "#7F8C8D"
+                                        enabled: MOTIONInterface.consoleConnected
+                                        Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
+                                        MouseArea {
+                                            anchors.fill: parent; enabled: parent.enabled
+                                            onEntered: if (parent.enabled) parent.color = "#C0392B"
+                                            onExited: if (parent.enabled) parent.color = "#E74C3C"
+                                        }
+                                        Behavior on color { ColorAnimation { duration: 200 } }
+                                    }
+                                }
+
+                                Rectangle { Layout.fillWidth: true; height: 2; color: "#3E4E6F" }
+
+                                GridLayout {
+                                    Layout.fillWidth: true
+                                    columns: 2
+                                    columnSpacing: 10
+                                    rowSpacing: 6
+
+                                    Text { text: "FW:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 70 }
+                                    Text { text: "N/A"; color: "#2ECC71"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
+
+                                    Text { text: "Latest:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 70 }
+                                    Text { text: "N/A"; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
+                                }
+
+                            }
+                        }
+
+                        // Vertical divider
+                        Rectangle { width: 1; Layout.fillHeight: true; color: "#3E4E6F" }
+
+                        // ── Seed panel ──
+                        Item {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                spacing: 8
+
+                                RowLayout {
+                                    spacing: 8
+                                    Layout.fillWidth: true
+                                    Text { text: "Seed"; font.pixelSize: 16; color: "#BDC3C7" }
+                                    Item { Layout.fillWidth: true }
+                                    Rectangle {
+                                        width: 80; height: 28; radius: 8
+                                        color: enabled ? "#E74C3C" : "#7F8C8D"
+                                        enabled: MOTIONInterface.consoleConnected
+                                        Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
+                                        MouseArea {
+                                            anchors.fill: parent; enabled: parent.enabled
+                                            onEntered: if (parent.enabled) parent.color = "#C0392B"
+                                            onExited: if (parent.enabled) parent.color = "#E74C3C"
+                                        }
+                                        Behavior on color { ColorAnimation { duration: 200 } }
+                                    }
+                                }
+
+                                Rectangle { Layout.fillWidth: true; height: 2; color: "#3E4E6F" }
+
+                                GridLayout {
+                                    Layout.fillWidth: true
+                                    columns: 2
+                                    columnSpacing: 10
+                                    rowSpacing: 6
+
+                                    Text { text: "FW:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 70 }
+                                    Text { text: "N/A"; color: "#2ECC71"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
+
+                                    Text { text: "Latest:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 70 }
+                                    Text { text: "N/A"; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
+                                }
+
+                            }
+                        }
+
+                        // Vertical divider
+                        Rectangle { width: 1; Layout.fillHeight: true; color: "#3E4E6F" }
+
+                        // ── Safety panel ──
+                        Item {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                spacing: 8
+
+                                RowLayout {
+                                    spacing: 8
+                                    Layout.fillWidth: true
+                                    Text { text: "Safety"; font.pixelSize: 16; color: "#BDC3C7" }
+                                    Item { Layout.fillWidth: true }
+                                    Rectangle {
+                                        width: 80; height: 28; radius: 8
+                                        color: enabled ? "#E74C3C" : "#7F8C8D"
+                                        enabled: MOTIONInterface.consoleConnected
+                                        Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
+                                        MouseArea {
+                                            anchors.fill: parent; enabled: parent.enabled
+                                            onEntered: if (parent.enabled) parent.color = "#C0392B"
+                                            onExited: if (parent.enabled) parent.color = "#E74C3C"
+                                        }
+                                        Behavior on color { ColorAnimation { duration: 200 } }
+                                    }
+                                }
+
+                                Rectangle { Layout.fillWidth: true; height: 2; color: "#3E4E6F" }
+
+                                GridLayout {
+                                    Layout.fillWidth: true
+                                    columns: 2
+                                    columnSpacing: 10
+                                    rowSpacing: 6
+
+                                    Text { text: "FW:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 70 }
+                                    Text { text: "N/A"; color: "#2ECC71"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
+
+                                    Text { text: "Latest:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 70 }
+                                    Text { text: "N/A"; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
+                                }
+
                             }
                         }
                     }

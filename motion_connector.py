@@ -539,7 +539,8 @@ class MOTIONConnector(QObject):
     stateChanged = pyqtSignal()  # Notifies QML when state changes
     rgbStateReceived = pyqtSignal(int, str)  # Emit both integer value and text
     fanSpeedsReceived = pyqtSignal(int)  # Emit both integers
-    
+    fpgaVersionsReceived = pyqtSignal('QVariant')  # {"TA": str, "Seed": str, "SafetyEE": str, "SafetyOPT": str}
+
     histogramReady = pyqtSignal(list)  # Emit 1024 bins to QML
     latestVersionInfoReceived = pyqtSignal('QVariant')  # emits dict with latest/releases
     latestSensorVersionInfoReceived = pyqtSignal(str, 'QVariant')  # (target, info)
@@ -1729,6 +1730,52 @@ class MOTIONConnector(QObject):
             logger.error(f"Error querying Fan Speeds: {e}")
         finally:
             self._console_mutex.unlock()
+
+    @pyqtSlot()
+    def queryFpgaVersions(self):
+        """Read 4-byte version registers from each FPGA and emit fpgaVersionsReceived.
+
+        Byte layout: [REV, MINOR, MAJOR, ID] → version string "MAJOR.MINOR.REV"
+        Example: 00 01 01 02 → "1.1.0"
+
+        FPGAs:
+          TA       – mux_idx=1, channel=4, i2c_addr=0x41, reg_addr=0x14
+          Seed     – mux_idx=1, channel=5, i2c_addr=0x41, reg_addr=0x13
+          SafetyEE – mux_idx=1, channel=6, i2c_addr=0x41, reg_addr=0x25
+          SafetyOPT– mux_idx=1, channel=7, i2c_addr=0x41, reg_addr=0x25
+        """
+        FPGAS = [
+            ("TA",        1, 4, 0x41, 0x14),
+            ("Seed",      1, 5, 0x41, 0x13),
+            ("SafetyEE",  1, 6, 0x41, 0x25),
+            ("SafetyOPT", 1, 7, 0x41, 0x25),
+        ]
+        versions = {}
+        self._console_mutex.lock()
+        try:
+            for name, mux_idx, channel, i2c_addr, reg_addr in FPGAS:
+                try:
+                    data, data_len = motion_interface.console_module.read_i2c_packet(
+                        mux_index=mux_idx,
+                        channel=channel,
+                        device_addr=i2c_addr,
+                        reg_addr=reg_addr,
+                        read_len=4,
+                    )
+                    if data is None or data_len < 4:
+                        logger.error(f"[FPGA] {name}: read failed (data={data}, len={data_len})")
+                        versions[name] = "N/A"
+                    else:
+                        rev, minor, major, fpga_id = data[0], data[1], data[2], data[3]
+                        ver_str = f"{major}.{minor}.{rev}"
+                        logger.info(f"[FPGA] {name}: {ver_str} (id=0x{fpga_id:02X})")
+                        versions[name] = ver_str
+                except Exception as e:
+                    logger.error(f"[FPGA] {name}: exception reading version: {e}")
+                    versions[name] = "N/A"
+        finally:
+            self._console_mutex.unlock()
+        self.fpgaVersionsReceived.emit(versions)
 
     @pyqtSlot(result=QVariant)
     def queryTriggerConfig(self):

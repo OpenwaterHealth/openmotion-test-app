@@ -71,6 +71,29 @@ Rectangle {
     // Busy state while reading user config from device
     property bool userConfigLoading: false
 
+    // FPGA update UI state
+    property string fpgaFwUpdateTarget: ""
+    property int fpgaFwPercent: -1
+    property string fpgaFwMessage: ""
+
+    function _startFpgaUpdate(target, tag) {
+        if (!MOTIONInterface.consoleConnected) {
+            fwErrorDialog.message = "Console is not connected."
+            fwErrorDialog.open()
+            return
+        }
+        if (!tag || tag === "N/A") {
+            fwErrorDialog.message = "No FPGA release is available for update."
+            fwErrorDialog.open()
+            return
+        }
+        fpgaFwUpdateTarget = target
+        fpgaFwPercent = -1
+        fpgaFwMessage = "Starting..."
+        MOTIONInterface.beginFpgaFirmwareUpdate(target, tag)
+        fpgaProgressDialog.open()
+    }
+
     // Modal dialog styling (firmware update)
     property int modalMaxWidth: 520
     property int modalMinWidth: 420
@@ -312,6 +335,34 @@ Rectangle {
             fwErrorDialog.message = message
             fwErrorDialog.open()
             consoleFwToken = ""
+        }
+
+        function onFpgaFirmwareUpdateProgress(target, percent, message) {
+            fpgaFwUpdateTarget = target
+            fpgaFwPercent = percent
+            fpgaFwMessage = message
+            if (!fpgaProgressDialog.opened)
+                fpgaProgressDialog.open()
+        }
+
+        function onFpgaFirmwareUpdateFinished(target, success, message) {
+            fpgaProgressDialog.close()
+            fpgaFwUpdateTarget = target
+            fpgaFwMessage = ""
+            if (success) {
+                fwResultDialog.title = "FPGA Update Complete"
+                fwResultDialog.message = message
+                fwResultDialog.open()
+                // Refresh current versions after successful reprogramming.
+                MOTIONInterface.queryFpgaVersions()
+            }
+        }
+
+        function onFpgaFirmwareUpdateError(target, message) {
+            fpgaProgressDialog.close()
+            fpgaFwUpdateTarget = target
+            fwErrorDialog.message = message
+            fwErrorDialog.open()
         }
 
         function onUserConfigLoaded(tecTrip, optGain, optThresh, eeGain, eeThresh) {
@@ -838,6 +889,89 @@ Rectangle {
         }
     }
 
+    Dialog {
+        id: fpgaProgressDialog
+        parent: contentArea
+        modal: true
+        title: "FPGA Update"
+        standardButtons: Dialog.NoButton
+        closePolicy: Popup.NoAutoClose
+        footer: null
+
+        width: modalWidthFor(parent)
+        x: Math.round((parent.width - width) / 2)
+        y: Math.round((parent.height - height) / 2)
+        padding: modalPadding
+
+        Overlay.modal: Rectangle { color: modalOverlayColor }
+
+        header: Item {
+            implicitHeight: 46
+
+            Rectangle {
+                id: fpgaProgressHeaderBg
+                anchors.fill: parent
+                anchors.margins: modalBorderWidth
+                color: "#3A3F4B"
+                radius: modalRadius
+            }
+
+            Rectangle {
+                anchors.left: fpgaProgressHeaderBg.left
+                anchors.right: fpgaProgressHeaderBg.right
+                anchors.bottom: fpgaProgressHeaderBg.bottom
+                height: modalRadius
+                color: fpgaProgressHeaderBg.color
+            }
+
+            Text {
+                text: fpgaProgressDialog.title + (fpgaFwUpdateTarget ? " (" + fpgaFwUpdateTarget + ")" : "")
+                anchors.left: parent.left
+                anchors.leftMargin: modalPadding
+                anchors.verticalCenter: parent.verticalCenter
+                color: "white"
+                font.pixelSize: 18
+                font.weight: Font.Medium
+                horizontalAlignment: Text.AlignLeft
+                verticalAlignment: Text.AlignVCenter
+            }
+        }
+
+        background: Rectangle {
+            color: modalBackgroundColor
+            radius: modalRadius
+            border.color: modalBorderColor
+            border.width: modalBorderWidth
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 12
+            width: fpgaProgressDialog.width - fpgaProgressDialog.leftPadding - fpgaProgressDialog.rightPadding
+
+            Text {
+                text: "Programming FPGA"
+                color: "white"
+                font.pixelSize: 16
+                Layout.fillWidth: true
+            }
+
+            ProgressBar {
+                Layout.fillWidth: true
+                from: 0
+                to: 1
+                indeterminate: fpgaFwPercent < 0
+                value: fpgaFwPercent < 0 ? 0 : (fpgaFwPercent / 100.0)
+            }
+
+            Text {
+                text: fpgaFwMessage
+                color: "#BDC3C7"
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 20
@@ -1168,9 +1302,12 @@ Rectangle {
                                         width: 80; height: 28; radius: 8
                                         color: enabled ? "#E74C3C" : "#7F8C8D"
                                         enabled: MOTIONInterface.consoleConnected
+                                            && taFpgaLatestVersion !== "N/A"
+                                            && !MOTIONInterface.fpgaFirmwareUpdateBusy
                                         Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
                                         MouseArea {
                                             anchors.fill: parent; enabled: parent.enabled
+                                            onClicked: _startFpgaUpdate("TA", taFpgaLatestVersion)
                                             onEntered: if (parent.enabled) parent.color = "#C0392B"
                                             onExited: if (parent.enabled) parent.color = "#E74C3C"
                                         }
@@ -1217,9 +1354,12 @@ Rectangle {
                                         width: 80; height: 28; radius: 8
                                         color: enabled ? "#E74C3C" : "#7F8C8D"
                                         enabled: MOTIONInterface.consoleConnected
+                                            && seedFpgaLatestVersion !== "N/A"
+                                            && !MOTIONInterface.fpgaFirmwareUpdateBusy
                                         Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
                                         MouseArea {
                                             anchors.fill: parent; enabled: parent.enabled
+                                            onClicked: _startFpgaUpdate("SEED", seedFpgaLatestVersion)
                                             onEntered: if (parent.enabled) parent.color = "#C0392B"
                                             onExited: if (parent.enabled) parent.color = "#E74C3C"
                                         }
@@ -1266,9 +1406,12 @@ Rectangle {
                                         width: 80; height: 28; radius: 8
                                         color: enabled ? "#E74C3C" : "#7F8C8D"
                                         enabled: MOTIONInterface.consoleConnected
+                                            && safetyFpgaLatestVersion !== "N/A"
+                                            && !MOTIONInterface.fpgaFirmwareUpdateBusy
                                         Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
                                         MouseArea {
                                             anchors.fill: parent; enabled: parent.enabled
+                                            onClicked: _startFpgaUpdate("SAFETY", safetyFpgaLatestVersion)
                                             onEntered: if (parent.enabled) parent.color = "#C0392B"
                                             onExited: if (parent.enabled) parent.color = "#E74C3C"
                                         }
@@ -1299,6 +1442,27 @@ Rectangle {
 
                             }
                         }
+                    }
+
+                    // Keep verify toggle visually near refresh without affecting RowLayout sizing.
+                    CheckBox {
+                        id: fpgaVerifyOverlay
+                        text: "Verify"
+                        checked: MOTIONInterface.fpgaFirmwareVerifyEnabled
+                        enabled: MOTIONInterface.consoleConnected && !MOTIONInterface.fpgaFirmwareUpdateBusy
+                        indicator.width: 16
+                        indicator.height: 16
+                        font.pixelSize: 13
+                        anchors.left: parent.left
+                        anchors.leftMargin: 10
+                        anchors.bottom: parent.bottom
+                        anchors.bottomMargin: 8
+
+                        onToggled: MOTIONInterface.fpgaFirmwareVerifyEnabled = checked
+
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Enable FPGA post-program verify (slower)"
+                        ToolTip.delay: 400
                     }
                 }
             }

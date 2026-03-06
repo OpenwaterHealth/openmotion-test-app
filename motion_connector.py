@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
+from omotion.GitHubReleases import GitHubReleases
 from utils.resource_path import resource_path
 from motion_singleton import motion_interface  
 from histogram_classifier import classify_histogram
@@ -544,6 +545,7 @@ class MOTIONConnector(QObject):
     histogramReady = pyqtSignal(list)  # Emit 1024 bins to QML
     latestVersionInfoReceived = pyqtSignal('QVariant')  # emits dict with latest/releases
     latestSensorVersionInfoReceived = pyqtSignal(str, 'QVariant')  # (target, info)
+    latestFpgaVersionInfoReceived = pyqtSignal(str, 'QVariant') 
     updateCapStatus = pyqtSignal(str) 
 
     # Firmware update signals (download -> confirm -> DFU flash)
@@ -1647,6 +1649,30 @@ class MOTIONConnector(QObject):
                 mutex.unlock()
         except Exception as e:
             logger.error(f"Error querying sensor latest version info for {target}: {e}")
+
+
+    @pyqtSlot()
+    def queryConsoleLatestFpgaVersionInfo(self):
+        """Fetch latest firmware/release info from console module and emit to QML."""
+        try:
+            gh_ta = GitHubReleases("OpenwaterHealth", "openmotion-ta-fpga")
+            gh_seed = GitHubReleases("OpenwaterHealth", "openmotion-seed-fpga ")
+            gh_safety = GitHubReleases("OpenwaterHealth", "openmotion-safety-fpga")
+
+            
+            latest_ta = gh_ta.get_latest_release()            
+            logger.info(f"Latest TA version info: {latest_ta}")
+            latest_seed = gh_seed.get_latest_release()
+            logger.info(f"Latest Seed version info: {latest_seed}")
+            latest_safety = gh_safety.get_latest_release()
+            logger.info(f"Latest Safety version info: {latest_safety}")
+
+            # Emit whatever structure the console module returns (QVariant-compatible)
+            self.latestFpgaVersionInfoReceived.emit({"TA":latest_ta, "SEED":latest_seed, "SAFETY":latest_safety})
+
+        except Exception as e:
+            logger.error(f"Error querying latest version info: {e}")
+            
 
     @pyqtSlot()
     def queryConsoleTemperature(self):

@@ -545,7 +545,7 @@ class MOTIONConnector(QObject):
     histogramReady = pyqtSignal(list)  # Emit 1024 bins to QML
     latestVersionInfoReceived = pyqtSignal('QVariant')  # emits dict with latest/releases
     latestSensorVersionInfoReceived = pyqtSignal(str, 'QVariant')  # (target, info)
-    latestFpgaVersionInfoReceived = pyqtSignal(str, 'QVariant') 
+    latestFpgaVersionInfoReceived = pyqtSignal('QVariant')  # {"TA": {...}, "SEED": {...}, "SAFETY": {...}}
     updateCapStatus = pyqtSignal(str) 
 
     # Firmware update signals (download -> confirm -> DFU flash)
@@ -1653,25 +1653,87 @@ class MOTIONConnector(QObject):
 
     @pyqtSlot()
     def queryConsoleLatestFpgaVersionInfo(self):
-        """Fetch latest firmware/release info from console module and emit to QML."""
+        """Fetch latest FPGA release info and emit only selected .jed asset fields.
+
+                Emitted payload shape:
+                    {
+                        "TA": {"tag_name", "name", "browser_download_url", "created_at"} | {"tag_name": "N/A", ...},
+                        "SEED": {"tag_name", "name", "browser_download_url", "created_at"} | {"tag_name": "N/A", ...},
+                        "SAFETY": {"tag_name", "name", "browser_download_url", "created_at"} | {"tag_name": "N/A", ...}
+                    }
+        """
         try:
+            if GitHubReleases is None:
+                logger.error("GitHubReleases is unavailable (omotion SDK not found in environment).")
+                self.latestFpgaVersionInfoReceived.emit({
+                    "TA": {"tag_name": "N/A", "name": "N/A", "browser_download_url": "", "created_at": ""},
+                    "SEED": {"tag_name": "N/A", "name": "N/A", "browser_download_url": "", "created_at": ""},
+                    "SAFETY": {"tag_name": "N/A", "name": "N/A", "browser_download_url": "", "created_at": ""},
+                })
+                return
+
+            def _default_payload() -> dict:
+                return {"tag_name": "N/A", "name": "N/A", "browser_download_url": "", "created_at": ""}
+
+            def _pick_latest_jed_asset(gh: GitHubReleases) -> dict:
+                release = gh.get_latest_release()
+                if not isinstance(release, dict):
+                    return _default_payload()
+
+                assets = release.get("assets")
+                if not isinstance(assets, list):
+                    try:
+                        assets = gh.get_asset_list(release=release)
+                    except Exception:
+                        assets = []
+
+                if not isinstance(assets, list):
+                    assets = []
+
+                jed_assets = []
+                for a in assets:
+                    if not isinstance(a, dict):
+                        continue
+                    name = str(a.get("name") or "")
+                    if name.lower().endswith(".jed"):
+                        jed_assets.append(a)
+
+                if not jed_assets:
+                    return _default_payload()
+
+                # Prefer the newest .jed by created_at when available.
+                jed_assets.sort(key=lambda a: str(a.get("created_at") or ""), reverse=True)
+                best = jed_assets[0]
+                return {
+                    "tag_name": str(release.get("tag_name") or "N/A"),
+                    "name": str(best.get("name") or "N/A"),
+                    "browser_download_url": str(best.get("browser_download_url") or ""),
+                    "created_at": str(best.get("created_at") or ""),
+                }
+
             gh_ta = GitHubReleases("OpenwaterHealth", "openmotion-ta-fpga")
-            gh_seed = GitHubReleases("OpenwaterHealth", "openmotion-seed-fpga ")
+            gh_seed = GitHubReleases("OpenwaterHealth", "openmotion-seed-fpga")
             gh_safety = GitHubReleases("OpenwaterHealth", "openmotion-safety-fpga")
 
-            
-            latest_ta = gh_ta.get_latest_release()            
-            logger.info(f"Latest TA version info: {latest_ta}")
-            latest_seed = gh_seed.get_latest_release()
-            logger.info(f"Latest Seed version info: {latest_seed}")
-            latest_safety = gh_safety.get_latest_release()
-            logger.info(f"Latest Safety version info: {latest_safety}")
+            payload = {
+                "TA": _pick_latest_jed_asset(gh_ta),
+                "SEED": _pick_latest_jed_asset(gh_seed),
+                "SAFETY": _pick_latest_jed_asset(gh_safety),
+            }
 
-            # Emit whatever structure the console module returns (QVariant-compatible)
-            self.latestFpgaVersionInfoReceived.emit({"TA":latest_ta, "SEED":latest_seed, "SAFETY":latest_safety})
+            logger.info(f"Latest TA FPGA .jed asset: {payload['TA']}")
+            logger.info(f"Latest SEED FPGA .jed asset: {payload['SEED']}")
+            logger.info(f"Latest SAFETY FPGA .jed asset: {payload['SAFETY']}")
+
+            self.latestFpgaVersionInfoReceived.emit(payload)
 
         except Exception as e:
-            logger.error(f"Error querying latest version info: {e}")
+            logger.error(f"Error querying latest FPGA version info: {e}")
+            self.latestFpgaVersionInfoReceived.emit({
+                "TA": {"tag_name": "N/A", "name": "N/A", "browser_download_url": "", "created_at": ""},
+                "SEED": {"tag_name": "N/A", "name": "N/A", "browser_download_url": "", "created_at": ""},
+                "SAFETY": {"tag_name": "N/A", "name": "N/A", "browser_download_url": "", "created_at": ""},
+            })
             
 
     @pyqtSlot()

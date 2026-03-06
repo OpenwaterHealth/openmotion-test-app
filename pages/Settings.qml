@@ -45,6 +45,9 @@ Rectangle {
     property string seedFpgaFirmwareVersion: "N/A"
     property string safetyEeFpgaFirmwareVersion: "N/A"
     property string safetyOptFpgaFirmwareVersion: "N/A"
+    property string taFpgaLatestVersion: "N/A"
+    property string seedFpgaLatestVersion: "N/A"
+    property string safetyFpgaLatestVersion: "N/A"
 
     // Console firmware update UI state
     property string consoleFwToken: ""
@@ -115,6 +118,9 @@ Rectangle {
             seedFpgaFirmwareVersion = "N/A"
             safetyEeFpgaFirmwareVersion = "N/A"
             safetyOptFpgaFirmwareVersion = "N/A"
+            taFpgaLatestVersion = "N/A"
+            seedFpgaLatestVersion = "N/A"
+            safetyFpgaLatestVersion = "N/A"
         }
 
         function _clearLeftSensorInfo() {
@@ -193,6 +199,25 @@ Rectangle {
             seedFpgaFirmwareVersion = versions["Seed"] || "N/A"
             safetyEeFpgaFirmwareVersion = versions["SafetyEE"] || "N/A"
             safetyOptFpgaFirmwareVersion = versions["SafetyOPT"] || "N/A"
+
+            // After current FW versions are available, fetch latest FPGA releases from GitHub.
+            if (MOTIONInterface.consoleConnected)
+                MOTIONInterface.queryConsoleLatestFpgaVersionInfo()
+        }
+
+        function onLatestFpgaVersionInfoReceived(info) {
+            if (!info) return
+
+            try {
+                taFpgaLatestVersion = (info["TA"] && info["TA"]["tag_name"]) ? info["TA"]["tag_name"] : "N/A"
+                seedFpgaLatestVersion = (info["SEED"] && info["SEED"]["tag_name"]) ? info["SEED"]["tag_name"] : "N/A"
+                safetyFpgaLatestVersion = (info["SAFETY"] && info["SAFETY"]["tag_name"]) ? info["SAFETY"]["tag_name"] : "N/A"
+            } catch (e) {
+                console.log('Error parsing latest FPGA version info', e)
+                taFpgaLatestVersion = "N/A"
+                seedFpgaLatestVersion = "N/A"
+                safetyFpgaLatestVersion = "N/A"
+            }
         }
 
         function onLatestSensorVersionInfoReceived(target, info) {
@@ -1165,7 +1190,7 @@ Rectangle {
                                     Text { text: taFpgaFirmwareVersion; color: "#2ECC71"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
                                     Text { text: "Latest:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 70 }
-                                    Text { text: "N/A"; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    Text { text: taFpgaLatestVersion; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
                                 }
 
                             }
@@ -1214,7 +1239,7 @@ Rectangle {
                                     Text { text: seedFpgaFirmwareVersion; color: "#2ECC71"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
                                     Text { text: "Latest:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 70 }
-                                    Text { text: "N/A"; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    Text { text: seedFpgaLatestVersion; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
                                 }
 
                             }
@@ -1269,7 +1294,7 @@ Rectangle {
                                     }
 
                                     Text { text: "Latest:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 70 }
-                                    Text { text: "N/A"; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    Text { text: safetyFpgaLatestVersion; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
                                 }
 
                             }

@@ -1388,7 +1388,7 @@ Rectangle {
                         // Vertical divider
                         Rectangle { width: 1; Layout.fillHeight: true; color: "#3E4E6F" }
 
-                        // ── Safety panel ──
+                        // ── Safety panel EE ──
                         Item {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
@@ -1400,7 +1400,7 @@ Rectangle {
                                 RowLayout {
                                     spacing: 8
                                     Layout.fillWidth: true
-                                    Text { text: "Safety"; font.pixelSize: 16; color: "#BDC3C7" }
+                                    Text { text: "Safety EE"; font.pixelSize: 16; color: "#BDC3C7" }
                                     Item { Layout.fillWidth: true }
                                     Rectangle {
                                         width: 80; height: 28; radius: 8
@@ -1411,7 +1411,7 @@ Rectangle {
                                         Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
                                         MouseArea {
                                             anchors.fill: parent; enabled: parent.enabled
-                                            onClicked: _startFpgaUpdate("SAFETY", safetyFpgaLatestVersion)
+                                            onClicked: _startFpgaUpdate("SAFETY_EE", safetyFpgaLatestVersion)
                                             onEntered: if (parent.enabled) parent.color = "#C0392B"
                                             onExited: if (parent.enabled) parent.color = "#E74C3C"
                                         }
@@ -1429,7 +1429,65 @@ Rectangle {
 
                                     Text { text: "FW:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 70 }
                                     Text {
-                                        text: "EE " + safetyEeFpgaFirmwareVersion + " | OPT " + safetyOptFpgaFirmwareVersion
+                                        text: safetyEeFpgaFirmwareVersion
+                                        color: "#2ECC71"
+                                        font.pixelSize: 14
+                                        elide: Text.ElideRight
+                                        Layout.fillWidth: true
+                                    }
+
+                                    Text { text: "Latest:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 70 }
+                                    Text { text: safetyFpgaLatestVersion; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
+                                }
+
+                            }
+                        }
+
+                        // Vertical divider
+                        Rectangle { width: 1; Layout.fillHeight: true; color: "#3E4E6F" }
+
+                        // ── Safety panel OPT ──
+                        Item {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                spacing: 8
+
+                                RowLayout {
+                                    spacing: 8
+                                    Layout.fillWidth: true
+                                    Text { text: "Safety OPT"; font.pixelSize: 16; color: "#BDC3C7" }
+                                    Item { Layout.fillWidth: true }
+                                    Rectangle {
+                                        width: 80; height: 28; radius: 8
+                                        color: enabled ? "#E74C3C" : "#7F8C8D"
+                                        enabled: MOTIONInterface.consoleConnected
+                                            && safetyFpgaLatestVersion !== "N/A"
+                                            && !MOTIONInterface.fpgaFirmwareUpdateBusy
+                                        Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
+                                        MouseArea {
+                                            anchors.fill: parent; enabled: parent.enabled
+                                            onClicked: _startFpgaUpdate("SAFETY_OPT", safetyFpgaLatestVersion)
+                                            onEntered: if (parent.enabled) parent.color = "#C0392B"
+                                            onExited: if (parent.enabled) parent.color = "#E74C3C"
+                                        }
+                                        Behavior on color { ColorAnimation { duration: 200 } }
+                                    }
+                                }
+
+                                Rectangle { Layout.fillWidth: true; height: 2; color: "#3E4E6F" }
+
+                                GridLayout {
+                                    Layout.fillWidth: true
+                                    columns: 2
+                                    columnSpacing: 10
+                                    rowSpacing: 6
+
+                                    Text { text: "FW:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 70 }
+                                    Text {
+                                        text: safetyOptFpgaFirmwareVersion
                                         color: "#2ECC71"
                                         font.pixelSize: 14
                                         elide: Text.ElideRight

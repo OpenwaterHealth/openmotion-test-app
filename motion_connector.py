@@ -39,7 +39,9 @@ try:
     from omotion.CommandError import CommandError
 except Exception:  # pragma: no cover
     FpgaPageProgrammer = None
-    FpgaUpdateError = None
+    # Ensure fallback exception types inherit from BaseException so they
+    # can safely be used in `except` clauses elsewhere in this module.
+    FpgaUpdateError = Exception
     MuxChannel = None
     CommandError = Exception
 
@@ -107,6 +109,9 @@ _FPGA_FW_REPO_MAP = {
     "TA": "openmotion-ta-fpga",
     "SEED": "openmotion-seed-fpga",
     "SAFETY": "openmotion-safety-fpga",
+    # Explicit targets for programming the two safety FPGAs individually
+    "SAFETY_EE": "openmotion-safety-fpga",
+    "SAFETY_OPT": "openmotion-safety-fpga",
 }
 # Console FPGA mux channel mapping used for in-system programming.
 _FPGA_PROGRAM_CHANNELS = {
@@ -114,8 +119,10 @@ _FPGA_PROGRAM_CHANNELS = {
     # FPGA_SEED=0, FPGA_TA=1, FPGA_SAFE_EE=2, FPGA_SAFE_OPT=3
     "TA": [1],
     "SEED": [0],
-    # Safety update programs both devices.
-    "SAFETY": [2, 3],
+    # Safety update programs both devices by default, and we also
+    # support programming the EE or OPT devices individually.
+    "SAFETY_EE": [2],
+    "SAFETY_OPT": [3],
 }
 
 
@@ -540,11 +547,22 @@ class _ConsoleFpgaUpdateThread(QThread):
                 logger.info(f"[FPGA-UPD] programming start target={self._target} channel={channel} ({idx+1}/{total})")
                 self._connector._console_mutex.lock()
                 try:
-                    programmer.program_from_jedec(
-                        target_fpga=MuxChannel(channel),
-                        jedec_path=str(jed_path),
-                        on_progress=_on_progress,
-                    )
+                    attempt = 0
+                    while True:
+                        try:
+                            programmer.program_from_jedec(
+                                target_fpga=MuxChannel(channel),
+                                jedec_path=str(jed_path),
+                                on_progress=_on_progress,
+                            )
+                            break
+                        except Exception as exc_inner:
+                            attempt += 1
+                            logger.warning(f"[FPGA-UPD] programming attempt {attempt} failed target={self._target} channel={channel} err={exc_inner}")
+                            if attempt >= 2:
+                                raise
+                            # small delay to allow bus/mux/device to settle before retry
+                            time.sleep(0.5)
                 finally:
                     self._connector._console_mutex.unlock()
                 logger.info(f"[FPGA-UPD] programming done target={self._target} channel={channel}")
@@ -557,7 +575,7 @@ class _ConsoleFpgaUpdateThread(QThread):
             logger.error(f"[FPGA-UPD] programmer error target={self._target} tag={self._tag}: {exc}")
             self.failed.emit(str(exc))
         except Exception as exc:
-            logger.error(f"[FPGA-UPD] unexpected error target={self._target} tag={self._tag}: {exc}")
+            logger.exception(f"[FPGA-UPD] unexpected error target={self._target} tag={self._tag}")
             self.failed.emit(str(exc))
 
 class CaptureThread(QThread):
@@ -1935,7 +1953,7 @@ class MOTIONConnector(QObject):
     def beginFpgaFirmwareUpdate(self, target: str, tag: str) -> None:
         """Download latest .jed for target/tag and program console FPGA(s).
 
-        target: "TA" | "SEED" | "SAFETY"
+        target: "TA" | "SEED" | "SAFETY_EE" | "SAFETY_OPT"
         tag: release tag (e.g. "1.1.0")
         """
         target = (target or "").upper()

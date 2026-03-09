@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
+from omotion.GitHubReleases import GitHubReleases
 from utils.resource_path import resource_path
 from motion_singleton import motion_interface  
 from histogram_classifier import classify_histogram
@@ -31,6 +32,18 @@ try:
     from omotion.GitHubReleases import GitHubReleases
 except Exception:  # pragma: no cover
     GitHubReleases = None
+
+try:
+    from omotion.FPGAProgrammer import FpgaPageProgrammer, FpgaUpdateError
+    from omotion.config import MuxChannel
+    from omotion.CommandError import CommandError
+except Exception:  # pragma: no cover
+    FpgaPageProgrammer = None
+    # Ensure fallback exception types inherit from BaseException so they
+    # can safely be used in `except` clauses elsewhere in this module.
+    FpgaUpdateError = Exception
+    MuxChannel = None
+    CommandError = Exception
 
 # constants for calculations
 SCALE_V = 0.0909
@@ -92,6 +105,25 @@ RUNNING = 4
 _CONSOLE_FW_REPO_OWNER = "OpenwaterHealth"
 _CONSOLE_FW_REPO_NAME = "motion-console-fw"
 _SENSOR_FW_REPO_NAME = "motion-sensor-fw"
+_FPGA_FW_REPO_MAP = {
+    "TA": "openmotion-ta-fpga",
+    "SEED": "openmotion-seed-fpga",
+    "SAFETY": "openmotion-safety-fpga",
+    # Explicit targets for programming the two safety FPGAs individually
+    "SAFETY_EE": "openmotion-safety-fpga",
+    "SAFETY_OPT": "openmotion-safety-fpga",
+}
+# Console FPGA mux channel mapping used for in-system programming.
+_FPGA_PROGRAM_CHANNELS = {
+    # MuxChannel is 0-based in omotion.config:
+    # FPGA_SEED=0, FPGA_TA=1, FPGA_SAFE_EE=2, FPGA_SAFE_OPT=3
+    "TA": [1],
+    "SEED": [0],
+    # Safety update programs both devices by default, and we also
+    # support programming the EE or OPT devices individually.
+    "SAFETY_EE": [2],
+    "SAFETY_OPT": [3],
+}
 
 
 def _app_root_dir() -> Path:
@@ -399,6 +431,153 @@ class _DeviceFirmwareFlashThread(QThread):
         except Exception as exc:
             self.failed.emit(str(exc))
 
+
+class _ConsoleFpgaUpdateThread(QThread):
+    progress = pyqtSignal(int, str)  # percent (0-100, -1 indeterminate), message
+    failed = pyqtSignal(str)
+    finished_ok = pyqtSignal(str)
+
+    def __init__(self, connector: 'MOTIONConnector', target: str, tag: str, verify: bool = False):
+        super().__init__()
+        self._connector = connector
+        self._target = (target or "").upper()
+        self._tag = (tag or "").strip()
+        self._verify = bool(verify)
+
+    def run(self):
+        try:
+            logger.info(f"[FPGA-UPD] thread start target={self._target} tag={self._tag}")
+            if GitHubReleases is None:
+                logger.info("[FPGA-UPD] GitHubReleases unavailable in environment")
+                self.failed.emit("GitHubReleases is unavailable (omotion SDK not found in environment).")
+                return
+            if FpgaPageProgrammer is None or MuxChannel is None:
+                logger.info("[FPGA-UPD] FPGA programmer components unavailable in environment")
+                self.failed.emit("FPGA programmer is unavailable (omotion SDK FPGA components missing).")
+                return
+
+            repo = _FPGA_FW_REPO_MAP.get(self._target)
+            channels = _FPGA_PROGRAM_CHANNELS.get(self._target)
+            if not repo or not channels:
+                logger.info(f"[FPGA-UPD] invalid target mapping target={self._target} repo={repo} channels={channels}")
+                self.failed.emit(f"Invalid FPGA update target: {self._target}")
+                return
+
+            logger.info(f"[FPGA-UPD] using repo={repo} channels={channels}")
+
+            self.progress.emit(5, f"Fetching {self._target} release {self._tag}…")
+            gh = GitHubReleases(_CONSOLE_FW_REPO_OWNER, repo, timeout=30)
+
+            release = None
+            last_exc: Exception | None = None
+            for candidate_tag in _candidate_console_fw_tags(self._tag):
+                try:
+                    logger.info(f"[FPGA-UPD] try get_release_by_tag tag={candidate_tag}")
+                    release = gh.get_release_by_tag(candidate_tag)
+                    logger.info(f"[FPGA-UPD] release resolved tag={candidate_tag}")
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    logger.info(f"[FPGA-UPD] tag lookup failed tag={candidate_tag} err={exc}")
+
+            if release is None:
+                msg = f"Release '{self._tag}' not found for {self._target}."
+                if last_exc is not None:
+                    msg += f" ({last_exc})"
+                logger.info(f"[FPGA-UPD] release resolution failed msg={msg}")
+                self.failed.emit(msg)
+                return
+
+            self.progress.emit(15, "Resolving .jed asset…")
+            assets = gh.get_asset_list(release=release)
+            if not isinstance(assets, list):
+                assets = []
+            logger.info(f"[FPGA-UPD] assets discovered count={len(assets)}")
+
+            jed_assets = []
+            for asset in assets:
+                if not isinstance(asset, dict):
+                    continue
+                name = str(asset.get("name") or "")
+                if name.lower().endswith(".jed"):
+                    jed_assets.append(asset)
+
+            logger.info(f"[FPGA-UPD] jed assets count={len(jed_assets)}")
+
+            if not jed_assets:
+                logger.info(f"[FPGA-UPD] no .jed assets in release target={self._target} tag={self._tag}")
+                self.failed.emit(f"No .jed asset found in release '{self._tag}' for {self._target}.")
+                return
+
+            jed_assets.sort(key=lambda a: str(a.get("created_at") or ""), reverse=True)
+            jed_name = str(jed_assets[0].get("name") or "")
+            if not jed_name:
+                logger.info("[FPGA-UPD] resolved .jed asset missing name")
+                self.failed.emit("Resolved .jed asset has no filename.")
+                return
+
+            logger.info(f"[FPGA-UPD] selected jed asset={jed_name}")
+
+            self.progress.emit(25, f"Downloading {jed_name}…")
+            dl_dir = _downloads_dir()
+            dl_dir.mkdir(parents=True, exist_ok=True)
+            jed_path = Path(gh.download_asset(release, jed_name, output_dir=dl_dir)).resolve()
+            self.progress.emit(35, f"Downloaded {jed_name}")
+            logger.info(f"[FPGA-UPD] downloaded jed path={jed_path}")
+
+            programmer = FpgaPageProgrammer(
+                motion_interface.console_module,
+                verify=self._verify,
+                erase_timeout=35.0,
+                refresh_timeout=10.0,
+            )
+            logger.info(f"[FPGA-UPD] FpgaPageProgrammer initialized verify={self._verify} erase_timeout=35 refresh_timeout=10")
+
+            total = len(channels)
+            for idx, channel in enumerate(channels):
+                base = 35 + int((55 * idx) / total)
+                span = max(1, int(55 / total))
+
+                def _on_progress(pages_done: int, total_pages: int, ch=channel, b=base, s=span):
+                    local_pct = 0.0 if total_pages <= 0 else (100.0 * float(pages_done) / float(total_pages))
+                    overall = min(95, b + int((s * local_pct) / 100.0))
+                    self.progress.emit(overall, f"Programming channel {ch}…")
+
+                self.progress.emit(base, f"Programming channel {channel}…")
+                logger.info(f"[FPGA-UPD] programming start target={self._target} channel={channel} ({idx+1}/{total})")
+                self._connector._console_mutex.lock()
+                try:
+                    attempt = 0
+                    while True:
+                        try:
+                            programmer.program_from_jedec(
+                                target_fpga=MuxChannel(channel),
+                                jedec_path=str(jed_path),
+                                on_progress=_on_progress,
+                            )
+                            break
+                        except Exception as exc_inner:
+                            attempt += 1
+                            logger.warning(f"[FPGA-UPD] programming attempt {attempt} failed target={self._target} channel={channel} err={exc_inner}")
+                            if attempt >= 2:
+                                raise
+                            # small delay to allow bus/mux/device to settle before retry
+                            time.sleep(0.5)
+                finally:
+                    self._connector._console_mutex.unlock()
+                logger.info(f"[FPGA-UPD] programming done target={self._target} channel={channel}")
+
+            self.progress.emit(100, "FPGA programming complete")
+            logger.info(f"[FPGA-UPD] thread complete target={self._target} tag={self._tag}")
+            self.finished_ok.emit(f"{self._target} FPGA updated successfully.")
+
+        except (FpgaUpdateError, CommandError) as exc:
+            logger.error(f"[FPGA-UPD] programmer error target={self._target} tag={self._tag}: {exc}")
+            self.failed.emit(str(exc))
+        except Exception as exc:
+            logger.exception(f"[FPGA-UPD] unexpected error target={self._target} tag={self._tag}")
+            self.failed.emit(str(exc))
+
 class CaptureThread(QThread):
     new_histogram = pyqtSignal(list)  # Signal for histogram data
     update_status = pyqtSignal(str)  # Signal for status updates
@@ -539,10 +718,12 @@ class MOTIONConnector(QObject):
     stateChanged = pyqtSignal()  # Notifies QML when state changes
     rgbStateReceived = pyqtSignal(int, str)  # Emit both integer value and text
     fanSpeedsReceived = pyqtSignal(int)  # Emit both integers
-    
+    fpgaVersionsReceived = pyqtSignal('QVariant')  # {"TA": str, "Seed": str, "SafetyEE": str, "SafetyOPT": str}
+
     histogramReady = pyqtSignal(list)  # Emit 1024 bins to QML
     latestVersionInfoReceived = pyqtSignal('QVariant')  # emits dict with latest/releases
     latestSensorVersionInfoReceived = pyqtSignal(str, 'QVariant')  # (target, info)
+    latestFpgaVersionInfoReceived = pyqtSignal('QVariant')  # {"TA": {...}, "SEED": {...}, "SAFETY": {...}}
     updateCapStatus = pyqtSignal(str) 
 
     # Firmware update signals (download -> confirm -> DFU flash)
@@ -555,6 +736,16 @@ class MOTIONConnector(QObject):
     consoleFirmwareUpdateFinished = pyqtSignal(str, bool, str)
     # Emits: target, message
     consoleFirmwareUpdateError = pyqtSignal(str, str)
+
+    # FPGA update signals
+    fpgaFirmwareUpdateBusyChanged = pyqtSignal()
+    fpgaFirmwareVerifyEnabledChanged = pyqtSignal()
+    # Emits: target, percent, message
+    fpgaFirmwareUpdateProgress = pyqtSignal(str, int, str)
+    # Emits: target, success, message
+    fpgaFirmwareUpdateFinished = pyqtSignal(str, bool, str)
+    # Emits: target, message
+    fpgaFirmwareUpdateError = pyqtSignal(str, str)
 
     tcmChanged = pyqtSignal()
     tclChanged = pyqtSignal()
@@ -629,6 +820,9 @@ class MOTIONConnector(QObject):
         self._fw_temp_files: dict[str, tuple[str, str, bool, str]] = {}
         self._fw_download_thread: _ConsoleFirmwareDownloadThread | None = None
         self._fw_flash_thread: _ConsoleFirmwareFlashThread | None = None
+        self._fpga_fw_busy = False
+        self._fpga_fw_verify = False
+        self._fpga_update_thread: _ConsoleFpgaUpdateThread | None = None
         
         # Sensor mutexes for left and right sensors (following console mutex pattern)
         self._left_sensor_mutex = QRecursiveMutex()
@@ -640,11 +834,34 @@ class MOTIONConnector(QObject):
     def consoleFirmwareUpdateBusy(self) -> bool:
         return bool(getattr(self, "_console_fw_busy", False))
 
+    @pyqtProperty(bool, notify=fpgaFirmwareUpdateBusyChanged)
+    def fpgaFirmwareUpdateBusy(self) -> bool:
+        return bool(getattr(self, "_fpga_fw_busy", False))
+
+    @pyqtProperty(bool, notify=fpgaFirmwareVerifyEnabledChanged)
+    def fpgaFirmwareVerifyEnabled(self) -> bool:
+        return bool(getattr(self, "_fpga_fw_verify", False))
+
+    @fpgaFirmwareVerifyEnabled.setter
+    def fpgaFirmwareVerifyEnabled(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        if getattr(self, "_fpga_fw_verify", False) == enabled:
+            return
+        self._fpga_fw_verify = enabled
+        logger.info(f"[FPGA-UPD] verify toggle set to {enabled}")
+        self.fpgaFirmwareVerifyEnabledChanged.emit()
+
     def _set_console_fw_busy(self, busy: bool) -> None:
         if getattr(self, "_console_fw_busy", False) == busy:
             return
         self._console_fw_busy = busy
         self.consoleFirmwareUpdateBusyChanged.emit()
+
+    def _set_fpga_fw_busy(self, busy: bool) -> None:
+        if getattr(self, "_fpga_fw_busy", False) == busy:
+            return
+        self._fpga_fw_busy = busy
+        self.fpgaFirmwareUpdateBusyChanged.emit()
 
     def _cleanup_fw_token(self, token: str) -> None:
         try:
@@ -1067,15 +1284,52 @@ class MOTIONConnector(QObject):
          
     def set_laser_power_from_config(self, interface):
         logger.info("[Connector] Setting laser power from config...")
+
+        # ------------------------------------------------------------------
+        # Read user config to discover which laser_params.json entries should
+        # be skipped and replaced by user-defined values.
+        # EE_THRESH / EE_GAIN  → Safety EE  DRIVE CL (channel 6, offset 0x10)
+        # OPT_THRESH / OPT_GAIN → Safety OPT DRIVE CL (channel 7, offset 0x10)
+        # ------------------------------------------------------------------
+        user_cfg: dict = {}
+        try:
+            cfg_obj = interface.console_module.read_config()
+            if cfg_obj is not None:
+                user_cfg = cfg_obj.json_data or {}
+        except Exception as _e:
+            logger.warning(f"[Connector] Could not read user config before laser init: {_e}")
+
+        ee_thresh  = user_cfg.get("EE_THRESH")
+        ee_gain    = user_cfg.get("EE_GAIN")
+        opt_thresh = user_cfg.get("OPT_THRESH")
+        opt_gain   = user_cfg.get("OPT_GAIN")
+
+        # (channel, offset) entries to skip in the JSON pass
+        _EE_DRIVE_CL  = (6, 0x10)   # Safety EE  DRIVE CL
+        _OPT_DRIVE_CL = (7, 0x10)   # Safety OPT DRIVE CL
+
+        skip_entries: set = set()
+        if ee_thresh  is not None or ee_gain  is not None:
+            skip_entries.add(_EE_DRIVE_CL)
+        if opt_thresh is not None or opt_gain is not None:
+            skip_entries.add(_OPT_DRIVE_CL)
+
         self._console_mutex.lock()
         for idx, laser_param in enumerate(self.laser_params, start=1):
-            muxIdx = laser_param["muxIdx"]
-            channel = laser_param["channel"]
-            i2cAddr = laser_param["i2cAddr"]
-            offset = laser_param["offset"]
+            muxIdx     = laser_param["muxIdx"]
+            channel    = laser_param["channel"]
+            i2cAddr    = laser_param["i2cAddr"]
+            offset     = laser_param["offset"]
             dataToSend = bytearray(laser_param["dataToSend"])
 
-            logger.debug(
+            if (channel, offset) in skip_entries:
+                logger.info(
+                    f"[Connector] Skipping JSON entry ch={channel} off=0x{offset:02X} "
+                    f"(overridden by user config)"
+                )
+                continue
+
+            logger.info(
                 f"[Connector] ({idx}/{len(self.laser_params)}) "
                 f"Writing I2C: muxIdx={muxIdx}, channel={channel}, "
                 f"i2cAddr=0x{i2cAddr:02X}, offset=0x{offset:02X}, "
@@ -1089,6 +1343,38 @@ class MOTIONConnector(QObject):
             ):
                 logger.error(f"Failed to set laser power (muxIdx={muxIdx}, channel={channel})")
                 return False
+
+        # ------------------------------------------------------------------
+        # Write user-config DRIVE CL overrides after the JSON pass.
+        # Default scale matches the static FpgaModel value (1.86 mA/LSB).
+        # Data format: 16-bit LSB-first (isMsbFirst=false in FpgaModel).
+        # thresh is a raw uint16 register value; gain is a float scale factor
+        # used only for the QML FpgaData scale override (not for raw calculation).
+        # ------------------------------------------------------------------
+
+        def _write_drive_cl(ch: int, thresh, gain: float, label: str) -> bool:
+            if thresh is None:
+                return True
+            raw = max(0, min(0xFFFF, int(thresh)))          # uint16 raw value
+            data = bytearray([raw & 0xFF, (raw >> 8) & 0xFF])  # LSB first
+            gain_f = float(gain) if gain is not None else 0.0
+            logger.info(
+                f"[Connector] Writing user-config {label} DRIVE CL: "
+                f"raw={raw}, gain={gain_f} → {list(data)}"
+            )
+            return interface.console_module.write_i2c_packet(
+                mux_index=1, channel=ch,
+                device_addr=0x41, reg_addr=0x10,
+                data=data
+            )
+
+        if not _write_drive_cl(6, ee_thresh,  ee_gain,  "Safety EE"):
+            logger.error("Failed to write user-config Safety EE DRIVE CL")
+            return False
+        if not _write_drive_cl(7, opt_thresh, opt_gain, "Safety OPT"):
+            logger.error("Failed to write user-config Safety OPT DRIVE CL")
+            return False
+
         logger.info("Laser power set successfully.")
         self._console_mutex.unlock()
         return True
@@ -1578,6 +1864,144 @@ class MOTIONConnector(QObject):
         except Exception as e:
             logger.error(f"Error querying sensor latest version info for {target}: {e}")
 
+
+    @pyqtSlot()
+    def queryConsoleLatestFpgaVersionInfo(self):
+        """Fetch latest FPGA release info and emit only selected .jed asset fields.
+
+                Emitted payload shape:
+                    {
+                        "TA": {"tag_name", "name", "browser_download_url", "created_at"} | {"tag_name": "N/A", ...},
+                        "SEED": {"tag_name", "name", "browser_download_url", "created_at"} | {"tag_name": "N/A", ...},
+                        "SAFETY": {"tag_name", "name", "browser_download_url", "created_at"} | {"tag_name": "N/A", ...}
+                    }
+        """
+        try:
+            if GitHubReleases is None:
+                logger.error("GitHubReleases is unavailable (omotion SDK not found in environment).")
+                self.latestFpgaVersionInfoReceived.emit({
+                    "TA": {"tag_name": "N/A", "name": "N/A", "browser_download_url": "", "created_at": ""},
+                    "SEED": {"tag_name": "N/A", "name": "N/A", "browser_download_url": "", "created_at": ""},
+                    "SAFETY": {"tag_name": "N/A", "name": "N/A", "browser_download_url": "", "created_at": ""},
+                })
+                return
+
+            def _default_payload() -> dict:
+                return {"tag_name": "N/A", "name": "N/A", "browser_download_url": "", "created_at": ""}
+
+            def _pick_latest_jed_asset(gh: GitHubReleases) -> dict:
+                release = gh.get_latest_release()
+                if not isinstance(release, dict):
+                    return _default_payload()
+
+                assets = release.get("assets")
+                if not isinstance(assets, list):
+                    try:
+                        assets = gh.get_asset_list(release=release)
+                    except Exception:
+                        assets = []
+
+                if not isinstance(assets, list):
+                    assets = []
+
+                jed_assets = []
+                for a in assets:
+                    if not isinstance(a, dict):
+                        continue
+                    name = str(a.get("name") or "")
+                    if name.lower().endswith(".jed"):
+                        jed_assets.append(a)
+
+                if not jed_assets:
+                    return _default_payload()
+
+                # Prefer the newest .jed by created_at when available.
+                jed_assets.sort(key=lambda a: str(a.get("created_at") or ""), reverse=True)
+                best = jed_assets[0]
+                return {
+                    "tag_name": str(release.get("tag_name") or "N/A"),
+                    "name": str(best.get("name") or "N/A"),
+                    "browser_download_url": str(best.get("browser_download_url") or ""),
+                    "created_at": str(best.get("created_at") or ""),
+                }
+
+            gh_ta = GitHubReleases("OpenwaterHealth", "openmotion-ta-fpga")
+            gh_seed = GitHubReleases("OpenwaterHealth", "openmotion-seed-fpga")
+            gh_safety = GitHubReleases("OpenwaterHealth", "openmotion-safety-fpga")
+
+            payload = {
+                "TA": _pick_latest_jed_asset(gh_ta),
+                "SEED": _pick_latest_jed_asset(gh_seed),
+                "SAFETY": _pick_latest_jed_asset(gh_safety),
+            }
+
+            logger.info(f"Latest TA FPGA .jed asset: {payload['TA']}")
+            logger.info(f"Latest SEED FPGA .jed asset: {payload['SEED']}")
+            logger.info(f"Latest SAFETY FPGA .jed asset: {payload['SAFETY']}")
+
+            self.latestFpgaVersionInfoReceived.emit(payload)
+
+        except Exception as e:
+            logger.error(f"Error querying latest FPGA version info: {e}")
+            self.latestFpgaVersionInfoReceived.emit({
+                "TA": {"tag_name": "N/A", "name": "N/A", "browser_download_url": "", "created_at": ""},
+                "SEED": {"tag_name": "N/A", "name": "N/A", "browser_download_url": "", "created_at": ""},
+                "SAFETY": {"tag_name": "N/A", "name": "N/A", "browser_download_url": "", "created_at": ""},
+            })
+
+    @pyqtSlot(str, str)
+    def beginFpgaFirmwareUpdate(self, target: str, tag: str) -> None:
+        """Download latest .jed for target/tag and program console FPGA(s).
+
+        target: "TA" | "SEED" | "SAFETY_EE" | "SAFETY_OPT"
+        tag: release tag (e.g. "1.1.0")
+        """
+        target = (target or "").upper()
+        tag = (tag or "").strip()
+        verify = bool(getattr(self, "_fpga_fw_verify", False))
+        logger.info(f"beginFpgaFirmwareUpdate target={target} tag={tag} verify={verify}")
+
+        if target not in _FPGA_PROGRAM_CHANNELS:
+            logger.info(f"[FPGA-UPD] reject invalid target target={target}")
+            self.fpgaFirmwareUpdateError.emit(target or "UNKNOWN", "Invalid FPGA target.")
+            return
+        if not tag or tag == "N/A":
+            logger.info(f"[FPGA-UPD] reject missing tag target={target} tag={tag}")
+            self.fpgaFirmwareUpdateError.emit(target, "No FPGA release tag selected.")
+            return
+        if not self._consoleConnected:
+            logger.info(f"[FPGA-UPD] reject console disconnected target={target}")
+            self.fpgaFirmwareUpdateError.emit(target, "Console is not connected.")
+            return
+        if self.fpgaFirmwareUpdateBusy:
+            logger.info(f"[FPGA-UPD] reject busy target={target}")
+            self.fpgaFirmwareUpdateError.emit(target, "An FPGA update is already in progress.")
+            return
+
+        self._set_fpga_fw_busy(True)
+        self._fpga_update_thread = _ConsoleFpgaUpdateThread(self, target, tag, verify=verify)
+        logger.info(f"[FPGA-UPD] thread created target={target} tag={tag} verify={verify}")
+        self._fpga_update_thread.progress.connect(
+            lambda pct, msg: self.fpgaFirmwareUpdateProgress.emit(target, int(pct), str(msg))
+        )
+        self._fpga_update_thread.failed.connect(lambda msg: self._on_fpga_fw_failed(target, str(msg)))
+        self._fpga_update_thread.finished_ok.connect(lambda msg: self._on_fpga_fw_finished(target, True, str(msg)))
+        self._fpga_update_thread.finished.connect(lambda: setattr(self, "_fpga_update_thread", None))
+        self._fpga_update_thread.start()
+        logger.info(f"[FPGA-UPD] thread started target={target} tag={tag} verify={verify}")
+
+    def _on_fpga_fw_failed(self, target: str, message: str) -> None:
+        logger.info(f"[FPGA-UPD] failed target={target} message={message}")
+        self.fpgaFirmwareUpdateError.emit(target, message)
+        self.fpgaFirmwareUpdateFinished.emit(target, False, message)
+        self._set_fpga_fw_busy(False)
+
+    def _on_fpga_fw_finished(self, target: str, success: bool, message: str) -> None:
+        logger.info(f"[FPGA-UPD] finished target={target} success={success} message={message}")
+        self.fpgaFirmwareUpdateFinished.emit(target, bool(success), str(message))
+        self._set_fpga_fw_busy(False)
+            
+
     @pyqtSlot()
     def queryConsoleTemperature(self):
         """Fetch and emit Console Temperature data."""   
@@ -1660,6 +2084,52 @@ class MOTIONConnector(QObject):
             logger.error(f"Error querying Fan Speeds: {e}")
         finally:
             self._console_mutex.unlock()
+
+    @pyqtSlot()
+    def queryFpgaVersions(self):
+        """Read 4-byte version registers from each FPGA and emit fpgaVersionsReceived.
+
+        Byte layout: [REV, MINOR, MAJOR, ID] → version string "MAJOR.MINOR.REV"
+        Example: 00 01 01 02 → "1.1.0"
+
+        FPGAs:
+          TA       – mux_idx=1, channel=4, i2c_addr=0x41, reg_addr=0x14
+          Seed     – mux_idx=1, channel=5, i2c_addr=0x41, reg_addr=0x13
+          SafetyEE – mux_idx=1, channel=6, i2c_addr=0x41, reg_addr=0x25
+          SafetyOPT– mux_idx=1, channel=7, i2c_addr=0x41, reg_addr=0x25
+        """
+        FPGAS = [
+            ("TA",        1, 4, 0x41, 0x14),
+            ("Seed",      1, 5, 0x41, 0x13),
+            ("SafetyEE",  1, 6, 0x41, 0x25),
+            ("SafetyOPT", 1, 7, 0x41, 0x25),
+        ]
+        versions = {}
+        self._console_mutex.lock()
+        try:
+            for name, mux_idx, channel, i2c_addr, reg_addr in FPGAS:
+                try:
+                    data, data_len = motion_interface.console_module.read_i2c_packet(
+                        mux_index=mux_idx,
+                        channel=channel,
+                        device_addr=i2c_addr,
+                        reg_addr=reg_addr,
+                        read_len=4,
+                    )
+                    if data is None or data_len < 4:
+                        logger.error(f"[FPGA] {name}: read failed (data={data}, len={data_len})")
+                        versions[name] = "N/A"
+                    else:
+                        rev, minor, major, fpga_id = data[0], data[1], data[2], data[3]
+                        ver_str = f"{major}.{minor}.{rev}"
+                        logger.info(f"[FPGA] {name}: {ver_str} (id=0x{fpga_id:02X})")
+                        versions[name] = ver_str
+                except Exception as e:
+                    logger.error(f"[FPGA] {name}: exception reading version: {e}")
+                    versions[name] = "N/A"
+        finally:
+            self._console_mutex.unlock()
+        self.fpgaVersionsReceived.emit(versions)
 
     @pyqtSlot(result=QVariant)
     def queryTriggerConfig(self):

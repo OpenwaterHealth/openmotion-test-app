@@ -40,6 +40,15 @@ Rectangle {
     property string rightSensorFirmwareVersion: "N/A"
     property string rightSensorDeviceId: "N/A"
 
+    // Console FPGA firmware versions
+    property string taFpgaFirmwareVersion: "N/A"
+    property string seedFpgaFirmwareVersion: "N/A"
+    property string safetyEeFpgaFirmwareVersion: "N/A"
+    property string safetyOptFpgaFirmwareVersion: "N/A"
+    property string taFpgaLatestVersion: "N/A"
+    property string seedFpgaLatestVersion: "N/A"
+    property string safetyFpgaLatestVersion: "N/A"
+
     // Console firmware update UI state
     property string consoleFwToken: ""
     property string consoleFwSelectedTag: ""
@@ -62,6 +71,29 @@ Rectangle {
     // Busy state while reading user config from device
     property bool userConfigLoading: false
 
+    // FPGA update UI state
+    property string fpgaFwUpdateTarget: ""
+    property int fpgaFwPercent: -1
+    property string fpgaFwMessage: ""
+
+    function _startFpgaUpdate(target, tag) {
+        if (!MOTIONInterface.consoleConnected) {
+            fwErrorDialog.message = "Console is not connected."
+            fwErrorDialog.open()
+            return
+        }
+        if (!tag || tag === "N/A") {
+            fwErrorDialog.message = "No FPGA release is available for update."
+            fwErrorDialog.open()
+            return
+        }
+        fpgaFwUpdateTarget = target
+        fpgaFwPercent = -1
+        fpgaFwMessage = "Starting..."
+        MOTIONInterface.beginFpgaFirmwareUpdate(target, tag)
+        fpgaProgressDialog.open()
+    }
+
     // Modal dialog styling (firmware update)
     property int modalMaxWidth: 520
     property int modalMinWidth: 420
@@ -83,6 +115,7 @@ Rectangle {
         if (MOTIONInterface.consoleConnected) {
             MOTIONInterface.queryConsoleInfo()
             MOTIONInterface.queryConsoleLatestVersionInfo()
+            MOTIONInterface.queryFpgaVersions()
         }
     }
 
@@ -104,6 +137,13 @@ Rectangle {
             consoleFirmwareVersion = "N/A"
             consoleDeviceId = "N/A"
             consoleBoardRevId = "N/A"
+            taFpgaFirmwareVersion = "N/A"
+            seedFpgaFirmwareVersion = "N/A"
+            safetyEeFpgaFirmwareVersion = "N/A"
+            safetyOptFpgaFirmwareVersion = "N/A"
+            taFpgaLatestVersion = "N/A"
+            seedFpgaLatestVersion = "N/A"
+            safetyFpgaLatestVersion = "N/A"
         }
 
         function _clearLeftSensorInfo() {
@@ -172,6 +212,34 @@ Rectangle {
                 consoleLatestIndex = idx >= 0 ? idx : 0
             } catch (e) {
                 console.log('Error parsing latest version info', e)
+            }
+        }
+
+        function onFpgaVersionsReceived(versions) {
+            if (!versions) return
+
+            taFpgaFirmwareVersion = versions["TA"] || "N/A"
+            seedFpgaFirmwareVersion = versions["Seed"] || "N/A"
+            safetyEeFpgaFirmwareVersion = versions["SafetyEE"] || "N/A"
+            safetyOptFpgaFirmwareVersion = versions["SafetyOPT"] || "N/A"
+
+            // After current FW versions are available, fetch latest FPGA releases from GitHub.
+            if (MOTIONInterface.consoleConnected)
+                MOTIONInterface.queryConsoleLatestFpgaVersionInfo()
+        }
+
+        function onLatestFpgaVersionInfoReceived(info) {
+            if (!info) return
+
+            try {
+                taFpgaLatestVersion = (info["TA"] && info["TA"]["tag_name"]) ? info["TA"]["tag_name"] : "N/A"
+                seedFpgaLatestVersion = (info["SEED"] && info["SEED"]["tag_name"]) ? info["SEED"]["tag_name"] : "N/A"
+                safetyFpgaLatestVersion = (info["SAFETY"] && info["SAFETY"]["tag_name"]) ? info["SAFETY"]["tag_name"] : "N/A"
+            } catch (e) {
+                console.log('Error parsing latest FPGA version info', e)
+                taFpgaLatestVersion = "N/A"
+                seedFpgaLatestVersion = "N/A"
+                safetyFpgaLatestVersion = "N/A"
             }
         }
 
@@ -267,6 +335,34 @@ Rectangle {
             fwErrorDialog.message = message
             fwErrorDialog.open()
             consoleFwToken = ""
+        }
+
+        function onFpgaFirmwareUpdateProgress(target, percent, message) {
+            fpgaFwUpdateTarget = target
+            fpgaFwPercent = percent
+            fpgaFwMessage = message
+            if (!fpgaProgressDialog.opened)
+                fpgaProgressDialog.open()
+        }
+
+        function onFpgaFirmwareUpdateFinished(target, success, message) {
+            fpgaProgressDialog.close()
+            fpgaFwUpdateTarget = target
+            fpgaFwMessage = ""
+            if (success) {
+                fwResultDialog.title = "FPGA Update Complete"
+                fwResultDialog.message = message
+                fwResultDialog.open()
+                // Refresh current versions after successful reprogramming.
+                MOTIONInterface.queryFpgaVersions()
+            }
+        }
+
+        function onFpgaFirmwareUpdateError(target, message) {
+            fpgaProgressDialog.close()
+            fpgaFwUpdateTarget = target
+            fwErrorDialog.message = message
+            fwErrorDialog.open()
         }
 
         function onUserConfigLoaded(tecTrip, optGain, optThresh, eeGain, eeThresh) {
@@ -793,20 +889,93 @@ Rectangle {
         }
     }
 
+    Dialog {
+        id: fpgaProgressDialog
+        parent: contentArea
+        modal: true
+        title: "FPGA Update"
+        standardButtons: Dialog.NoButton
+        closePolicy: Popup.NoAutoClose
+        footer: null
+
+        width: modalWidthFor(parent)
+        x: Math.round((parent.width - width) / 2)
+        y: Math.round((parent.height - height) / 2)
+        padding: modalPadding
+
+        Overlay.modal: Rectangle { color: modalOverlayColor }
+
+        header: Item {
+            implicitHeight: 46
+
+            Rectangle {
+                id: fpgaProgressHeaderBg
+                anchors.fill: parent
+                anchors.margins: modalBorderWidth
+                color: "#3A3F4B"
+                radius: modalRadius
+            }
+
+            Rectangle {
+                anchors.left: fpgaProgressHeaderBg.left
+                anchors.right: fpgaProgressHeaderBg.right
+                anchors.bottom: fpgaProgressHeaderBg.bottom
+                height: modalRadius
+                color: fpgaProgressHeaderBg.color
+            }
+
+            Text {
+                text: fpgaProgressDialog.title + (fpgaFwUpdateTarget ? " (" + fpgaFwUpdateTarget + ")" : "")
+                anchors.left: parent.left
+                anchors.leftMargin: modalPadding
+                anchors.verticalCenter: parent.verticalCenter
+                color: "white"
+                font.pixelSize: 18
+                font.weight: Font.Medium
+                horizontalAlignment: Text.AlignLeft
+                verticalAlignment: Text.AlignVCenter
+            }
+        }
+
+        background: Rectangle {
+            color: modalBackgroundColor
+            radius: modalRadius
+            border.color: modalBorderColor
+            border.width: modalBorderWidth
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 12
+            width: fpgaProgressDialog.width - fpgaProgressDialog.leftPadding - fpgaProgressDialog.rightPadding
+
+            Text {
+                text: "Programming FPGA"
+                color: "white"
+                font.pixelSize: 16
+                Layout.fillWidth: true
+            }
+
+            ProgressBar {
+                Layout.fillWidth: true
+                from: 0
+                to: 1
+                indeterminate: fpgaFwPercent < 0
+                value: fpgaFwPercent < 0 ? 0 : (fpgaFwPercent / 100.0)
+            }
+
+            Text {
+                text: fpgaFwMessage
+                color: "#BDC3C7"
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 20
         spacing: 15
-
-        // Title
-        Text {
-            text: "Settings"
-            font.pixelSize: 20
-            font.weight: Font.Bold
-            color: "white"
-            horizontalAlignment: Text.AlignHCenter
-            Layout.alignment: Qt.AlignHCenter
-        }
 
         // Remaining content area (split into App Info top, Modules bottom)
         Item {
@@ -850,13 +1019,13 @@ Rectangle {
                             columnSpacing: 10
                             rowSpacing: 6
 
-                            Text { text: "App Version:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                            Text { text: "App Version:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                             Text { text: "" + appVersion; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                            Text { text: "SDK Version:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                            Text { text: "SDK Version:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                             Text { text: "" + MOTIONInterface.get_sdk_version(); color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                            Text { text: "System State:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                            Text { text: "System State:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                             Text {
                                 text: {
                                     const c = MOTIONInterface.consoleConnected
@@ -1041,12 +1210,327 @@ Rectangle {
                 }
             }
 
+            RowLayout {
+                id: fpgaRow
+                anchors.top: appRow.bottom
+                anchors.left: parent.left
+                anchors.right: parent.right
+                height: parent.height * 0.18
+                anchors.topMargin: 15
+
+                Rectangle {
+                    id: appFpgaContainer
+                    Layout.preferredWidth: fpgaRow.width
+                    Layout.fillWidth: false
+                    Layout.fillHeight: true
+                    color: "#1E1E20"
+                    radius: 10
+                    border.color: "#3E4E6F"
+                    border.width: 2
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.margins: 12
+                        spacing: 8
+
+                        // ── Left narrow column: FPGAs label + indicator, refresh below ──
+                        ColumnLayout {
+                            Layout.preferredWidth: implicitWidth
+                            Layout.minimumWidth: 110
+                            Layout.fillHeight: true
+                            spacing: 8
+
+                            RowLayout {
+                                spacing: 6
+                                Text { text: "FPGAs"; font.pixelSize: 16; color: "#BDC3C7" }
+                                Rectangle {
+                                    width: 14; height: 14; radius: 7
+                                    color: MOTIONInterface.consoleConnected ? "green" : "red"
+                                    border.color: "black"; border.width: 1
+                                }
+                            }
+
+                            Rectangle {
+                                width: 30; height: 30; radius: 15
+                                color: enabled ? "#2C3E50" : "#7F8C8D"
+                                enabled: MOTIONInterface.consoleConnected
+
+                                Text {
+                                    text: "\u21BB"
+                                    anchors.centerIn: parent
+                                    font.pixelSize: 20
+                                    font.family: iconFont.name
+                                    color: enabled ? "white" : "#BDC3C7"
+                                }
+
+                                MouseArea {
+                                    id: refreshFpgaMouseArea
+                                    anchors.fill: parent
+                                    enabled: parent.enabled
+                                    hoverEnabled: true
+                                    onClicked: refreshConsoleInfo()
+                                    onEntered: if (parent.enabled) parent.color = "#34495E"
+                                    onExited: parent.color = parent.enabled ? "#2C3E50" : "#7F8C8D"
+                                }
+
+                                ToolTip.visible: refreshFpgaMouseArea.containsMouse
+                                ToolTip.text: "Refresh"
+                                ToolTip.delay: 400
+                            }
+
+                            Item { Layout.fillHeight: true }
+                        }
+
+                        // Vertical divider
+                        Rectangle { width: 1; Layout.fillHeight: true; color: "#3E4E6F" }
+
+                        // ── TA panel ──
+                        Item {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                spacing: 8
+
+                                RowLayout {
+                                    spacing: 8
+                                    Layout.fillWidth: true
+                                    Text { text: "TA"; font.pixelSize: 16; color: "#BDC3C7" }
+                                    Item { Layout.fillWidth: true }
+                                    Rectangle {
+                                        width: 80; height: 28; radius: 8
+                                        color: enabled ? "#E74C3C" : "#7F8C8D"
+                                        enabled: MOTIONInterface.consoleConnected
+                                            && taFpgaLatestVersion !== "N/A"
+                                            && !MOTIONInterface.fpgaFirmwareUpdateBusy
+                                        Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
+                                        MouseArea {
+                                            anchors.fill: parent; enabled: parent.enabled
+                                            onClicked: _startFpgaUpdate("TA", taFpgaLatestVersion)
+                                            onEntered: if (parent.enabled) parent.color = "#C0392B"
+                                            onExited: if (parent.enabled) parent.color = "#E74C3C"
+                                        }
+                                        Behavior on color { ColorAnimation { duration: 200 } }
+                                    }
+                                }
+
+                                Rectangle { Layout.fillWidth: true; height: 2; color: "#3E4E6F" }
+
+                                GridLayout {
+                                    Layout.fillWidth: true
+                                    columns: 2
+                                    columnSpacing: 10
+                                    rowSpacing: 6
+
+                                    Text { text: "FW:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 70 }
+                                    Text { text: taFpgaFirmwareVersion; color: "#2ECC71"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
+
+                                    Text { text: "Latest:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 70 }
+                                    Text { text: taFpgaLatestVersion; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
+                                }
+
+                            }
+                        }
+
+                        // Vertical divider
+                        Rectangle { width: 1; Layout.fillHeight: true; color: "#3E4E6F" }
+
+                        // ── Seed panel ──
+                        Item {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                spacing: 8
+
+                                RowLayout {
+                                    spacing: 8
+                                    Layout.fillWidth: true
+                                    Text { text: "Seed"; font.pixelSize: 16; color: "#BDC3C7" }
+                                    Item { Layout.fillWidth: true }
+                                    Rectangle {
+                                        width: 80; height: 28; radius: 8
+                                        color: enabled ? "#E74C3C" : "#7F8C8D"
+                                        enabled: MOTIONInterface.consoleConnected
+                                            && seedFpgaLatestVersion !== "N/A"
+                                            && !MOTIONInterface.fpgaFirmwareUpdateBusy
+                                        Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
+                                        MouseArea {
+                                            anchors.fill: parent; enabled: parent.enabled
+                                            onClicked: _startFpgaUpdate("SEED", seedFpgaLatestVersion)
+                                            onEntered: if (parent.enabled) parent.color = "#C0392B"
+                                            onExited: if (parent.enabled) parent.color = "#E74C3C"
+                                        }
+                                        Behavior on color { ColorAnimation { duration: 200 } }
+                                    }
+                                }
+
+                                Rectangle { Layout.fillWidth: true; height: 2; color: "#3E4E6F" }
+
+                                GridLayout {
+                                    Layout.fillWidth: true
+                                    columns: 2
+                                    columnSpacing: 10
+                                    rowSpacing: 6
+
+                                    Text { text: "FW:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 70 }
+                                    Text { text: seedFpgaFirmwareVersion; color: "#2ECC71"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
+
+                                    Text { text: "Latest:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 70 }
+                                    Text { text: seedFpgaLatestVersion; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
+                                }
+
+                            }
+                        }
+
+                        // Vertical divider
+                        Rectangle { width: 1; Layout.fillHeight: true; color: "#3E4E6F" }
+
+                        // ── Safety panel EE ──
+                        Item {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                spacing: 8
+
+                                RowLayout {
+                                    spacing: 8
+                                    Layout.fillWidth: true
+                                    Text { text: "Safety EE"; font.pixelSize: 16; color: "#BDC3C7" }
+                                    Item { Layout.fillWidth: true }
+                                    Rectangle {
+                                        width: 80; height: 28; radius: 8
+                                        color: enabled ? "#E74C3C" : "#7F8C8D"
+                                        enabled: MOTIONInterface.consoleConnected
+                                            && safetyFpgaLatestVersion !== "N/A"
+                                            && !MOTIONInterface.fpgaFirmwareUpdateBusy
+                                        Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
+                                        MouseArea {
+                                            anchors.fill: parent; enabled: parent.enabled
+                                            onClicked: _startFpgaUpdate("SAFETY_EE", safetyFpgaLatestVersion)
+                                            onEntered: if (parent.enabled) parent.color = "#C0392B"
+                                            onExited: if (parent.enabled) parent.color = "#E74C3C"
+                                        }
+                                        Behavior on color { ColorAnimation { duration: 200 } }
+                                    }
+                                }
+
+                                Rectangle { Layout.fillWidth: true; height: 2; color: "#3E4E6F" }
+
+                                GridLayout {
+                                    Layout.fillWidth: true
+                                    columns: 2
+                                    columnSpacing: 10
+                                    rowSpacing: 6
+
+                                    Text { text: "FW:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 70 }
+                                    Text {
+                                        text: safetyEeFpgaFirmwareVersion
+                                        color: "#2ECC71"
+                                        font.pixelSize: 14
+                                        elide: Text.ElideRight
+                                        Layout.fillWidth: true
+                                    }
+
+                                    Text { text: "Latest:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 70 }
+                                    Text { text: safetyFpgaLatestVersion; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
+                                }
+
+                            }
+                        }
+
+                        // Vertical divider
+                        Rectangle { width: 1; Layout.fillHeight: true; color: "#3E4E6F" }
+
+                        // ── Safety panel OPT ──
+                        Item {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                spacing: 8
+
+                                RowLayout {
+                                    spacing: 8
+                                    Layout.fillWidth: true
+                                    Text { text: "Safety OPT"; font.pixelSize: 16; color: "#BDC3C7" }
+                                    Item { Layout.fillWidth: true }
+                                    Rectangle {
+                                        width: 80; height: 28; radius: 8
+                                        color: enabled ? "#E74C3C" : "#7F8C8D"
+                                        enabled: MOTIONInterface.consoleConnected
+                                            && safetyFpgaLatestVersion !== "N/A"
+                                            && !MOTIONInterface.fpgaFirmwareUpdateBusy
+                                        Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
+                                        MouseArea {
+                                            anchors.fill: parent; enabled: parent.enabled
+                                            onClicked: _startFpgaUpdate("SAFETY_OPT", safetyFpgaLatestVersion)
+                                            onEntered: if (parent.enabled) parent.color = "#C0392B"
+                                            onExited: if (parent.enabled) parent.color = "#E74C3C"
+                                        }
+                                        Behavior on color { ColorAnimation { duration: 200 } }
+                                    }
+                                }
+
+                                Rectangle { Layout.fillWidth: true; height: 2; color: "#3E4E6F" }
+
+                                GridLayout {
+                                    Layout.fillWidth: true
+                                    columns: 2
+                                    columnSpacing: 10
+                                    rowSpacing: 6
+
+                                    Text { text: "FW:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 70 }
+                                    Text {
+                                        text: safetyOptFpgaFirmwareVersion
+                                        color: "#2ECC71"
+                                        font.pixelSize: 14
+                                        elide: Text.ElideRight
+                                        Layout.fillWidth: true
+                                    }
+
+                                    Text { text: "Latest:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 70 }
+                                    Text { text: safetyFpgaLatestVersion; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
+                                }
+
+                            }
+                        }
+                    }
+
+                    // Keep verify toggle visually near refresh without affecting RowLayout sizing.
+                    CheckBox {
+                        id: fpgaVerifyOverlay
+                        text: "Verify"
+                        checked: MOTIONInterface.fpgaFirmwareVerifyEnabled
+                        enabled: MOTIONInterface.consoleConnected && !MOTIONInterface.fpgaFirmwareUpdateBusy
+                        indicator.width: 16
+                        indicator.height: 16
+                        font.pixelSize: 13
+                        anchors.left: parent.left
+                        anchors.leftMargin: 10
+                        anchors.bottom: parent.bottom
+                        anchors.bottomMargin: 8
+
+                        onToggled: MOTIONInterface.fpgaFirmwareVerifyEnabled = checked
+
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Enable FPGA post-program verify (slower)"
+                        ToolTip.delay: 400
+                    }
+                }
+            }
+
             Item {
                 id: modulesArea
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
-                anchors.top: appRow.bottom
+                anchors.top: fpgaRow.bottom
                 anchors.topMargin: 15
 
                 RowLayout {
@@ -1124,22 +1608,22 @@ Rectangle {
                                 columnSpacing: 10
                                 rowSpacing: 6
 
-                                Text { text: "Device ID:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Device ID:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: consoleDeviceId; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                                Text { text: "Board Rev ID:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Board Rev ID:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: consoleBoardRevId; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                                Text { text: "Firmware:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Firmware:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: consoleFirmwareVersion; color: "#2ECC71"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                                Text { text: "Latest Release:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Latest Release:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: consoleLatestFirmware; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                                Text { text: "Published:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Published:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: consoleLatestFirmwareDate; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                                Text { text: "Select Release:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Select Release:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 ComboBox {
                                     id: consoleLatestCombo
                                     model: consoleReleasesModel.concat(["Upload File..."])
@@ -1270,19 +1754,19 @@ Rectangle {
                                 columnSpacing: 10
                                 rowSpacing: 6
 
-                                Text { text: "Device ID:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Device ID:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: leftSensorDeviceId; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                                Text { text: "Firmware:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Firmware:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: leftSensorFirmwareVersion; color: "#2ECC71"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                                Text { text: "Latest Release:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Latest Release:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: leftLatestFirmware; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                                Text { text: "Published:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Published:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: leftLatestFirmwareDate; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                                Text { text: "Select Release:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Select Release:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 ComboBox {
                                     id: leftLatestCombo
                                     model: leftReleasesModel.concat(["Upload File..."])
@@ -1410,19 +1894,19 @@ Rectangle {
                                 columnSpacing: 10
                                 rowSpacing: 6
 
-                                Text { text: "Device ID:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Device ID:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: rightSensorDeviceId; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                                Text { text: "Firmware:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Firmware:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: rightSensorFirmwareVersion; color: "#2ECC71"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                                Text { text: "Latest Release:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Latest Release:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: rightLatestFirmware; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                                Text { text: "Published:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Published:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: rightLatestFirmwareDate; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
-                                Text { text: "Select Release:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 120 }
+                                Text { text: "Select Release:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 ComboBox {
                                     id: rightLatestCombo
                                     model: rightReleasesModel.concat(["Upload File..."])

@@ -128,7 +128,7 @@ Rectangle {
                 console.warn("Invalid numeric input for unit conversion.");
                 return;
             }
-            fullValue = Math.round(floatVal / myFn.scale);
+            fullValue = Math.round(floatVal / FpgaData.getScale(fpgaLabel, funcName));
         } else {
             let sanitized = data.replace(/0x/gi, "").replace(/\s+/g, "");
 
@@ -221,7 +221,7 @@ Rectangle {
             let rawValue = fullValue;  // store globally
 
             if (myFn.unit && myFn.scale) {
-                field.text = (fullValue * myFn.scale).toFixed(3);
+                field.text = (fullValue * FpgaData.getScale(fpgaLabel, funcName)).toFixed(3);
             } else {
                 let hexStr = "0x" + fullValue.toString(16).toUpperCase().padStart(length * 2, "0");
                 field.text = hexStr;
@@ -2176,6 +2176,12 @@ Rectangle {
 
         function onTecDacChanged() {
             // console.log("DAC Changed")
+        }
+
+        // Apply FPGA scale overrides whenever user config is (re)loaded from device
+        function onUserConfigLoaded(tecTrip, optGain, optThresh, eeGain, eeThresh) {
+            if (eeGain  > 0) FpgaData.setScaleOverride("Safety EE",  "DRIVE CL", eeGain)
+            if (optGain > 0) FpgaData.setScaleOverride("Safety OPT", "DRIVE CL", optGain)
         }
 
     }

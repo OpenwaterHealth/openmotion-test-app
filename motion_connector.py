@@ -2007,13 +2007,26 @@ class MOTIONConnector(QObject):
                     f"Capturing {capture_type} for {sensor_side} camera {camera_index} with SN {serial_number}"
                 )
 
+                sensor = self._interface.sensors.get(sensor_side)
+                if sensor is None:
+                    logger.error("%s sensor not connected.", sensor_side.capitalize())
+                    return
+
                 # Single camera
-                bins, histo = self._interface.get_camera_histogram(
-                    sensor_side=sensor_side,
+                hist_result = sensor.get_camera_histogram(
                     camera_id=camera_index,
                     test_pattern_id=4,
                     auto_upload=True,
                 )
+                if not hist_result:
+                    logger.error(
+                        "Failed to get %s for camera %d",
+                        capture_type,
+                        camera_index + 1,
+                    )
+                    return
+
+                bins, histo = hist_result
                 if bins:
                     suffix = "_dark" if is_dark else "_light"
                     filename = f"{serial_number}_histogram{suffix}.csv"
@@ -3536,12 +3549,23 @@ class MOTIONConnector(QObject):
         self, target: str, camera_index: int, test_pattern_id: int = 4
     ):
         logger.info(f"Getting histogram for camera {camera_index + 1}")
-        bins, histo = motion_interface.get_camera_histogram(
-            sensor_side=target,
+        sensor = motion_interface.sensors.get(target)
+        if sensor is None:
+            logger.error("%s sensor not connected.", target.capitalize())
+            self.histogramReady.emit([])
+            return
+
+        hist_result = sensor.get_camera_histogram(
             camera_id=camera_index,
             test_pattern_id=test_pattern_id,
             auto_upload=True,
         )
+        if not hist_result:
+            logger.error("Failed to retrieve histogram.")
+            self.histogramReady.emit([])  # Emit empty to clear
+            return
+
+        bins, histo = hist_result
 
         if bins:
             self.histogramReady.emit(bins)

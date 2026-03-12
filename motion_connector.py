@@ -103,8 +103,8 @@ RUNNING = 4
 
 # Firmware source (GitHub releases)
 _CONSOLE_FW_REPO_OWNER = "OpenwaterHealth"
-_CONSOLE_FW_REPO_NAME = "motion-console-fw"
-_SENSOR_FW_REPO_NAME = "motion-sensor-fw"
+_CONSOLE_FW_REPO_NAME = "openmotion-console-fw"
+_SENSOR_FW_REPO_NAME = "openmotion-sensor-fw"
 _FPGA_FW_REPO_MAP = {
     "TA": "openmotion-ta-fpga",
     "SEED": "openmotion-seed-fpga",

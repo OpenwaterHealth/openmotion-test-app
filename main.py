@@ -9,7 +9,6 @@ from PyQt6.QtQml import QQmlApplicationEngine, qmlRegisterSingletonInstance
 from qasync import QEventLoop
 
 from motion_connector import MOTIONConnector
-from pathlib import Path
 from version import get_version
 
 # set PYTHONPATH=%cd%\..\OpenMOTION-PyLib;%PYTHONPATH%
@@ -17,31 +16,45 @@ from version import get_version
 
 APP_VERSION = get_version()
 
-logger = logging.getLogger(__name__) 
+logger = logging.getLogger(__name__)
 
 # Suppress PyQt6 DeprecationWarnings related to SIP
 warnings.simplefilter("ignore", DeprecationWarning)
 
+
 def resource_path(rel: str) -> str:
-    import sys, os
-    base = getattr(sys, "_MEIPASS", os.path.abspath(os.path.dirname(sys.executable if getattr(sys,"frozen",False) else __file__)))
+    import sys
+    import os
+
+    base = getattr(
+        sys,
+        "_MEIPASS",
+        os.path.abspath(
+            os.path.dirname(
+                sys.executable if getattr(sys, "frozen", False) else __file__
+            )
+        ),
+    )
     return os.path.join(base, rel)
+
 
 def main():
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description='OpenMOTION Test Application')
-    parser.add_argument('--debug', action='store_true', help='Enable debug logging and console output')
+    parser = argparse.ArgumentParser(description="OpenMOTION Test Application")
+    parser.add_argument(
+        "--debug", action="store_true", help="Enable debug logging and console output"
+    )
     args = parser.parse_args()
 
     # Configure logging based on debug flag
     if args.debug:
         logging.basicConfig(
             level=logging.DEBUG,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
             handlers=[
                 logging.StreamHandler(sys.stdout),  # Console output
-                logging.FileHandler('debug.log')    # File output
-            ]
+                logging.FileHandler("debug.log"),  # File output
+            ],
         )
         logger.info("Debug mode enabled - logging level set to DEBUG")
     else:
@@ -103,12 +116,12 @@ def main():
 
         # Schedule shutdown but do NOT block the loop
         asyncio.ensure_future(shutdown()).add_done_callback(lambda _: loop.stop())
-        
+
         engine.deleteLater()  # Ensure QML engine is destroyed
 
     # Connect shutdown process to app quit event
     app.aboutToQuit.connect(handle_exit)
-    
+
     try:
         with loop:
             loop.run_until_complete(main_async())
@@ -116,13 +129,16 @@ def main():
     except RuntimeError as e:
         if "Event loop stopped before Future completed" in str(e):
             # Graceful shutdown — expected if closing while a future is active
-            logger.warning("App closed while a Future was still running (safe to ignore)")
+            logger.warning(
+                "App closed while a Future was still running (safe to ignore)"
+            )
         else:
             logger.error(f"Runtime error: {e}")
     except KeyboardInterrupt:
         logger.info("Application interrupted by user.")
     finally:
         loop.close()
+
 
 if __name__ == "__main__":
     main()

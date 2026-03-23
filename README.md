@@ -44,3 +44,15 @@ Python example UI for OPEN Motion used for Hardware Testing and Basic Usage
 ```
 python -m PyInstaller -y openwater.spec
 ```
+
+## SBOM
+
+This repository includes a CycloneDX SBOM at `sbom.cyclonedx.json`.
+
+Regenerate it after dependency or packaging changes:
+
+```bash
+python scripts/generate_sbom.py
+```
+
+The SBOM is derived from the repository's declared Python dependencies and packaging evidence in `requirements.txt`, `openwater.spec`, `README.md`, and `.github/workflows/release-build.yml`.

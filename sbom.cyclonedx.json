@@ -1,0 +1,375 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:07759ae8-42f8-4803-8503-35007a73f63f",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-03-23T18:38:08+00:00",
+    "tools": {
+      "components": [
+        {
+          "type": "application",
+          "name": "generate_sbom.py",
+          "version": "1.0.0"
+        }
+      ]
+    },
+    "component": {
+      "type": "application",
+      "bom-ref": "pkg:generic/openmotion-test-app@1.2.20+5.g447c3b2.dirty",
+      "name": "openmotion-test-app",
+      "version": "1.2.20+5.g447c3b2.dirty",
+      "description": "Qt/QML desktop hardware test application for OpenMOTION blood flow volume and index measurement workflows.",
+      "licenses": [
+        {
+          "license": {
+            "id": "AGPL-3.0-only"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/OpenwaterHealth/OpenMOTION-TestAPP"
+        }
+      ],
+      "properties": [
+        {
+          "name": "openwater:sbom-scope",
+          "value": "source-repository"
+        },
+        {
+          "name": "openwater:sbom-evidence",
+          "value": "requirements.txt, openwater.spec, README.md, .github/workflows/release-build.yml"
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pyqt6@6.8.0",
+      "name": "PyQt6",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "openwater:dependency-group",
+          "value": "runtime"
+        },
+        {
+          "name": "openwater:requirement-specifier",
+          "value": "==6.8.0"
+        }
+      ],
+      "purl": "pkg:pypi/pyqt6@6.8.0",
+      "version": "6.8.0"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pyqt6-sip@13.9.1",
+      "name": "PyQt6-sip",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "openwater:dependency-group",
+          "value": "runtime"
+        },
+        {
+          "name": "openwater:requirement-specifier",
+          "value": "==13.9.1"
+        }
+      ],
+      "purl": "pkg:pypi/pyqt6-sip@13.9.1",
+      "version": "13.9.1",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/Python-SIP/sip"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "BSD-2-Clause"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pyqt6-qt6@6.8.1",
+      "name": "PyQt6-Qt6",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "openwater:dependency-group",
+          "value": "runtime"
+        },
+        {
+          "name": "openwater:requirement-specifier",
+          "value": "==6.8.1"
+        }
+      ],
+      "purl": "pkg:pypi/pyqt6-qt6@6.8.1",
+      "version": "6.8.1",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://www.riverbankcomputing.com/software/pyqt/"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "LGPL v3"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pyside6@6.8.1",
+      "name": "PySide6",
+      "scope": "excluded",
+      "properties": [
+        {
+          "name": "openwater:dependency-group",
+          "value": "runtime"
+        },
+        {
+          "name": "openwater:requirement-specifier",
+          "value": "==6.8.1"
+        },
+        {
+          "name": "openwater:classification",
+          "value": "excluded-runtime"
+        }
+      ],
+      "purl": "pkg:pypi/pyside6@6.8.1",
+      "version": "6.8.1",
+      "description": "Present in requirements but explicitly excluded from the PyInstaller bundle to avoid mixed Qt runtimes."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pyqt6-charts@6.8.0",
+      "name": "PyQt6-Charts",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "openwater:dependency-group",
+          "value": "runtime"
+        },
+        {
+          "name": "openwater:requirement-specifier",
+          "value": "==6.8.0"
+        }
+      ],
+      "purl": "pkg:pypi/pyqt6-charts@6.8.0",
+      "version": "6.8.0"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/qasync@0.27.1",
+      "name": "qasync",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "openwater:dependency-group",
+          "value": "runtime"
+        },
+        {
+          "name": "openwater:requirement-specifier",
+          "value": "==0.27.1"
+        }
+      ],
+      "purl": "pkg:pypi/qasync@0.27.1",
+      "version": "0.27.1"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/base58@2.1.1",
+      "name": "base58",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "openwater:dependency-group",
+          "value": "runtime"
+        },
+        {
+          "name": "openwater:requirement-specifier",
+          "value": "==2.1.1"
+        }
+      ],
+      "purl": "pkg:pypi/base58@2.1.1",
+      "version": "2.1.1"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pyinstaller@6.15.0",
+      "name": "PyInstaller",
+      "scope": "excluded",
+      "properties": [
+        {
+          "name": "openwater:dependency-group",
+          "value": "runtime"
+        },
+        {
+          "name": "openwater:requirement-specifier",
+          "value": "==6.15.0"
+        },
+        {
+          "name": "openwater:classification",
+          "value": "build"
+        }
+      ],
+      "purl": "pkg:pypi/pyinstaller@6.15.0",
+      "version": "6.15.0",
+      "description": "Packaging tool used to create the distributable Windows bundle."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pandas@2.3.3",
+      "name": "pandas",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "openwater:dependency-group",
+          "value": "runtime"
+        },
+        {
+          "name": "openwater:requirement-specifier",
+          "value": "==2.3.3"
+        }
+      ],
+      "purl": "pkg:pypi/pandas@2.3.3",
+      "version": "2.3.3"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/numpy@2.4.2",
+      "name": "numpy",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "openwater:dependency-group",
+          "value": "runtime"
+        },
+        {
+          "name": "openwater:requirement-specifier",
+          "value": ">=1.24.0"
+        }
+      ],
+      "purl": "pkg:pypi/numpy@2.4.2",
+      "version": "2.4.2"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pytest@7.4.0",
+      "name": "pytest",
+      "scope": "excluded",
+      "properties": [
+        {
+          "name": "openwater:dependency-group",
+          "value": "development"
+        },
+        {
+          "name": "openwater:requirement-specifier",
+          "value": "==7.4.0"
+        },
+        {
+          "name": "openwater:classification",
+          "value": "development"
+        }
+      ],
+      "purl": "pkg:pypi/pytest@7.4.0",
+      "version": "7.4.0",
+      "description": "Development-only test dependency."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/flake8@7.1.1",
+      "name": "flake8",
+      "scope": "excluded",
+      "properties": [
+        {
+          "name": "openwater:dependency-group",
+          "value": "development"
+        },
+        {
+          "name": "openwater:requirement-specifier",
+          "value": "==7.1.1"
+        },
+        {
+          "name": "openwater:classification",
+          "value": "development"
+        }
+      ],
+      "purl": "pkg:pypi/flake8@7.1.1",
+      "version": "7.1.1",
+      "description": "Development-only lint dependency."
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:generic/openmotion-sdk",
+      "name": "openmotion-sdk",
+      "scope": "required",
+      "description": "External device communication and programming SDK imported by the application and bundled by the PyInstaller build when present.",
+      "properties": [
+        {
+          "name": "openwater:classification",
+          "value": "external-runtime"
+        },
+        {
+          "name": "openwater:evidence",
+          "value": "main.py, motion_connector.py, motion_singleton.py, openwater.spec, .github/workflows/release-build.yml"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/OpenwaterHealth/openmotion-sdk"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:generic/libusb",
+      "name": "libusb",
+      "scope": "required",
+      "description": "USB runtime dependency required by the OpenMOTION SDK and packaging flow on Windows.",
+      "properties": [
+        {
+          "name": "openwater:classification",
+          "value": "external-runtime"
+        },
+        {
+          "name": "openwater:evidence",
+          "value": "README.md, openwater.spec, rthook_libusb_paths.py"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/libusb/libusb"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "pkg:generic/openmotion-test-app@1.2.20+5.g447c3b2.dirty",
+      "dependsOn": [
+        "pkg:generic/libusb",
+        "pkg:generic/openmotion-sdk",
+        "pkg:pypi/base58@2.1.1",
+        "pkg:pypi/numpy@2.4.2",
+        "pkg:pypi/pandas@2.3.3",
+        "pkg:pypi/pyqt6-charts@6.8.0",
+        "pkg:pypi/pyqt6-qt6@6.8.1",
+        "pkg:pypi/pyqt6-sip@13.9.1",
+        "pkg:pypi/pyqt6@6.8.0",
+        "pkg:pypi/qasync@0.27.1"
+      ]
+    }
+  ]
+}

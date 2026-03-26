@@ -3422,7 +3422,7 @@ class MOTIONConnector(QObject):
 
             self.tecStatusChanged.emit()
 
-            return True
+            return ok
 
         except Exception as e:
             logger.error(f"Error in TEC status operation: {e}")
@@ -3534,7 +3534,7 @@ class ConsoleStatusThread(QThread):
                     # 1. TEC status poll
                     #
                     # This updates _tec_* fields inside connector and emits tecStatusChanged
-                    self.connector.tec_status()
+                    ok_tec_temp = self.connector.tec_status()
 
                     #
                     # 2. PDU Mon poll
@@ -3571,8 +3571,8 @@ class ConsoleStatusThread(QThread):
 
                     ok_se = (statuses["SE"] & 0x0F) == 0
                     ok_so = (statuses["SO"] & 0x0F) == 0
-
-                    if ok_se and ok_so:
+                    
+                    if ok_se and ok_so and ok_tec_temp:
                         if self.connector._safetyFailure:
                             self.connector._safetyFailure = False
                             self.connector.safetyFailureStateChanged.emit(False)

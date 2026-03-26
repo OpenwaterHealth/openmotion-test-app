@@ -1508,70 +1508,77 @@ class MOTIONConnector(QObject):
             skip_entries.add(_OPT_DRIVE_CL)
 
         self._console_mutex.lock()
-        for idx, laser_param in enumerate(self.laser_params, start=1):
-            muxIdx = laser_param["muxIdx"]
-            channel = laser_param["channel"]
-            i2cAddr = laser_param["i2cAddr"]
-            offset = laser_param["offset"]
-            dataToSend = bytearray(laser_param["dataToSend"])
+        try:
+            for idx, laser_param in enumerate(self.laser_params, start=1):
+                muxIdx = laser_param["muxIdx"]
+                channel = laser_param["channel"]
+                i2cAddr = laser_param["i2cAddr"]
+                offset = laser_param["offset"]
+                dataToSend = bytearray(laser_param["dataToSend"])
 
-            if (channel, offset) in skip_entries:
+                if (channel, offset) in skip_entries:
+                    logger.info(
+                        f"[Connector] Skipping JSON entry ch={channel} off=0x{offset:02X} "
+                        f"(overridden by user config)"
+                    )
+                    continue
+
                 logger.info(
-                    f"[Connector] Skipping JSON entry ch={channel} off=0x{offset:02X} "
-                    f"(overridden by user config)"
+                    f"[Connector] ({idx}/{len(self.laser_params)}) "
+                    f"Writing I2C: muxIdx={muxIdx}, channel={channel}, "
+                    f"i2cAddr=0x{i2cAddr:02X}, offset=0x{offset:02X}, "
+                    f"data={list(dataToSend)}"
                 )
-                continue
 
-            logger.info(
-                f"[Connector] ({idx}/{len(self.laser_params)}) "
-                f"Writing I2C: muxIdx={muxIdx}, channel={channel}, "
-                f"i2cAddr=0x{i2cAddr:02X}, offset=0x{offset:02X}, "
-                f"data={list(dataToSend)}"
-            )
+                if not interface.console_module.write_i2c_packet(
+                    mux_index=muxIdx,
+                    channel=channel,
+                    device_addr=i2cAddr,
+                    reg_addr=offset,
+                    data=dataToSend,
+                ):
+                    logger.error(
+                        f"Failed to set laser power (muxIdx={muxIdx}, channel={channel})"
+                    )
+                    return False
 
-            if not interface.console_module.write_i2c_packet(
-                mux_index=muxIdx,
-                channel=channel,
-                device_addr=i2cAddr,
-                reg_addr=offset,
-                data=dataToSend,
-            ):
-                logger.error(
-                    f"Failed to set laser power (muxIdx={muxIdx}, channel={channel})"
+            # ------------------------------------------------------------------
+            # Write user-config DRIVE CL overrides after the JSON pass.
+            # Default scale matches the static FpgaModel value (1.86 mA/LSB).
+            # Data format: 16-bit LSB-first (isMsbFirst=false in FpgaModel).
+            # thresh is a raw uint16 register value; gain is a float scale factor
+            # used only for the QML FpgaData scale override.
+            # ------------------------------------------------------------------
+
+            def _write_drive_cl(ch: int, thresh, gain: float, label: str) -> bool:
+                if thresh is None:
+                    return True
+                set_value = thresh
+                gain_f = float(gain) if gain is not None else 0.0
+                if gain_f != 0.0:
+                    set_value = thresh/gain_f
+                raw = max(0, min(0xFFFF, int(round(set_value))))  # uint16 raw value
+                data = bytearray([raw & 0xFF, (raw >> 8) & 0xFF])  # LSB first
+
+                logger.info(
+                    f"[Connector] Writing user-config {label} DRIVE CL: "
+                    f"raw={raw}, gain={gain_f} → {list(data)}"
                 )
+                return interface.console_module.write_i2c_packet(
+                    mux_index=1, channel=ch, device_addr=0x41, reg_addr=0x10, data=data
+                )
+
+            if not _write_drive_cl(6, ee_thresh, ee_gain, "Safety EE"):
+                logger.error("Failed to write user-config Safety EE DRIVE CL")
+                return False
+            if not _write_drive_cl(7, opt_thresh, opt_gain, "Safety OPT"):
+                logger.error("Failed to write user-config Safety OPT DRIVE CL")
                 return False
 
-        # ------------------------------------------------------------------
-        # Write user-config DRIVE CL overrides after the JSON pass.
-        # Default scale matches the static FpgaModel value (1.86 mA/LSB).
-        # Data format: 16-bit LSB-first (isMsbFirst=false in FpgaModel).
-        # thresh is a raw uint16 register value; gain is a float scale factor
-        # used only for the QML FpgaData scale override (not for raw calculation).
-        # ------------------------------------------------------------------
+            logger.info("Laser power set successfully.")
+        finally:
+            self._console_mutex.unlock()
 
-        def _write_drive_cl(ch: int, thresh, gain: float, label: str) -> bool:
-            if thresh is None:
-                return True
-            raw = max(0, min(0xFFFF, int(thresh)))  # uint16 raw value
-            data = bytearray([raw & 0xFF, (raw >> 8) & 0xFF])  # LSB first
-            gain_f = float(gain) if gain is not None else 0.0
-            logger.info(
-                f"[Connector] Writing user-config {label} DRIVE CL: "
-                f"raw={raw}, gain={gain_f} → {list(data)}"
-            )
-            return interface.console_module.write_i2c_packet(
-                mux_index=1, channel=ch, device_addr=0x41, reg_addr=0x10, data=data
-            )
-
-        if not _write_drive_cl(6, ee_thresh, ee_gain, "Safety EE"):
-            logger.error("Failed to write user-config Safety EE DRIVE CL")
-            return False
-        if not _write_drive_cl(7, opt_thresh, opt_gain, "Safety OPT"):
-            logger.error("Failed to write user-config Safety OPT DRIVE CL")
-            return False
-
-        logger.info("Laser power set successfully.")
-        self._console_mutex.unlock()
         return True
 
     @pyqtProperty(str, notify=csvOutputDirectoryChanged)
@@ -3534,7 +3541,7 @@ class ConsoleStatusThread(QThread):
                     # 1. TEC status poll
                     #
                     # This updates _tec_* fields inside connector and emits tecStatusChanged
-                    ok_tec_temp = self.connector.tec_status()
+                    ok_tec = self.connector.tec_status()
 
                     #
                     # 2. PDU Mon poll
@@ -3572,7 +3579,7 @@ class ConsoleStatusThread(QThread):
                     ok_se = (statuses["SE"] & 0x0F) == 0
                     ok_so = (statuses["SO"] & 0x0F) == 0
                     
-                    if ok_se and ok_so and ok_tec_temp:
+                    if ok_se and ok_so and ok_tec:
                         if self.connector._safetyFailure:
                             self.connector._safetyFailure = False
                             self.connector.safetyFailureStateChanged.emit(False)

@@ -3112,20 +3112,36 @@ class MOTIONConnector(QObject):
                 logger.error(msg)
                 self.userConfigError.emit(msg)
                 return
+
             config.set("TEC_TRIP", tec_trip)
-            config.set("OPT_GAIN", opt_gain)
-            config.set("OPT_THRESH", opt_thresh)
-            config.set("EE_GAIN", ee_gain)
-            config.set("EE_THRESH", ee_thresh)
+
+            # OPT handling
+            if opt_thresh == 0:
+                config.json_data.pop("OPT_GAIN", None)
+                config.json_data.pop("OPT_THRESH", None)
+            else:
+                config.set("OPT_GAIN", opt_gain)
+                config.set("OPT_THRESH", opt_thresh)
+
+            # EE handling
+            if ee_thresh == 0:
+                config.json_data.pop("EE_GAIN", None)
+                config.json_data.pop("EE_THRESH", None)
+            else:
+                config.set("EE_GAIN", ee_gain)
+                config.set("EE_THRESH", ee_thresh)
+
             updated = motion_interface.console_module.write_config(config)
             if updated is None:
                 msg = "Failed to write user configuration to device"
                 logger.error(msg)
                 self.userConfigError.emit(msg)
                 return
+
             logger.info(
                 f"User config written: seq={updated.header.seq}, crc=0x{updated.header.crc:04X}"
             )
+
         except Exception as e:
             msg = f"Error writing user configuration: {e}"
             logger.error(msg)

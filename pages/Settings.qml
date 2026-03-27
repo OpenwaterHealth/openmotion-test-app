@@ -1055,8 +1055,8 @@ Rectangle {
 
                     // Validators outside GridLayout so they don't occupy grid cells
                     DoubleValidator { id: valTecTrip; bottom: 0; top: 100;  decimals: 2; notation: DoubleValidator.StandardNotation }
-                    DoubleValidator { id: valGain;    bottom: 0; top: 1000; decimals: 2; notation: DoubleValidator.StandardNotation }
-                    DoubleValidator { id: valThresh;  bottom: 0; top: 1000; decimals: 2; notation: DoubleValidator.StandardNotation }
+                    DoubleValidator { id: valGain;    bottom: 0; top: 100; decimals: 2; notation: DoubleValidator.StandardNotation }
+                    DoubleValidator { id: valThresh;  bottom: 0; top: 50000; decimals: 2; notation: DoubleValidator.StandardNotation }
 
                     ColumnLayout {
                         anchors.fill: parent
@@ -1101,7 +1101,7 @@ Rectangle {
                                 id: optThreshField
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: 32
-                                placeholderText: "0.00 – 1000.00"
+                                placeholderText: "0.00 – 50000.00"
                                 validator: valThresh
                                 inputMethodHints: Qt.ImhFormattedNumbersOnly
                                 text: userOptThresh.toFixed(2)
@@ -1109,7 +1109,7 @@ Rectangle {
                                     let v = parseFloat(text)
                                     if (isNaN(v)) { text = ""; return }
                                     if (v < 0) v = 0
-                                    if (v > 1000) v = 1000
+                                    if (v > 50000) v = 50000
                                     userOptThresh = v
                                     text = userOptThresh.toFixed(2)
                                 }
@@ -1121,7 +1121,7 @@ Rectangle {
                                 id: optGainField
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: 32
-                                placeholderText: "0.00 – 1000.00"
+                                placeholderText: "0.00 – 100.00"
                                 validator: valGain
                                 inputMethodHints: Qt.ImhFormattedNumbersOnly
                                 text: userOptGain.toFixed(2)
@@ -1129,7 +1129,7 @@ Rectangle {
                                     let v = parseFloat(text)
                                     if (isNaN(v)) { text = ""; return }
                                     if (v < 0) v = 0
-                                    if (v > 1000) v = 1000
+                                    if (v > 100) v = 100
                                     userOptGain = v
                                     text = userOptGain.toFixed(2)
                                 }
@@ -1139,7 +1139,7 @@ Rectangle {
                                 id: eeThreshField
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: 32
-                                placeholderText: "0.00 – 1000.00"
+                                placeholderText: "0.00 – 50000.00"
                                 validator: valThresh
                                 inputMethodHints: Qt.ImhFormattedNumbersOnly
                                 text: userEEThresh.toFixed(2)
@@ -1147,7 +1147,7 @@ Rectangle {
                                     let v = parseFloat(text)
                                     if (isNaN(v)) { text = ""; return }
                                     if (v < 0) v = 0
-                                    if (v > 1000) v = 1000
+                                    if (v > 50000) v = 50000
                                     userEEThresh = v
                                     text = userEEThresh.toFixed(2)
                                 }
@@ -1159,7 +1159,7 @@ Rectangle {
                                 id: eeGainField
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: 32
-                                placeholderText: "0.00 – 1000.00"
+                                placeholderText: "0.00 – 100.00"
                                 validator: valGain
                                 inputMethodHints: Qt.ImhFormattedNumbersOnly
                                 text: userEEGain.toFixed(2)
@@ -1167,7 +1167,7 @@ Rectangle {
                                     let v = parseFloat(text)
                                     if (isNaN(v)) { text = ""; return }
                                     if (v < 0) v = 0
-                                    if (v > 1000) v = 1000
+                                    if (v > 100) v = 100
                                     userEEGain = v
                                     text = userEEGain.toFixed(2)
                                 }

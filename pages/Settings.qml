@@ -1631,7 +1631,7 @@ Rectangle {
                                     currentIndex: consoleLatestIndex
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 32
-                                    enabled: MOTIONInterface.consoleConnected && consoleReleasesModel.length > 0
+                                    enabled: MOTIONInterface.consoleConnected
                                     onCurrentIndexChanged: consoleLatestIndex = currentIndex
                                 }
                             }
@@ -1647,7 +1647,6 @@ Rectangle {
                                     && consoleFirmwareVersion !== "N/A"
                                     && consoleDeviceId !== "N/A"
                                     && consoleBoardRevId !== "N/A"
-                                    && consoleReleasesModel.length > 0
                                     && !MOTIONInterface.consoleFirmwareUpdateBusy
 
                                 Text {

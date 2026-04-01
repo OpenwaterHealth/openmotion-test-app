@@ -222,6 +222,12 @@ class _ConsoleFirmwareDownloadThread(QThread):
         try:
             self.progress.emit(-1, f"Locating {self._filename} for {self._tag}…")
 
+            if self._connector._github_disabled:
+                self.failed.emit(
+                    "GitHub access is disabled (--no-github). Use 'Upload File...' to flash firmware locally."
+                )
+                return
+
             if GitHubReleases is None:
                 self.failed.emit(
                     "GitHubReleases is unavailable (omotion SDK not found in environment)."
@@ -491,6 +497,12 @@ class _ConsoleFpgaUpdateThread(QThread):
             logger.info(
                 f"[FPGA-UPD] thread start target={self._target} tag={self._tag}"
             )
+            if self._connector._github_disabled:
+                logger.info("[FPGA-UPD] GitHub disabled (--no-github flag)")
+                self.failed.emit(
+                    "GitHub access is disabled (--no-github). Cannot download FPGA firmware."
+                )
+                return
             if GitHubReleases is None:
                 logger.info("[FPGA-UPD] GitHubReleases unavailable in environment")
                 self.failed.emit(
@@ -876,9 +888,10 @@ class MOTIONConnector(QObject):
     )  # tec_trip, opt_gain, opt_thresh, ee_gain, ee_thresh
     userConfigError = pyqtSignal(str)
 
-    def __init__(self, config_dir="config", log_level=logging.INFO):
+    def __init__(self, config_dir="config", log_level=logging.INFO, github_disabled=False):
         super().__init__()
         self._interface = motion_interface
+        self._github_disabled = github_disabled
 
         self._tec_trip_value = 0
 
@@ -2094,6 +2107,9 @@ class MOTIONConnector(QObject):
     @pyqtSlot()
     def queryConsoleLatestVersionInfo(self):
         """Fetch latest firmware/release info from console module and emit to QML."""
+        if self._github_disabled:
+            logger.info("queryConsoleLatestVersionInfo: GitHub disabled, skipping.")
+            return
         self._console_mutex.lock()
         try:
             info = motion_interface.console_module.get_latest_version_info()
@@ -2108,6 +2124,9 @@ class MOTIONConnector(QObject):
     @pyqtSlot(str)
     def querySensorLatestVersionInfo(self, target: str):
         """Fetch latest firmware/release info from a sensor module and emit to QML."""
+        if self._github_disabled:
+            logger.info(f"querySensorLatestVersionInfo({target}): GitHub disabled, skipping.")
+            return
         try:
             if target != "SENSOR_LEFT" and target != "SENSOR_RIGHT":
                 logger.error(
@@ -2140,6 +2159,9 @@ class MOTIONConnector(QObject):
                 "SAFETY": {"tag_name", "name", "browser_download_url", "created_at"} | {"tag_name": "N/A", ...}
             }
         """
+        if self._github_disabled:
+            logger.info("queryConsoleLatestFpgaVersionInfo: GitHub disabled, skipping.")
+            return
         try:
             if GitHubReleases is None:
                 logger.error(

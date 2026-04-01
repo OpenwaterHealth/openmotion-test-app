@@ -44,6 +44,11 @@ def main():
     parser.add_argument(
         "--debug", action="store_true", help="Enable debug logging and console output"
     )
+    parser.add_argument(
+        "--no-github",
+        action="store_true",
+        help="Disable all GitHub release queries (firmware dropdowns will be empty; use file upload to flash)",
+    )
     args = parser.parse_args()
 
     # Configure logging based on debug flag
@@ -74,7 +79,7 @@ def main():
 
     # Expose to QML
     log_level = logging.DEBUG if args.debug else logging.INFO
-    connector = MOTIONConnector(log_level=log_level)
+    connector = MOTIONConnector(log_level=log_level, github_disabled=args.no_github)
     qmlRegisterSingletonInstance("OpenMotion", 1, 0, "MOTIONInterface", connector)
     engine.rootContext().setContextProperty("appVersion", APP_VERSION)
     # Also expose app version on the QGuiApplication instance so Python

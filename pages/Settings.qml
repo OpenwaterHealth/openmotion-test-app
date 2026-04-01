@@ -115,7 +115,13 @@ Rectangle {
         if (MOTIONInterface.consoleConnected) {
             MOTIONInterface.queryConsoleInfo()
             MOTIONInterface.queryConsoleLatestVersionInfo()
+        }
+    }
+
+    function refreshFpgaInfo() {
+        if (MOTIONInterface.consoleConnected) {
             MOTIONInterface.queryFpgaVersions()
+            MOTIONInterface.queryConsoleLatestFpgaVersionInfo()
         }
     }
 
@@ -172,8 +178,6 @@ Rectangle {
                 if (MOTIONInterface.consoleConnected)
                     userConfigLoading = true
                 settingsInfoTimer.restart()
-                if (MOTIONInterface.consoleConnected)
-                    MOTIONInterface.queryConsoleLatestVersionInfo()
             } else {
                 settingsInfoTimer.stop()
             }
@@ -222,10 +226,6 @@ Rectangle {
             seedFpgaFirmwareVersion = versions["Seed"] || "N/A"
             safetyEeFpgaFirmwareVersion = versions["SafetyEE"] || "N/A"
             safetyOptFpgaFirmwareVersion = versions["SafetyOPT"] || "N/A"
-
-            // After current FW versions are available, fetch latest FPGA releases from GitHub.
-            if (MOTIONInterface.consoleConnected)
-                MOTIONInterface.queryConsoleLatestFpgaVersionInfo()
         }
 
         function onLatestFpgaVersionInfoReceived(info) {
@@ -391,6 +391,7 @@ Rectangle {
         repeat: false
         onTriggered: {
             refreshConsoleInfo()
+            refreshFpgaInfo()
             refreshSensorInfo("SENSOR_LEFT")
             refreshSensorInfo("SENSOR_RIGHT")
             if (MOTIONInterface.consoleConnected)
@@ -1268,7 +1269,7 @@ Rectangle {
                                     anchors.fill: parent
                                     enabled: parent.enabled
                                     hoverEnabled: true
-                                    onClicked: refreshConsoleInfo()
+                                    onClicked: refreshFpgaInfo()
                                     onEntered: if (parent.enabled) parent.color = "#34495E"
                                     onExited: parent.color = parent.enabled ? "#2C3E50" : "#7F8C8D"
                                 }
@@ -1630,7 +1631,7 @@ Rectangle {
                                     currentIndex: consoleLatestIndex
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 32
-                                    enabled: MOTIONInterface.consoleConnected && consoleReleasesModel.length > 0
+                                    enabled: MOTIONInterface.consoleConnected
                                     onCurrentIndexChanged: consoleLatestIndex = currentIndex
                                 }
                             }
@@ -1646,7 +1647,6 @@ Rectangle {
                                     && consoleFirmwareVersion !== "N/A"
                                     && consoleDeviceId !== "N/A"
                                     && consoleBoardRevId !== "N/A"
-                                    && consoleReleasesModel.length > 0
                                     && !MOTIONInterface.consoleFirmwareUpdateBusy
 
                                 Text {

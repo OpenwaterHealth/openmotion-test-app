@@ -75,6 +75,7 @@ Rectangle {
     property string fpgaFwUpdateTarget: ""
     property int fpgaFwPercent: -1
     property string fpgaFwMessage: ""
+    property string fpgaFwUploadTarget: ""
 
     function _startFpgaUpdate(target, tag) {
         if (!MOTIONInterface.consoleConnected) {
@@ -92,6 +93,16 @@ Rectangle {
         fpgaFwMessage = "Starting..."
         MOTIONInterface.beginFpgaFirmwareUpdate(target, tag)
         fpgaProgressDialog.open()
+    }
+
+    function _startFpgaFromLocal(target) {
+        if (!MOTIONInterface.consoleConnected) {
+            fwErrorDialog.message = "Console is not connected."
+            fwErrorDialog.open()
+            return
+        }
+        fpgaFwUploadTarget = target
+        fpgaJedUploadDialog.open()
     }
 
     // Modal dialog styling (firmware update)
@@ -564,6 +575,35 @@ Rectangle {
             consoleFwMessage = ""
             consoleFwStageText = ""
             MOTIONInterface.beginDeviceFirmwareFromLocal(fwUploadTarget, file)
+        }
+    }
+
+    FileDialog {
+        id: fpgaJedUploadDialog
+        title: "Select FPGA .jed file"
+        nameFilters: ["FPGA firmware files (*.jed)"]
+        onAccepted: {
+            var file = ""
+            if (typeof selectedFiles !== 'undefined' && selectedFiles && selectedFiles.length > 0) file = selectedFiles[0]
+            else if (typeof fileUrls !== 'undefined' && fileUrls && fileUrls.length > 0) file = fileUrls[0]
+            else if (typeof fileUrl !== 'undefined' && fileUrl) file = fileUrl
+            if (!file) return
+
+            if (file && typeof file !== 'string') {
+                if (typeof file.toLocalFile === 'function') file = file.toLocalFile()
+                else if (typeof file.toString === 'function') file = file.toString()
+                else file = String(file)
+            }
+
+            if (typeof file === 'string' && file.indexOf("file://") === 0) {
+                file = file.replace(/^file:\/\//, "")
+                if (file.length > 0 && file[0] === '/' && file[2] === ':') file = file.substring(1)
+            }
+
+            fpgaFwPercent = -1
+            fpgaFwMessage = ""
+            MOTIONInterface.beginFpgaFirmwareFromLocal(fpgaFwUploadTarget, file)
+            fpgaProgressDialog.open()
         }
     }
 
@@ -1299,20 +1339,36 @@ Rectangle {
                                     Layout.fillWidth: true
                                     Text { text: "TA"; font.pixelSize: 16; color: "#BDC3C7" }
                                     Item { Layout.fillWidth: true }
-                                    Rectangle {
-                                        width: 80; height: 28; radius: 8
-                                        color: enabled ? "#E74C3C" : "#7F8C8D"
-                                        enabled: MOTIONInterface.consoleConnected
-                                            && taFpgaLatestVersion !== "N/A"
-                                            && !MOTIONInterface.fpgaFirmwareUpdateBusy
-                                        Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
-                                        MouseArea {
-                                            anchors.fill: parent; enabled: parent.enabled
-                                            onClicked: _startFpgaUpdate("TA", taFpgaLatestVersion)
-                                            onEntered: if (parent.enabled) parent.color = "#C0392B"
-                                            onExited: if (parent.enabled) parent.color = "#E74C3C"
+                                    RowLayout {
+                                        spacing: 4
+                                        Rectangle {
+                                            width: 70; height: 28; radius: 8
+                                            color: enabled ? "#E74C3C" : "#7F8C8D"
+                                            enabled: MOTIONInterface.consoleConnected
+                                                && taFpgaLatestVersion !== "N/A"
+                                                && !MOTIONInterface.fpgaFirmwareUpdateBusy
+                                            Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
+                                            MouseArea {
+                                                anchors.fill: parent; enabled: parent.enabled
+                                                onClicked: _startFpgaUpdate("TA", taFpgaLatestVersion)
+                                                onEntered: if (parent.enabled) parent.color = "#C0392B"
+                                                onExited: if (parent.enabled) parent.color = "#E74C3C"
+                                            }
+                                            Behavior on color { ColorAnimation { duration: 200 } }
                                         }
-                                        Behavior on color { ColorAnimation { duration: 200 } }
+                                        Rectangle {
+                                            width: 70; height: 28; radius: 8
+                                            color: enabled ? "#2980B9" : "#7F8C8D"
+                                            enabled: MOTIONInterface.consoleConnected && !MOTIONInterface.fpgaFirmwareUpdateBusy
+                                            Text { anchors.centerIn: parent; text: "Upload…"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
+                                            MouseArea {
+                                                anchors.fill: parent; enabled: parent.enabled
+                                                onClicked: _startFpgaFromLocal("TA")
+                                                onEntered: if (parent.enabled) parent.color = "#2471A3"
+                                                onExited: if (parent.enabled) parent.color = "#2980B9"
+                                            }
+                                            Behavior on color { ColorAnimation { duration: 200 } }
+                                        }
                                     }
                                 }
 
@@ -1351,20 +1407,36 @@ Rectangle {
                                     Layout.fillWidth: true
                                     Text { text: "Seed"; font.pixelSize: 16; color: "#BDC3C7" }
                                     Item { Layout.fillWidth: true }
-                                    Rectangle {
-                                        width: 80; height: 28; radius: 8
-                                        color: enabled ? "#E74C3C" : "#7F8C8D"
-                                        enabled: MOTIONInterface.consoleConnected
-                                            && seedFpgaLatestVersion !== "N/A"
-                                            && !MOTIONInterface.fpgaFirmwareUpdateBusy
-                                        Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
-                                        MouseArea {
-                                            anchors.fill: parent; enabled: parent.enabled
-                                            onClicked: _startFpgaUpdate("SEED", seedFpgaLatestVersion)
-                                            onEntered: if (parent.enabled) parent.color = "#C0392B"
-                                            onExited: if (parent.enabled) parent.color = "#E74C3C"
+                                    RowLayout {
+                                        spacing: 4
+                                        Rectangle {
+                                            width: 70; height: 28; radius: 8
+                                            color: enabled ? "#E74C3C" : "#7F8C8D"
+                                            enabled: MOTIONInterface.consoleConnected
+                                                && seedFpgaLatestVersion !== "N/A"
+                                                && !MOTIONInterface.fpgaFirmwareUpdateBusy
+                                            Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
+                                            MouseArea {
+                                                anchors.fill: parent; enabled: parent.enabled
+                                                onClicked: _startFpgaUpdate("SEED", seedFpgaLatestVersion)
+                                                onEntered: if (parent.enabled) parent.color = "#C0392B"
+                                                onExited: if (parent.enabled) parent.color = "#E74C3C"
+                                            }
+                                            Behavior on color { ColorAnimation { duration: 200 } }
                                         }
-                                        Behavior on color { ColorAnimation { duration: 200 } }
+                                        Rectangle {
+                                            width: 70; height: 28; radius: 8
+                                            color: enabled ? "#2980B9" : "#7F8C8D"
+                                            enabled: MOTIONInterface.consoleConnected && !MOTIONInterface.fpgaFirmwareUpdateBusy
+                                            Text { anchors.centerIn: parent; text: "Upload…"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
+                                            MouseArea {
+                                                anchors.fill: parent; enabled: parent.enabled
+                                                onClicked: _startFpgaFromLocal("SEED")
+                                                onEntered: if (parent.enabled) parent.color = "#2471A3"
+                                                onExited: if (parent.enabled) parent.color = "#2980B9"
+                                            }
+                                            Behavior on color { ColorAnimation { duration: 200 } }
+                                        }
                                     }
                                 }
 
@@ -1403,20 +1475,36 @@ Rectangle {
                                     Layout.fillWidth: true
                                     Text { text: "Safety EE"; font.pixelSize: 16; color: "#BDC3C7" }
                                     Item { Layout.fillWidth: true }
-                                    Rectangle {
-                                        width: 80; height: 28; radius: 8
-                                        color: enabled ? "#E74C3C" : "#7F8C8D"
-                                        enabled: MOTIONInterface.consoleConnected
-                                            && safetyFpgaLatestVersion !== "N/A"
-                                            && !MOTIONInterface.fpgaFirmwareUpdateBusy
-                                        Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
-                                        MouseArea {
-                                            anchors.fill: parent; enabled: parent.enabled
-                                            onClicked: _startFpgaUpdate("SAFETY_EE", safetyFpgaLatestVersion)
-                                            onEntered: if (parent.enabled) parent.color = "#C0392B"
-                                            onExited: if (parent.enabled) parent.color = "#E74C3C"
+                                    RowLayout {
+                                        spacing: 4
+                                        Rectangle {
+                                            width: 70; height: 28; radius: 8
+                                            color: enabled ? "#E74C3C" : "#7F8C8D"
+                                            enabled: MOTIONInterface.consoleConnected
+                                                && safetyFpgaLatestVersion !== "N/A"
+                                                && !MOTIONInterface.fpgaFirmwareUpdateBusy
+                                            Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
+                                            MouseArea {
+                                                anchors.fill: parent; enabled: parent.enabled
+                                                onClicked: _startFpgaUpdate("SAFETY_EE", safetyFpgaLatestVersion)
+                                                onEntered: if (parent.enabled) parent.color = "#C0392B"
+                                                onExited: if (parent.enabled) parent.color = "#E74C3C"
+                                            }
+                                            Behavior on color { ColorAnimation { duration: 200 } }
                                         }
-                                        Behavior on color { ColorAnimation { duration: 200 } }
+                                        Rectangle {
+                                            width: 70; height: 28; radius: 8
+                                            color: enabled ? "#2980B9" : "#7F8C8D"
+                                            enabled: MOTIONInterface.consoleConnected && !MOTIONInterface.fpgaFirmwareUpdateBusy
+                                            Text { anchors.centerIn: parent; text: "Upload…"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
+                                            MouseArea {
+                                                anchors.fill: parent; enabled: parent.enabled
+                                                onClicked: _startFpgaFromLocal("SAFETY_EE")
+                                                onEntered: if (parent.enabled) parent.color = "#2471A3"
+                                                onExited: if (parent.enabled) parent.color = "#2980B9"
+                                            }
+                                            Behavior on color { ColorAnimation { duration: 200 } }
+                                        }
                                     }
                                 }
 
@@ -1461,20 +1549,36 @@ Rectangle {
                                     Layout.fillWidth: true
                                     Text { text: "Safety OPT"; font.pixelSize: 16; color: "#BDC3C7" }
                                     Item { Layout.fillWidth: true }
-                                    Rectangle {
-                                        width: 80; height: 28; radius: 8
-                                        color: enabled ? "#E74C3C" : "#7F8C8D"
-                                        enabled: MOTIONInterface.consoleConnected
-                                            && safetyFpgaLatestVersion !== "N/A"
-                                            && !MOTIONInterface.fpgaFirmwareUpdateBusy
-                                        Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
-                                        MouseArea {
-                                            anchors.fill: parent; enabled: parent.enabled
-                                            onClicked: _startFpgaUpdate("SAFETY_OPT", safetyFpgaLatestVersion)
-                                            onEntered: if (parent.enabled) parent.color = "#C0392B"
-                                            onExited: if (parent.enabled) parent.color = "#E74C3C"
+                                    RowLayout {
+                                        spacing: 4
+                                        Rectangle {
+                                            width: 70; height: 28; radius: 8
+                                            color: enabled ? "#E74C3C" : "#7F8C8D"
+                                            enabled: MOTIONInterface.consoleConnected
+                                                && safetyFpgaLatestVersion !== "N/A"
+                                                && !MOTIONInterface.fpgaFirmwareUpdateBusy
+                                            Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
+                                            MouseArea {
+                                                anchors.fill: parent; enabled: parent.enabled
+                                                onClicked: _startFpgaUpdate("SAFETY_OPT", safetyFpgaLatestVersion)
+                                                onEntered: if (parent.enabled) parent.color = "#C0392B"
+                                                onExited: if (parent.enabled) parent.color = "#E74C3C"
+                                            }
+                                            Behavior on color { ColorAnimation { duration: 200 } }
                                         }
-                                        Behavior on color { ColorAnimation { duration: 200 } }
+                                        Rectangle {
+                                            width: 70; height: 28; radius: 8
+                                            color: enabled ? "#2980B9" : "#7F8C8D"
+                                            enabled: MOTIONInterface.consoleConnected && !MOTIONInterface.fpgaFirmwareUpdateBusy
+                                            Text { anchors.centerIn: parent; text: "Upload…"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
+                                            MouseArea {
+                                                anchors.fill: parent; enabled: parent.enabled
+                                                onClicked: _startFpgaFromLocal("SAFETY_OPT")
+                                                onEntered: if (parent.enabled) parent.color = "#2471A3"
+                                                onExited: if (parent.enabled) parent.color = "#2980B9"
+                                            }
+                                            Behavior on color { ColorAnimation { duration: 200 } }
+                                        }
                                     }
                                 }
 

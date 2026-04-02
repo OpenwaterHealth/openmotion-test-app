@@ -22,7 +22,9 @@ Rectangle {
     property real temperature1: 0.0
     property real temperature2: 0.0
     property real temperature3: 0.0
-    property int fan_speed: 0
+    property bool fan1On: false
+    property bool fan2On: false
+    property bool fan3On: false
     property var fn: null
     property int rawValue: 0 
     property int tecTripValue: 0 
@@ -96,7 +98,7 @@ Rectangle {
         // console.log("Console Updating all states...")
         MOTIONInterface.queryConsoleInfo()
         MOTIONInterface.queryRGBState() // Query Indicator state
-        MOTIONInterface.queryFans() // Query Indicator state        
+        MOTIONInterface.queryFanStatus() // Query per-fan status
         MOTIONInterface.queryConsoleTemperature()
         MOTIONInterface.queryTecTripValue();
     }
@@ -133,7 +135,9 @@ Rectangle {
                 deviceId = "N/A"
                 boardRevId = "N/A"
                 rgbState = "Off" // Indicator off
-                fan_speed = 0
+                fan1On = false
+                fan2On = false
+                fan3On = false
                 temperature1 = 0.0
                 temperature2 = 0.0
                 temperature3 = 0.0
@@ -168,9 +172,10 @@ Rectangle {
             rgbLedDropdown.currentIndex = stateValue  // Sync ComboBox to received state
         }
 
-        function onFanSpeedsReceived(fanVal) {
-            fan_speed = fanVal
-            fanSlider.value = fanVal;
+        function onFanStatusReceived(speeds) {
+            fan1On = speeds.length > 0 && speeds[0] > 0
+            fan2On = speeds.length > 1 && speeds[1] > 0
+            fan3On = speeds.length > 2 && speeds[2] > 0
         }
 
         function onConsoleTemperatureUpdated(temp1, temp2, temp3) {
@@ -1025,7 +1030,7 @@ Rectangle {
                         Rectangle {
                             id: fanTestsBox
                             Layout.preferredWidth: 320
-                            height: 140
+                            height: 155
                             radius: 8
                             color: "#1E1E20"
                             border.color: "#3E4E6F"
@@ -1041,43 +1046,58 @@ Rectangle {
                                 anchors.topMargin: 5
                             }
 
-                            // Slider for Fan
                             Column {
                                 anchors.top: parent.top
-                                anchors.topMargin: 28
+                                anchors.topMargin: 32
                                 anchors.horizontalCenter: parent.horizontalCenter
-                                spacing: 5
+                                spacing: 8
 
-                                Rectangle { height: 10; width: 1; color: "transparent" }
-
-                                Text {
-                                    text: "Console Fan: " + (fanSlider.value === 0 ? "OFF" : fanSlider.value.toFixed(0) + "%")
-                                    color: "#BDC3C7"
-                                    font.pixelSize: 14
-                                }
-
-                                Slider {
-                                    id: fanSlider
-                                    width: 280
-                                    from: 0
-                                    to: 100
-                                    stepSize: 10
-                                    value: fan_speed || 0
-                                    enabled: MOTIONInterface.consoleConnected
-
-                                    property bool userIsSliding: false
-
-                                    onPressedChanged: {
-                                        if (pressed) {
-                                            userIsSliding = true
-                                        } else if (!pressed && userIsSliding) {
-                                            let snappedValue = Math.round(value / 10) * 10
-                                            value = snappedValue
-                                            userIsSliding = false
-                                            let success = MOTIONInterface.setFanLevel(snappedValue);
-                                            if (!success) console.error("Failed to set fan speed");
+                                // Fan 1
+                                RowLayout {
+                                    spacing: 10
+                                    width: 260
+                                    Text { text: "Fan 1:"; color: "#BDC3C7"; font.pixelSize: 14; Layout.preferredWidth: 50 }
+                                    Switch {
+                                        checked: fan1On
+                                        enabled: MOTIONInterface.consoleConnected
+                                        onToggled: {
+                                            let ok = MOTIONInterface.setFanEnabled(1, checked)
+                                            if (ok) fan1On = checked; else checked = fan1On
                                         }
                                     }
+                                    Text { text: fan1On ? "ON" : "OFF"; color: fan1On ? "#2ECC71" : "#BDC3C7"; font.pixelSize: 14 }
+                                }
+
+                                // Fan 2
+                                RowLayout {
+                                    spacing: 10
+                                    width: 260
+                                    Text { text: "Fan 2:"; color: "#BDC3C7"; font.pixelSize: 14; Layout.preferredWidth: 50 }
+                                    Switch {
+                                        checked: fan2On
+                                        enabled: MOTIONInterface.consoleConnected
+                                        onToggled: {
+                                            let ok = MOTIONInterface.setFanEnabled(2, checked)
+                                            if (ok) fan2On = checked; else checked = fan2On
+                                        }
+                                    }
+                                    Text { text: fan2On ? "ON" : "OFF"; color: fan2On ? "#2ECC71" : "#BDC3C7"; font.pixelSize: 14 }
+                                }
+
+                                // Fan 3
+                                RowLayout {
+                                    spacing: 10
+                                    width: 260
+                                    Text { text: "Fan 3:"; color: "#BDC3C7"; font.pixelSize: 14; Layout.preferredWidth: 50 }
+                                    Switch {
+                                        checked: fan3On
+                                        enabled: MOTIONInterface.consoleConnected
+                                        onToggled: {
+                                            let ok = MOTIONInterface.setFanEnabled(3, checked)
+                                            if (ok) fan3On = checked; else checked = fan3On
+                                        }
+                                    }
+                                    Text { text: fan3On ? "ON" : "OFF"; color: fan3On ? "#2ECC71" : "#BDC3C7"; font.pixelSize: 14 }
                                 }
                             }
                         }

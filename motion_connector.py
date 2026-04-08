@@ -1500,6 +1500,7 @@ class MOTIONConnector(QObject):
             cfg_obj = interface.console_module.read_config()
             if cfg_obj is not None:
                 user_cfg = cfg_obj.json_data or {}
+                print(user_cfg)
         except Exception as _e:
             logger.warning(
                 f"[Connector] Could not read user config before laser init: {_e}"
@@ -1540,7 +1541,7 @@ class MOTIONConnector(QObject):
                     f"[Connector] ({idx}/{len(self.laser_params)}) "
                     f"Writing I2C: muxIdx={muxIdx}, channel={channel}, "
                     f"i2cAddr=0x{i2cAddr:02X}, offset=0x{offset:02X}, "
-                    f"data={list(dataToSend)}"
+                    f"data={[f'0x{b:02X}' for b in dataToSend]}"
                 )
 
                 if not interface.console_module.write_i2c_packet(
@@ -1575,7 +1576,7 @@ class MOTIONConnector(QObject):
 
                 logger.info(
                     f"[Connector] Writing user-config {label} DRIVE CL: "
-                    f"raw={raw}, gain={gain_f} → {list(data)}"
+                    f"raw={raw}, gain={gain_f} → {[f'0x{b:02X}' for b in data]}"                    
                 )
                 return interface.console_module.write_i2c_packet(
                     mux_index=1, channel=ch, device_addr=0x41, reg_addr=0x10, data=data

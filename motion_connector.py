@@ -1811,15 +1811,7 @@ class MOTIONConnector(QObject):
                     self.userConfigError.emit(msg)
                     return
 
-                # Merge parsed keys into device config JSON
-                if not hasattr(cfg, "json_data") or not isinstance(cfg.json_data, dict):
-                    cfg.json_data = {}
-                for k, v in parsed.items():
-                    # Allow explicit removal by setting null in JSON
-                    if v is None:
-                        cfg.json_data.pop(k, None)
-                    else:
-                        cfg.json_data[k] = v
+                cfg.json_data = parsed
 
                 updated = motion_interface.console_module.write_config(cfg)
                 if updated is None:

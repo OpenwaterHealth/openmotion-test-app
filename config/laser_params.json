@@ -1,5 +1,6 @@
 [
   {
+    "friendlyName": "TA_PULSE_WIDTH",
     "muxIdx": 1,
     "channel": 4,
     "i2cAddr": 65,
@@ -7,6 +8,7 @@
     "dataToSend": [27, 6, 0]
   },
   {
+    "friendlyName": "TA_CURRENT_DRV",
     "muxIdx": 1,
     "channel": 4,
     "i2cAddr": 65,
@@ -14,6 +16,7 @@
     "dataToSend": [23, 122]
   },
   {
+    "friendlyName": "SEED_DDS_GAIN",
     "muxIdx": 1,
     "channel": 5,
     "i2cAddr": 65,
@@ -21,13 +24,7 @@
     "dataToSend": [0, 0]
   },
   {
-    "muxIdx": 1,
-    "channel": 5,
-    "i2cAddr": 65,
-    "offset": 6,
-    "dataToSend": [96, 3]
-  },
-  {
+    "friendlyName": "SEED_CW_GAIN",
     "muxIdx": 1,
     "channel": 5,
     "i2cAddr": 65,
@@ -35,6 +32,15 @@
     "dataToSend": [14, 8]
   },
   {
+    "friendlyName": "SEED_DDS_CL",
+    "muxIdx": 1,
+    "channel": 5,
+    "i2cAddr": 65,
+    "offset": 6,
+    "dataToSend": [96, 3]
+  },
+  {
+    "friendlyName": "SEED_CW_CL",
     "muxIdx": 1,
     "channel": 5,
     "i2cAddr": 65,
@@ -42,6 +48,7 @@
     "dataToSend": [165, 9]
   },
   {
+    "friendlyName": "EE_PULSE_WIDTH_LL",
     "muxIdx": 1,
     "channel": 6,
     "i2cAddr": 65,
@@ -49,6 +56,7 @@
     "dataToSend": [0, 0, 0, 0]
   },
   {
+    "friendlyName": "EE_PULSE_WIDTH_UL",
     "muxIdx": 1,
     "channel": 6,
     "i2cAddr": 65,
@@ -56,6 +64,7 @@
     "dataToSend": [53, 12, 0, 0]
   },
   {
+    "friendlyName": "EE_RATE_LL",
     "muxIdx": 1,
     "channel": 6,
     "i2cAddr": 65,
@@ -63,6 +72,7 @@
     "dataToSend": [169, 18, 1, 0]
   },
   {
+    "friendlyName": "EE_DRIVE_CL",
     "muxIdx": 1,
     "channel": 6,
     "i2cAddr": 65,
@@ -70,6 +80,7 @@
     "dataToSend": [136, 19]
   },
   {
+    "friendlyName": "EE_CW_CURRENT",
     "muxIdx": 1,
     "channel": 6,
     "i2cAddr": 65,
@@ -77,6 +88,7 @@
     "dataToSend": [138, 3]
   },
   {
+    "friendlyName": "EE_PWM_CURRENT",
     "muxIdx": 1,
     "channel": 6,
     "i2cAddr": 65,
@@ -84,6 +96,7 @@
     "dataToSend": [138, 3]
   },
   {
+    "friendlyName": "OPT_PULSE_WIDTH_LL",
     "muxIdx": 1,
     "channel": 7,
     "i2cAddr": 65,
@@ -91,6 +104,7 @@
     "dataToSend": [0, 0, 0, 0]
   },
   {
+    "friendlyName": "OPT_PULSE_WIDTH_UL",
     "muxIdx": 1,
     "channel": 7,
     "i2cAddr": 65,
@@ -98,6 +112,7 @@
     "dataToSend": [53, 12, 0, 0]
   },
   {
+    "friendlyName": "OPT_RATE_LL",
     "muxIdx": 1,
     "channel": 7,
     "i2cAddr": 65,
@@ -105,6 +120,7 @@
     "dataToSend": [169, 18, 1, 0]
   },
   {
+    "friendlyName": "OPT_DRIVE_CL",
     "muxIdx": 1,
     "channel": 7,
     "i2cAddr": 65,
@@ -112,17 +128,19 @@
     "dataToSend": [231, 27]
   },
   {
-    "muxIdx": 1,
-    "channel": 7,
-    "i2cAddr": 65,
-    "offset": 20,
-    "dataToSend": [138, 3]
-  },
-  {
+    "friendlyName": "OPT_PWM_CURRENT",
     "muxIdx": 1,
     "channel": 7,
     "i2cAddr": 65,
     "offset": 18,
+    "dataToSend": [138, 3]
+  },
+  {
+    "friendlyName": "OPT_CW_CURRENT",
+    "muxIdx": 1,
+    "channel": 7,
+    "i2cAddr": 65,
+    "offset": 20,
     "dataToSend": [138, 3]
   }
 ]

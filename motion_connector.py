@@ -1524,6 +1524,7 @@ class MOTIONConnector(QObject):
         self._console_mutex.lock()
         try:
             for idx, laser_param in enumerate(self.laser_params, start=1):
+                friendlyName = laser_param["friendlyName"]
                 muxIdx = laser_param["muxIdx"]
                 channel = laser_param["channel"]
                 i2cAddr = laser_param["i2cAddr"]
@@ -1536,6 +1537,14 @@ class MOTIONConnector(QObject):
                         f"(overridden by user config)"
                     )
                     continue
+
+                if friendlyName in user_cfg:
+                    override_val = user_cfg[friendlyName]
+                    logger.info(
+                        f"[Connector] Override for {friendlyName}: {override_val}"
+                    )
+                    # Also print to stdout for quick debugging
+                    print(f"[Connector] Override for {friendlyName}: {override_val}")
 
                 logger.info(
                     f"[Connector] ({idx}/{len(self.laser_params)}) "

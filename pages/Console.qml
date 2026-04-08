@@ -1111,7 +1111,7 @@ Rectangle {
                         Rectangle {
                             id: tecTripBox
                             Layout.preferredWidth: 320
-                            height: 140
+                            height: 148
                             radius: 8
                             color: "#1E1E20"
                             border.color: "#3E4E6F"

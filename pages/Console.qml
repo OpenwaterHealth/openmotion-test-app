@@ -1031,37 +1031,37 @@ Rectangle {
                         Rectangle {
                             id: fanTestsBox
                             Layout.preferredWidth: 320
-                            height: 200
+                            height: 148
                             radius: 8
                             color: "#1E1E20"
                             border.color: "#3E4E6F"
                             border.width: 2
 
-                            // Title at Top-Center with 5px Spacing
                             Text {
                                 text: "Fan Tests"
                                 color: "#BDC3C7"
-                                font.pixelSize: 18
+                                font.pixelSize: 16
                                 anchors.top: parent.top
                                 anchors.horizontalCenter: parent.horizontalCenter
-                                anchors.topMargin: 5
+                                anchors.topMargin: 3
                             }
 
                             Column {
                                 anchors.top: parent.top
-                                anchors.topMargin: 32
+                                anchors.topMargin: 22
                                 anchors.horizontalCenter: parent.horizontalCenter
-                                spacing: 6
+                                spacing: 2
 
                                 Text {
                                     text: "Console Fan: " + (fanSlider.value === 0 ? "OFF" : fanSlider.value.toFixed(0) + "%")
                                     color: "#BDC3C7"
-                                    font.pixelSize: 14
+                                    font.pixelSize: 13
                                 }
 
                                 Slider {
                                     id: fanSlider
                                     width: 280
+                                    height: 22
                                     from: 0
                                     to: 100
                                     stepSize: 10
@@ -1085,15 +1085,14 @@ Rectangle {
 
                                 Rectangle { width: 280; height: 1; color: "#3E4E6F" }
 
-                                // Per-fan PWM feedback readout (read-only)
                                 Text {
                                     width: 280
                                     horizontalAlignment: Text.AlignHCenter
                                     text: "1: " + (fan1Rpm < 0 ? "--" : fan1Rpm + " RPM") +
-                                          "   2: " + (fan2Rpm < 0 ? "--" : fan2Rpm + " RPM") +
-                                          "   3: " + (fan3Rpm < 0 ? "--" : fan3Rpm + " RPM")
+                                          "  2: " + (fan2Rpm < 0 ? "--" : fan2Rpm + " RPM") +
+                                          "  3: " + (fan3Rpm < 0 ? "--" : fan3Rpm + " RPM")
                                     color: "#2ECC71"
-                                    font.pixelSize: 14
+                                    font.pixelSize: 13
                                     font.weight: Font.Bold
                                 }
 
@@ -1101,6 +1100,8 @@ Rectangle {
                                     text: "Get Fan Feedback"
                                     enabled: MOTIONInterface.consoleConnected
                                     width: 280
+                                    height: 32
+                                    font.pixelSize: 12
                                     onClicked: MOTIONInterface.readFanFeedback()
                                 }
                             }

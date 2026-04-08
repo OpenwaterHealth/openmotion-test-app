@@ -22,6 +22,9 @@ Rectangle {
     property real temperature2: 0.0
     property real temperature3: 0.0
     property int fan_speed: 0
+    property int fan1Rpm: -1
+    property int fan2Rpm: -1
+    property int fan3Rpm: -1
     property var fn: null
     property int rawValue: 0 
     property int tecTripValue: 0 
@@ -95,7 +98,7 @@ Rectangle {
         // console.log("Console Updating all states...")
         MOTIONInterface.queryConsoleInfo()
         MOTIONInterface.queryRGBState() // Query Indicator state
-        MOTIONInterface.queryFans() // Query Indicator state        
+        MOTIONInterface.readFanFeedback() // One-shot fan PWM feedback read
         MOTIONInterface.queryConsoleTemperature()
         MOTIONInterface.queryTecTripValue();
     }
@@ -133,6 +136,9 @@ Rectangle {
                 boardRevId = "N/A"
                 rgbState = "Off" // Indicator off
                 fan_speed = 0
+                fan1Rpm = -1
+                fan2Rpm = -1
+                fan3Rpm = -1
                 temperature1 = 0.0
                 temperature2 = 0.0
                 temperature3 = 0.0
@@ -167,9 +173,10 @@ Rectangle {
             rgbLedDropdown.currentIndex = stateValue  // Sync ComboBox to received state
         }
 
-        function onFanSpeedsReceived(fanVal) {
-            fan_speed = fanVal
-            fanSlider.value = fanVal;
+        function onFanFeedbackUpdated(fan1, fan2, fan3) {
+            fan1Rpm = fan1
+            fan2Rpm = fan2
+            fan3Rpm = fan3
         }
 
         function onConsoleTemperatureUpdated(temp1, temp2, temp3) {
@@ -1024,40 +1031,37 @@ Rectangle {
                         Rectangle {
                             id: fanTestsBox
                             Layout.preferredWidth: 320
-                            height: 140
+                            height: 148
                             radius: 8
                             color: "#1E1E20"
                             border.color: "#3E4E6F"
                             border.width: 2
 
-                            // Title at Top-Center with 5px Spacing
                             Text {
                                 text: "Fan Tests"
                                 color: "#BDC3C7"
-                                font.pixelSize: 18
+                                font.pixelSize: 16
                                 anchors.top: parent.top
                                 anchors.horizontalCenter: parent.horizontalCenter
-                                anchors.topMargin: 5
+                                anchors.topMargin: 3
                             }
 
-                            // Slider for Fan
                             Column {
                                 anchors.top: parent.top
-                                anchors.topMargin: 28
+                                anchors.topMargin: 22
                                 anchors.horizontalCenter: parent.horizontalCenter
-                                spacing: 5
-
-                                Rectangle { height: 10; width: 1; color: "transparent" }
+                                spacing: 2
 
                                 Text {
                                     text: "Console Fan: " + (fanSlider.value === 0 ? "OFF" : fanSlider.value.toFixed(0) + "%")
                                     color: "#BDC3C7"
-                                    font.pixelSize: 14
+                                    font.pixelSize: 13
                                 }
 
                                 Slider {
                                     id: fanSlider
                                     width: 280
+                                    height: 22
                                     from: 0
                                     to: 100
                                     stepSize: 10
@@ -1073,10 +1077,32 @@ Rectangle {
                                             let snappedValue = Math.round(value / 10) * 10
                                             value = snappedValue
                                             userIsSliding = false
-                                            let success = MOTIONInterface.setFanLevel(snappedValue);
-                                            if (!success) console.error("Failed to set fan speed");
+                                            let success = MOTIONInterface.setFanLevel(snappedValue)
+                                            if (!success) console.error("Failed to set fan speed")
                                         }
                                     }
+                                }
+
+                                Rectangle { width: 280; height: 1; color: "#3E4E6F" }
+
+                                Text {
+                                    width: 280
+                                    horizontalAlignment: Text.AlignHCenter
+                                    text: "1: " + (fan1Rpm < 0 ? "--" : fan1Rpm + " RPM") +
+                                          "  2: " + (fan2Rpm < 0 ? "--" : fan2Rpm + " RPM") +
+                                          "  3: " + (fan3Rpm < 0 ? "--" : fan3Rpm + " RPM")
+                                    color: "#2ECC71"
+                                    font.pixelSize: 13
+                                    font.weight: Font.Bold
+                                }
+
+                                Button {
+                                    text: "Get Fan Feedback"
+                                    enabled: MOTIONInterface.consoleConnected
+                                    width: 280
+                                    height: 32
+                                    font.pixelSize: 12
+                                    onClicked: MOTIONInterface.readFanFeedback()
                                 }
                             }
                         }
@@ -1085,7 +1111,7 @@ Rectangle {
                         Rectangle {
                             id: tecTripBox
                             Layout.preferredWidth: 320
-                            height: 140
+                            height: 148
                             radius: 8
                             color: "#1E1E20"
                             border.color: "#3E4E6F"

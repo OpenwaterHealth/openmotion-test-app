@@ -478,199 +478,158 @@ class _DeviceFirmwareFlashThread(QThread):
             self.failed.emit(str(exc))
 
 
+class _FpgaSourceError(Exception):
+    """Raised when a .jed source (local file or GitHub release) can't be resolved."""
+
+
 class _ConsoleFpgaUpdateThread(QThread):
     progress = pyqtSignal(int, str)  # percent (0-100, -1 indeterminate), message
     failed = pyqtSignal(str)
     finished_ok = pyqtSignal(str)
 
     def __init__(
-        self, connector: "MOTIONConnector", target: str, tag: str, verify: bool = False
+        self, connector: "MOTIONConnector", target: str, tag: str, verify: bool = False,
+        local_jed_path: str | None = None,
     ):
         super().__init__()
         self._connector = connector
         self._target = (target or "").upper()
         self._tag = (tag or "").strip()
         self._verify = bool(verify)
+        self._local_jed_path = local_jed_path
 
     def run(self):
         try:
-            logger.info(
-                f"[FPGA-UPD] thread start target={self._target} tag={self._tag}"
-            )
-            if self._connector._github_disabled:
-                logger.info("[FPGA-UPD] GitHub disabled (--no-github flag)")
-                self.failed.emit(
-                    "GitHub access is disabled (--no-github). Cannot download FPGA firmware."
-                )
-                return
-            if GitHubReleases is None:
-                logger.info("[FPGA-UPD] GitHubReleases unavailable in environment")
-                self.failed.emit(
-                    "GitHubReleases is unavailable (omotion SDK not found in environment)."
-                )
-                return
             if FpgaPageProgrammer is None or MuxChannel is None:
-                logger.info(
-                    "[FPGA-UPD] FPGA programmer components unavailable in environment"
-                )
-                self.failed.emit(
-                    "FPGA programmer is unavailable (omotion SDK FPGA components missing)."
-                )
+                self.failed.emit("FPGA programmer is unavailable (omotion SDK FPGA components missing).")
                 return
 
-            repo = _FPGA_FW_REPO_MAP.get(self._target)
             channels = _FPGA_PROGRAM_CHANNELS.get(self._target)
-            if not repo or not channels:
-                logger.info(
-                    f"[FPGA-UPD] invalid target mapping target={self._target} repo={repo} channels={channels}"
-                )
+            if not channels:
                 self.failed.emit(f"Invalid FPGA update target: {self._target}")
                 return
 
-            logger.info(f"[FPGA-UPD] using repo={repo} channels={channels}")
-
-            self.progress.emit(5, f"Fetching {self._target} release {self._tag}…")
-            gh = GitHubReleases(_CONSOLE_FW_REPO_OWNER, repo, timeout=30)
-
-            release = None
-            last_exc: Exception | None = None
-            for candidate_tag in _candidate_console_fw_tags(self._tag):
-                try:
-                    logger.info(
-                        f"[FPGA-UPD] try get_release_by_tag tag={candidate_tag}"
-                    )
-                    release = gh.get_release_by_tag(candidate_tag)
-                    logger.info(f"[FPGA-UPD] release resolved tag={candidate_tag}")
-                    break
-                except Exception as exc:
-                    last_exc = exc
-                    logger.info(
-                        f"[FPGA-UPD] tag lookup failed tag={candidate_tag} err={exc}"
-                    )
-
-            if release is None:
-                msg = f"Release '{self._tag}' not found for {self._target}."
-                if last_exc is not None:
-                    msg += f" ({last_exc})"
-                logger.info(f"[FPGA-UPD] release resolution failed msg={msg}")
-                self.failed.emit(msg)
+            try:
+                jed_path = (
+                    self._resolve_local_jed()
+                    if self._local_jed_path
+                    else self._download_jed_from_github()
+                )
+            except _FpgaSourceError as exc:
+                self.failed.emit(str(exc))
                 return
 
-            self.progress.emit(15, "Resolving .jed asset…")
-            assets = gh.get_asset_list(release=release)
-            if not isinstance(assets, list):
-                assets = []
-            logger.info(f"[FPGA-UPD] assets discovered count={len(assets)}")
-
-            jed_assets = []
-            for asset in assets:
-                if not isinstance(asset, dict):
-                    continue
-                name = str(asset.get("name") or "")
-                if name.lower().endswith(".jed"):
-                    jed_assets.append(asset)
-
-            logger.info(f"[FPGA-UPD] jed assets count={len(jed_assets)}")
-
-            if not jed_assets:
-                logger.info(
-                    f"[FPGA-UPD] no .jed assets in release target={self._target} tag={self._tag}"
-                )
-                self.failed.emit(
-                    f"No .jed asset found in release '{self._tag}' for {self._target}."
-                )
-                return
-
-            jed_assets.sort(key=lambda a: str(a.get("created_at") or ""), reverse=True)
-            jed_name = str(jed_assets[0].get("name") or "")
-            if not jed_name:
-                logger.info("[FPGA-UPD] resolved .jed asset missing name")
-                self.failed.emit("Resolved .jed asset has no filename.")
-                return
-
-            logger.info(f"[FPGA-UPD] selected jed asset={jed_name}")
-
-            self.progress.emit(25, f"Downloading {jed_name}…")
-            dl_dir = _downloads_dir()
-            dl_dir.mkdir(parents=True, exist_ok=True)
-            jed_path = Path(
-                gh.download_asset(release, jed_name, output_dir=dl_dir)
-            ).resolve()
-            self.progress.emit(35, f"Downloaded {jed_name}")
-            logger.info(f"[FPGA-UPD] downloaded jed path={jed_path}")
-
-            programmer = FpgaPageProgrammer(
-                motion_interface.console_module,
-                verify=self._verify,
-                erase_timeout=35.0,
-                refresh_timeout=10.0,
-            )
-            logger.info(
-                f"[FPGA-UPD] FpgaPageProgrammer initialized verify={self._verify} erase_timeout=35 refresh_timeout=10"
-            )
-
-            total = len(channels)
-            for idx, channel in enumerate(channels):
-                base = 35 + int((55 * idx) / total)
-                span = max(1, int(55 / total))
-
-                def _on_progress(
-                    pages_done: int, total_pages: int, ch=channel, b=base, s=span
-                ):
-                    local_pct = (
-                        0.0
-                        if total_pages <= 0
-                        else (100.0 * float(pages_done) / float(total_pages))
-                    )
-                    overall = min(95, b + int((s * local_pct) / 100.0))
-                    self.progress.emit(overall, f"Programming channel {ch}…")
-
-                self.progress.emit(base, f"Programming channel {channel}…")
-                logger.info(
-                    f"[FPGA-UPD] programming start target={self._target} channel={channel} ({idx + 1}/{total})"
-                )
-                self._connector._console_mutex.lock()
-                try:
-                    attempt = 0
-                    while True:
-                        try:
-                            programmer.program_from_jedec(
-                                target_fpga=MuxChannel(channel),
-                                jedec_path=str(jed_path),
-                                on_progress=_on_progress,
-                            )
-                            break
-                        except Exception as exc_inner:
-                            attempt += 1
-                            logger.warning(
-                                f"[FPGA-UPD] programming attempt {attempt} failed target={self._target} channel={channel} err={exc_inner}"
-                            )
-                            if attempt >= 2:
-                                raise
-                            # small delay to allow bus/mux/device to settle before retry
-                            time.sleep(0.5)
-                finally:
-                    self._connector._console_mutex.unlock()
-                logger.info(
-                    f"[FPGA-UPD] programming done target={self._target} channel={channel}"
-                )
+            self._program_jed(jed_path, channels)
 
             self.progress.emit(100, "FPGA programming complete")
-            logger.info(
-                f"[FPGA-UPD] thread complete target={self._target} tag={self._tag}"
-            )
             self.finished_ok.emit(f"{self._target} FPGA updated successfully.")
 
         except (FpgaUpdateError, CommandError) as exc:
-            logger.error(
-                f"[FPGA-UPD] programmer error target={self._target} tag={self._tag}: {exc}"
-            )
+            logger.error(f"FPGA programmer error target={self._target}: {exc}")
             self.failed.emit(str(exc))
         except Exception as exc:
-            logger.exception(
-                f"[FPGA-UPD] unexpected error target={self._target} tag={self._tag}"
-            )
+            logger.exception(f"FPGA update unexpected error target={self._target}")
             self.failed.emit(str(exc))
+
+    # ---- jed source helpers --------------------------------------------------
+
+    def _resolve_local_jed(self) -> Path:
+        jed_path = Path(self._local_jed_path).resolve()
+        if not jed_path.exists():
+            raise _FpgaSourceError(f"Local .jed file not found: {self._local_jed_path}")
+        self.progress.emit(35, f"Using local file {jed_path.name}…")
+        return jed_path
+
+    def _download_jed_from_github(self) -> Path:
+        if self._connector._github_disabled:
+            raise _FpgaSourceError("GitHub access is disabled (--no-github). Cannot download FPGA firmware.")
+        if GitHubReleases is None:
+            raise _FpgaSourceError("GitHubReleases is unavailable (omotion SDK not found in environment).")
+
+        repo = _FPGA_FW_REPO_MAP.get(self._target)
+        if not repo:
+            raise _FpgaSourceError(f"Invalid FPGA update target: {self._target}")
+
+        self.progress.emit(5, f"Fetching {self._target} release {self._tag}…")
+        gh = GitHubReleases(_CONSOLE_FW_REPO_OWNER, repo, timeout=30)
+
+        release = None
+        last_exc: Exception | None = None
+        for candidate_tag in _candidate_console_fw_tags(self._tag):
+            try:
+                release = gh.get_release_by_tag(candidate_tag)
+                break
+            except Exception as exc:
+                last_exc = exc
+
+        if release is None:
+            msg = f"Release '{self._tag}' not found for {self._target}."
+            if last_exc is not None:
+                msg += f" ({last_exc})"
+            raise _FpgaSourceError(msg)
+
+        self.progress.emit(15, "Resolving .jed asset…")
+        assets = gh.get_asset_list(release=release) or []
+        jed_assets = [
+            a for a in assets
+            if isinstance(a, dict) and str(a.get("name") or "").lower().endswith(".jed")
+        ]
+        if not jed_assets:
+            raise _FpgaSourceError(f"No .jed asset found in release '{self._tag}' for {self._target}.")
+
+        jed_assets.sort(key=lambda a: str(a.get("created_at") or ""), reverse=True)
+        jed_name = str(jed_assets[0].get("name") or "")
+        if not jed_name:
+            raise _FpgaSourceError("Resolved .jed asset has no filename.")
+
+        self.progress.emit(25, f"Downloading {jed_name}…")
+        dl_dir = _downloads_dir()
+        dl_dir.mkdir(parents=True, exist_ok=True)
+        jed_path = Path(gh.download_asset(release, jed_name, output_dir=dl_dir)).resolve()
+        self.progress.emit(35, f"Downloaded {jed_name}")
+        return jed_path
+
+    # ---- programming ---------------------------------------------------------
+
+    def _program_jed(self, jed_path: Path, channels: list) -> None:
+        programmer = FpgaPageProgrammer(
+            motion_interface.console_module,
+            verify=self._verify,
+            erase_timeout=35.0,
+            refresh_timeout=10.0,
+        )
+
+        total = len(channels)
+        for idx, channel in enumerate(channels):
+            base = 35 + int((55 * idx) / total)
+            span = max(1, int(55 / total))
+
+            def _on_progress(pages_done: int, total_pages: int, ch=channel, b=base, s=span):
+                local_pct = 0.0 if total_pages <= 0 else (100.0 * float(pages_done) / float(total_pages))
+                overall = min(95, b + int((s * local_pct) / 100.0))
+                self.progress.emit(overall, f"Programming channel {ch}…")
+
+            self.progress.emit(base, f"Programming channel {channel}…")
+            self._connector._console_mutex.lock()
+            try:
+                for attempt in range(2):
+                    try:
+                        programmer.program_from_jedec(
+                            target_fpga=MuxChannel(channel),
+                            jedec_path=str(jed_path),
+                            on_progress=_on_progress,
+                        )
+                        break
+                    except Exception as exc_inner:
+                        logger.warning(
+                            f"FPGA program attempt {attempt + 1} failed "
+                            f"target={self._target} channel={channel}: {exc_inner}"
+                        )
+                        if attempt == 1:
+                            raise
+                        time.sleep(0.5)
+            finally:
+                self._connector._console_mutex.unlock()
 
 
 class CaptureThread(QThread):
@@ -836,7 +795,7 @@ class MOTIONConnector(QObject):
 
     stateChanged = pyqtSignal()  # Notifies QML when state changes
     rgbStateReceived = pyqtSignal(int, str)  # Emit both integer value and text
-    fanSpeedsReceived = pyqtSignal(int)  # Emit both integers
+    fanFeedbackUpdated = pyqtSignal(int, int, int)  # Tachometer RPM for fans 1/2/3 (-1 on failure)
     fpgaVersionsReceived = pyqtSignal(
         "QVariant"
     )  # {"TA": str, "Seed": str, "SafetyEE": str, "SafetyOPT": str}
@@ -2028,13 +1987,26 @@ class MOTIONConnector(QObject):
                     f"Capturing {capture_type} for {sensor_side} camera {camera_index} with SN {serial_number}"
                 )
 
+                sensor = self._interface.sensors.get(sensor_side)
+                if sensor is None:
+                    logger.error("%s sensor not connected.", sensor_side.capitalize())
+                    return
+
                 # Single camera
-                bins, histo = self._interface.get_camera_histogram(
-                    sensor_side=sensor_side,
+                hist_result = sensor.get_camera_histogram(
                     camera_id=camera_index,
                     test_pattern_id=4,
                     auto_upload=True,
                 )
+                if not hist_result:
+                    logger.error(
+                        "Failed to get %s for camera %d",
+                        capture_type,
+                        camera_index + 1,
+                    )
+                    return
+
+                bins, histo = hist_result
                 if bins:
                     suffix = "_dark" if is_dark else "_light"
                     filename = f"{serial_number}_histogram{suffix}.csv"
@@ -2527,57 +2499,65 @@ class MOTIONConnector(QObject):
         """
         target = (target or "").upper()
         tag = (tag or "").strip()
-        verify = bool(getattr(self, "_fpga_fw_verify", False))
-        logger.info(
-            f"beginFpgaFirmwareUpdate target={target} tag={tag} verify={verify}"
-        )
-
-        if target not in _FPGA_PROGRAM_CHANNELS:
-            logger.info(f"[FPGA-UPD] reject invalid target target={target}")
-            self.fpgaFirmwareUpdateError.emit(
-                target or "UNKNOWN", "Invalid FPGA target."
-            )
-            return
         if not tag or tag == "N/A":
-            logger.info(f"[FPGA-UPD] reject missing tag target={target} tag={tag}")
-            self.fpgaFirmwareUpdateError.emit(target, "No FPGA release tag selected.")
+            self.fpgaFirmwareUpdateError.emit(target or "UNKNOWN", "No FPGA release tag selected.")
+            return
+        self._launch_fpga_update_thread(target, tag=tag)
+
+    @pyqtSlot(str, str)
+    def beginFpgaFirmwareFromLocal(self, target: str, local_path: str) -> None:
+        """Program an FPGA from a local .jed file (no GitHub download)."""
+        target = (target or "").upper()
+        p = Path(local_path) if local_path else None
+        if p is None or not p.exists():
+            self.fpgaFirmwareUpdateError.emit(target or "UNKNOWN", f"File not found: {local_path}")
+            return
+        if p.suffix.lower() != ".jed":
+            self.fpgaFirmwareUpdateError.emit(target or "UNKNOWN", "Selected file must be a .jed file.")
+            return
+        self._launch_fpga_update_thread(target, local_jed_path=str(p.resolve()))
+
+    def _launch_fpga_update_thread(
+        self,
+        target: str,
+        *,
+        tag: str | None = None,
+        local_jed_path: str | None = None,
+    ) -> None:
+        """Shared launcher for both GitHub-tag and local-file FPGA updates.
+
+        Validates target / connection / busy state, then spins up a single
+        _ConsoleFpgaUpdateThread and wires its signals into the connector's
+        progress/finished/failed handlers. Mirrors the device-firmware path,
+        which routes both downloaded and locally-uploaded .bin files through
+        a single install code path.
+        """
+        if target not in _FPGA_PROGRAM_CHANNELS:
+            self.fpgaFirmwareUpdateError.emit(target or "UNKNOWN", "Invalid FPGA target.")
             return
         if not self._consoleConnected:
-            logger.info(f"[FPGA-UPD] reject console disconnected target={target}")
             self.fpgaFirmwareUpdateError.emit(target, "Console is not connected.")
             return
         if self.fpgaFirmwareUpdateBusy:
-            logger.info(f"[FPGA-UPD] reject busy target={target}")
-            self.fpgaFirmwareUpdateError.emit(
-                target, "An FPGA update is already in progress."
-            )
+            self.fpgaFirmwareUpdateError.emit(target, "An FPGA update is already in progress.")
             return
 
+        verify = bool(getattr(self, "_fpga_fw_verify", False))
+        source = f"local={Path(local_jed_path).name}" if local_jed_path else f"tag={tag}"
+        logger.info(f"[FPGA-UPD] launch target={target} {source} verify={verify}")
+
         self._set_fpga_fw_busy(True)
-        self._fpga_update_thread = _ConsoleFpgaUpdateThread(
-            self, target, tag, verify=verify
+        thread = _ConsoleFpgaUpdateThread(
+            self, target, tag or "local", verify=verify, local_jed_path=local_jed_path
         )
-        logger.info(
-            f"[FPGA-UPD] thread created target={target} tag={tag} verify={verify}"
+        thread.progress.connect(
+            lambda pct, msg, t=target: self.fpgaFirmwareUpdateProgress.emit(t, int(pct), str(msg))
         )
-        self._fpga_update_thread.progress.connect(
-            lambda pct, msg: self.fpgaFirmwareUpdateProgress.emit(
-                target, int(pct), str(msg)
-            )
-        )
-        self._fpga_update_thread.failed.connect(
-            lambda msg: self._on_fpga_fw_failed(target, str(msg))
-        )
-        self._fpga_update_thread.finished_ok.connect(
-            lambda msg: self._on_fpga_fw_finished(target, True, str(msg))
-        )
-        self._fpga_update_thread.finished.connect(
-            lambda: setattr(self, "_fpga_update_thread", None)
-        )
-        self._fpga_update_thread.start()
-        logger.info(
-            f"[FPGA-UPD] thread started target={target} tag={tag} verify={verify}"
-        )
+        thread.failed.connect(lambda msg, t=target: self._on_fpga_fw_failed(t, str(msg)))
+        thread.finished_ok.connect(lambda msg, t=target: self._on_fpga_fw_finished(t, True, str(msg)))
+        thread.finished.connect(lambda: setattr(self, "_fpga_update_thread", None))
+        self._fpga_update_thread = thread
+        thread.start()
 
     def _on_fpga_fw_failed(self, target: str, message: str) -> None:
         logger.info(f"[FPGA-UPD] failed target={target} message={message}")
@@ -2664,20 +2644,6 @@ class MOTIONConnector(QObject):
             self.rgbStateReceived.emit(state, state_text)  # Emit both values
         except Exception as e:
             logger.error(f"Error querying RGB state: {e}")
-        finally:
-            self._console_mutex.unlock()
-
-    @pyqtSlot()
-    def queryFans(self):
-        """Fetch and emit Fan Speed."""
-        self._console_mutex.lock()
-        try:
-            fan_speed = motion_interface.console_module.get_fan_speed()
-
-            logger.info(f"Fan Speed: {fan_speed}")
-            self.fanSpeedsReceived.emit(fan_speed)  # Emit both values
-        except Exception as e:
-            logger.error(f"Error querying Fan Speeds: {e}")
         finally:
             self._console_mutex.unlock()
 
@@ -2911,12 +2877,29 @@ class MOTIONConnector(QObject):
 
                 mutex.lock()
                 try:
-                    passed_flash = motion_interface.sensors[sensor_tag].program_fpga(
+                    # Mirror the bloodflow ScanWorkflow sequence: status precheck,
+                    # program, short settle delay, then configure registers. The
+                    # firmware ACKs OW_FPGA_PROG_SRAM before the FPGA is actually
+                    # usable, so an immediate camera_configure_registers races the
+                    # FPGA bringup and intermittently fails.
+                    sensor = motion_interface.sensors[sensor_tag]
+                    cam_pos = cam_mask.bit_length() - 1
+
+                    status_map = sensor.get_camera_status(cam_mask)
+                    if not status_map or cam_pos not in status_map or not (status_map[cam_pos] & 0x01):
+                        logger.error(
+                            f"Camera {sensor_tag}/{cam_pos} not READY before program (status={status_map})"
+                        )
+                        self.cameraConfigUpdated.emit(cam_mask, False)
+                        return
+
+                    passed_flash = sensor.program_fpga(
                         camera_position=cam_mask, manual_process=False
                     )
-                    passed_configure = motion_interface.sensors[
-                        sensor_tag
-                    ].camera_configure_registers(camera_position=cam_mask)
+                    time.sleep(0.1)  # FPGA bringup settle delay
+                    passed_configure = sensor.camera_configure_registers(
+                        camera_position=cam_mask
+                    )
 
                     if not passed_flash or not passed_configure:
                         logger.error(
@@ -3243,22 +3226,48 @@ class MOTIONConnector(QObject):
             self._console_mutex.unlock()
 
     @pyqtSlot(int, result=bool)
-    def setFanLevel(self, speed: int):
-        """Set Fan Level to device."""
+    def setFanLevel(self, speed: int) -> bool:
+        """Set console fan PWM level (0..100)."""
         self._console_mutex.lock()
         try:
             if motion_interface.console_module.set_fan_speed(fan_speed=speed) == speed:
-                logger.info("Fan set successfully")
+                logger.info(f"Fan set to {speed}%")
                 return True
-            else:
-                logger.error("Failed to set Fan Speed")
-                return False
-
+            logger.error("Failed to set Fan Speed")
+            return False
         except Exception as e:
             logger.error(f"Error setting Fan Speed: {e}")
             return False
         finally:
             self._console_mutex.unlock()
+
+    @pyqtSlot()
+    def readFanFeedback(self):
+        """Read tachometer RPM for all 3 console fans and emit fanFeedbackUpdated.
+
+        The console firmware samples each fan's GPIO over ~50 ms per call, so this
+        takes ~150 ms total. Intended for one-shot button-press refreshes only — do
+        not call on a periodic timer. Per-fan failures are reported as -1.
+        """
+        self._console_mutex.lock()
+        try:
+            rpms = []
+            for fan_idx in range(1, 4):
+                try:
+                    rpm = motion_interface.console_module.get_fan_rpm(fan_index=fan_idx)
+                    rpms.append(int(rpm) if rpm is not None and rpm >= 0 else -1)
+                except Exception as e:
+                    logger.error(f"Error reading fan {fan_idx} RPM: {e}")
+                    rpms.append(-1)
+            logger.info(f"Fan RPMs: {rpms}")
+            self.fanFeedbackUpdated.emit(rpms[0], rpms[1], rpms[2])
+        finally:
+            self._console_mutex.unlock()
+
+    @pyqtSlot()
+    def queryFanStatus(self):
+        """Backwards-compatible alias — reads fan feedback via readFanFeedback()."""
+        self.readFanFeedback()
 
     @pyqtProperty(int, notify=tecTripValueChanged)
     def tecTripValue(self):
@@ -3477,12 +3486,23 @@ class MOTIONConnector(QObject):
         self, target: str, camera_index: int, test_pattern_id: int = 4
     ):
         logger.info(f"Getting histogram for camera {camera_index + 1}")
-        bins, histo = motion_interface.get_camera_histogram(
-            sensor_side=target,
+        sensor = motion_interface.sensors.get(target)
+        if sensor is None:
+            logger.error("%s sensor not connected.", target.capitalize())
+            self.histogramReady.emit([])
+            return
+
+        hist_result = sensor.get_camera_histogram(
             camera_id=camera_index,
             test_pattern_id=test_pattern_id,
             auto_upload=True,
         )
+        if not hist_result:
+            logger.error("Failed to retrieve histogram.")
+            self.histogramReady.emit([])  # Emit empty to clear
+            return
+
+        bins, histo = hist_result
 
         if bins:
             self.histogramReady.emit(bins)

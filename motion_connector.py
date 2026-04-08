@@ -886,6 +886,7 @@ class MOTIONConnector(QObject):
     userConfigLoaded = pyqtSignal(
         float, float, float, float, float
     )  # tec_trip, opt_gain, opt_thresh, ee_gain, ee_thresh
+    userConfigJsonReceived = pyqtSignal(str)  # full JSON string for the editor
     userConfigError = pyqtSignal(str)
 
     def __init__(self, config_dir="config", log_level=logging.INFO, github_disabled=False):
@@ -927,6 +928,21 @@ class MOTIONConnector(QObject):
         self._runlog_active = False  # bool
 
         self.laser_params = self._load_laser_params(config_dir)
+
+        # Load FPGA model JSON (preferred over legacy FpgaModel.js)
+        self._fpga_model = None
+        self._fpga_scale_overrides = {}
+        try:
+            model_json_path = os.path.join(os.path.dirname(__file__), "models", "fpga_model.json")
+            if os.path.exists(model_json_path):
+                with open(model_json_path, "r", encoding="utf-8") as _f:
+                    self._fpga_model = json.load(_f)
+                logger.info(f"Loaded FPGA model JSON from {model_json_path}")
+            else:
+                logger.warning(f"FPGA model JSON not found at {model_json_path}")
+        except Exception as e:
+            logger.error(f"Failed to load FPGA model JSON: {e}")
+            self._fpga_model = None
 
         self._tcm = 0.0
         self._tcl = 0.0
@@ -1312,46 +1328,157 @@ class MOTIONConnector(QObject):
         if key in self._fpga_scale_cache:
             return self._fpga_scale_cache[key]
 
+        # Prefer JSON model if available
         try:
+            # Check overrides first
+            ov_key = f"{label}|{name}"
+            if getattr(self, "_fpga_scale_overrides", None) and ov_key in self._fpga_scale_overrides:
+                scale = float(self._fpga_scale_overrides[ov_key])
+                self._fpga_scale_cache[key] = scale
+                return scale
+
+            if getattr(self, "_fpga_model", None):
+                for fpga in self._fpga_model:
+                    if fpga.get("label") == label:
+                        for fn in fpga.get("functions", []):
+                            if fn.get("name") == name or fn.get("friendlyName") == name:
+                                scale = float(fn.get("scale")) if fn.get("scale") is not None else 1.0
+                                self._fpga_scale_cache[key] = scale
+                                return scale
+
+            # Fallback: keep legacy parsing of FpgaModel.js if JSON not present
             import re
+            model_path = os.path.join(os.path.dirname(__file__), "models", "FpgaModel.js")
+            if os.path.exists(model_path):
+                with open(model_path, "r", encoding="utf-8") as f:
+                    txt = f.read()
 
-            model_path = os.path.join(
-                os.path.dirname(__file__), "models", "FpgaModel.js"
-            )
-            with open(model_path, "r", encoding="utf-8") as f:
-                txt = f.read()
+                # Find the label block first
+                label_re = re.compile(
+                    r'label\s*:\s*"'
+                    + re.escape(label)
+                    + r'"\s*,.*?functions\s*:\s*\[(.*?)\]',
+                    re.S,
+                )
+                m_label = label_re.search(txt)
+                if not m_label:
+                    return None
 
-            # Find the label block first
-            label_re = re.compile(
-                r'label\s*:\s*"'
-                + re.escape(label)
-                + r'"\s*,.*?functions\s*:\s*\[(.*?)\]',
-                re.S,
-            )
-            m_label = label_re.search(txt)
-            if not m_label:
-                return None
+                functions_block = m_label.group(1)
 
-            functions_block = m_label.group(1)
+                # Find the function entry with the given name and extract scale
+                fn_re = re.compile(
+                    r'\{[^}]*name\s*:\s*"'
+                    + re.escape(name)
+                    + r'"[^}]*scale\s*:\s*([0-9]+(?:\.[0-9]+)?)',
+                    re.S,
+                )
+                m_fn = fn_re.search(functions_block)
+                if not m_fn:
+                    return None
 
-            # Find the function entry with the given name and extract scale
-            fn_re = re.compile(
-                r'\{[^}]*name\s*:\s*"'
-                + re.escape(name)
-                + r'"[^}]*scale\s*:\s*([0-9]+(?:\.[0-9]+)?)',
-                re.S,
-            )
-            m_fn = fn_re.search(functions_block)
-            if not m_fn:
-                return None
-
-            scale = float(m_fn.group(1))
-            self._fpga_scale_cache[key] = scale
-            return scale
-
+                scale = float(m_fn.group(1))
+                self._fpga_scale_cache[key] = scale
+                return scale
         except Exception as e:
             logging.debug(f"Failed to read FPGA model scale for {label}/{name}: {e}")
             return None
+
+    def _get_fpga_entry_by_friendly_name(self, friendlyName: str):
+        """Lookup an FPGA function entry by `friendlyName` in models/FpgaModel.js.
+
+        Returns a dict with keys: label, mux_idx, channel, i2c_addr, isMsbFirst,
+        start_address, data_size, scale (may be None) or None if not found.
+        """
+        try:
+            # Prefer JSON model if available
+            if getattr(self, "_fpga_model", None):
+                for fpga in self._fpga_model:
+                    for fn in fpga.get("functions", []):
+                        if fn.get("friendlyName") == friendlyName or fn.get("name") == friendlyName:
+                            entry = {
+                                "label": fpga.get("label"),
+                                "mux_idx": fpga.get("mux_idx"),
+                                "channel": fpga.get("channel"),
+                                "i2c_addr": fpga.get("i2c_addr"),
+                                "isMsbFirst": fpga.get("isMsbFirst", False),
+                                "start_address": fn.get("start_address"),
+                                "data_size": fn.get("data_size"),
+                                "scale": fn.get("scale"),
+                            }
+                            return entry
+
+            # Fallback: legacy JS parsing
+            model_path = os.path.join(os.path.dirname(__file__), "models", "FpgaModel.js")
+            if os.path.exists(model_path):
+                with open(model_path, "r", encoding="utf-8") as f:
+                    txt = f.read()
+
+                block_re = re.compile(r"\{[^}]*label\s*:\s*\"(.*?)\"[^}]*functions\s*:\s*\[(.*?)\][^}]*\}", re.S)
+                for m in block_re.finditer(txt):
+                    label = m.group(1)
+                    outer = m.group(0)
+                    functions_block = m.group(2)
+
+                    mux_idx_m = re.search(r"mux_idx\s*:\s*(\d+)", outer)
+                    channel_m = re.search(r"channel\s*:\s*(\d+)", outer)
+                    i2c_addr_m = re.search(r"i2c_addr\s*:\s*(0x[0-9A-Fa-f]+|\d+)", outer)
+                    ismsb_m = re.search(r"isMsbFirst\s*:\s*(true|false)", outer, re.I)
+
+                    for fn in re.finditer(r"\{(.*?)\}", functions_block, re.S):
+                        fn_text = fn.group(1)
+                        ff_m = re.search(r"friendlyName\s*:\s*\"(.*?)\"", fn_text)
+                        if not ff_m:
+                            continue
+                        if ff_m.group(1) != friendlyName:
+                            continue
+
+                        start_addr_m = re.search(r"start_address\s*:\s*(0x[0-9A-Fa-f]+|\d+)", fn_text)
+                        data_size_m = re.search(r"data_size\s*:\s*\"(.*?)\"", fn_text)
+                        scale_m = re.search(r"scale\s*:\s*([0-9]+(?:\.[0-9]+)?)", fn_text)
+
+                        entry = {
+                            "label": label,
+                            "mux_idx": int(mux_idx_m.group(1)) if mux_idx_m else None,
+                            "channel": int(channel_m.group(1)) if channel_m else None,
+                            "i2c_addr": int(i2c_addr_m.group(1), 0) if i2c_addr_m else None,
+                            "isMsbFirst": True if ismsb_m and ismsb_m.group(1).lower() == "true" else False,
+                            "start_address": int(start_addr_m.group(1), 0) if start_addr_m else None,
+                            "data_size": data_size_m.group(1) if data_size_m else None,
+                            "scale": float(scale_m.group(1)) if scale_m else None,
+                        }
+                        return entry
+
+            return None
+        except Exception as e:
+            logger.debug(f"_get_fpga_entry_by_friendly_name error: {e}")
+            return None
+
+    @pyqtProperty("QVariant", constant=True)
+    def fpgaAddressModel(self):
+        """Expose the loaded FPGA model to QML as a QVariant (list of dicts)."""
+        return self._fpga_model if getattr(self, "_fpga_model", None) is not None else []
+
+    @pyqtSlot(str, str, result=float)
+    def getScale(self, label: str, name: str) -> float:
+        """Return effective scale for given label/name, honoring runtime overrides."""
+        val = self._get_fpga_scale(label, name)
+        return float(val) if val is not None else 1.0
+
+    @pyqtSlot(str, str, float)
+    def setScaleOverride(self, label: str, name: str, scale: float) -> None:
+        """Set or clear a runtime scale override used by `getScale`.
+
+        Pass `scale <= 0` to remove the override.
+        """
+        key = f"{label}|{name}"
+        try:
+            if scale > 0:
+                self._fpga_scale_overrides[key] = float(scale)
+            else:
+                self._fpga_scale_overrides.pop(key, None)
+        except Exception:
+            pass
 
     def _get_sensor_mutex(self, sensor_tag: str) -> QRecursiveMutex:
         """Get the appropriate mutex for the given sensor."""
@@ -1500,6 +1627,7 @@ class MOTIONConnector(QObject):
             cfg_obj = interface.console_module.read_config()
             if cfg_obj is not None:
                 user_cfg = cfg_obj.json_data or {}
+                print(user_cfg)
         except Exception as _e:
             logger.warning(
                 f"[Connector] Could not read user config before laser init: {_e}"
@@ -1523,10 +1651,20 @@ class MOTIONConnector(QObject):
         self._console_mutex.lock()
         try:
             for idx, laser_param in enumerate(self.laser_params, start=1):
-                muxIdx = laser_param["muxIdx"]
-                channel = laser_param["channel"]
-                i2cAddr = laser_param["i2cAddr"]
-                offset = laser_param["offset"]
+                friendlyName = laser_param["friendlyName"]
+
+                # Lookup and log FPGA model parameters for this friendlyName
+                fpga_entry = self._get_fpga_entry_by_friendly_name(friendlyName)
+                if fpga_entry is None:
+                    logger.error(f"Laser parameter entry not found {friendlyName}")
+                    continue
+
+                muxIdx = fpga_entry["mux_idx"] 
+                channel = fpga_entry["channel"]
+                i2cAddr = fpga_entry["i2c_addr"]
+                data_size = fpga_entry["data_size"]
+                offset = fpga_entry["start_address"]
+
                 dataToSend = bytearray(laser_param["dataToSend"])
 
                 if (channel, offset) in skip_entries:
@@ -1536,11 +1674,38 @@ class MOTIONConnector(QObject):
                     )
                     continue
 
+                if friendlyName in user_cfg:
+                    override_val = user_cfg[friendlyName]
+                    logger.info(
+                        f"[Connector] Override for {friendlyName}: {override_val}"
+                    )
+                    # Parse "8B"/"16B"/"24B"/"32B" → number of bytes
+                    num_bytes = int(data_size.rstrip("B")) // 8
+                    scale = fpga_entry.get("scale")
+                    try:
+                        raw_int = float(override_val)
+                        if scale:
+                            raw_int = raw_int / scale
+                        max_val = (1 << (num_bytes * 8)) - 1
+                        raw_int = max(0, min(max_val, int(round(raw_int))))
+                        is_msb = fpga_entry.get("isMsbFirst", False)
+                        byteorder = "big" if is_msb else "little"
+                        dataToSend = bytearray(raw_int.to_bytes(num_bytes, byteorder=byteorder))
+                        logger.info(
+                            f"[Connector] Override {friendlyName} raw={raw_int} "
+                            f"→ {[f'0x{b:02X}' for b in dataToSend]}"
+                        )
+                    except Exception as _ov_err:
+                        logger.warning(
+                            f"[Connector] Could not convert override for {friendlyName}: "
+                            f"{_ov_err}, using default"
+                        )
+
                 logger.info(
                     f"[Connector] ({idx}/{len(self.laser_params)}) "
                     f"Writing I2C: muxIdx={muxIdx}, channel={channel}, "
                     f"i2cAddr=0x{i2cAddr:02X}, offset=0x{offset:02X}, "
-                    f"data={list(dataToSend)}"
+                    f"data={[f'0x{b:02X}' for b in dataToSend]}"
                 )
 
                 if not interface.console_module.write_i2c_packet(
@@ -1575,7 +1740,7 @@ class MOTIONConnector(QObject):
 
                 logger.info(
                     f"[Connector] Writing user-config {label} DRIVE CL: "
-                    f"raw={raw}, gain={gain_f} → {list(data)}"
+                    f"raw={raw}, gain={gain_f} → {[f'0x{b:02X}' for b in data]}"                    
                 )
                 return interface.console_module.write_i2c_packet(
                     mux_index=1, channel=ch, device_addr=0x41, reg_addr=0x10, data=data
@@ -1589,8 +1754,83 @@ class MOTIONConnector(QObject):
                 return False
 
             logger.info("Laser power set successfully.")
+            return True
         finally:
             self._console_mutex.unlock()
+
+    @pyqtSlot(result=str)
+    def getUserConfigJson(self) -> str:
+        """Return the full user config JSON as a pretty-printed string.
+
+        This is a synchronous helper used by QML to populate a multiline
+        editor. Returns '{}' on error or when no config is available.
+        """
+        try:
+            cfg = motion_interface.console_module.read_config()
+            if cfg is None:
+                return "{}"
+            # cfg.json_data expected to be a dict-like object
+            try:
+                return json.dumps(cfg.json_data, indent=2)
+            except Exception:
+                return str(cfg.json_data)
+        except Exception as e:
+            logger.error(f"getUserConfigJson failed: {e}")
+            return "{}"
+
+    @pyqtSlot(str)
+    def setUserConfigJson(self, json_text: str) -> None:
+        """Write the provided JSON text into the device user config.
+
+        This runs on a background thread and will merge the provided JSON
+        into the existing config.json_data before writing. Emits
+        `userConfigError` on failure and reloads the simple fields on success.
+        """
+        import threading
+
+        def _worker(text):
+            self._console_mutex.lock()
+            try:
+                try:
+                    parsed = json.loads(text)
+                    if not isinstance(parsed, dict):
+                        msg = "Provided JSON must be an object/dictionary"
+                        logger.error(msg)
+                        self.userConfigError.emit(msg)
+                        return
+                except Exception as e:
+                    msg = f"Invalid JSON: {e}"
+                    logger.error(msg)
+                    self.userConfigError.emit(msg)
+                    return
+
+                cfg = motion_interface.console_module.read_config()
+                if cfg is None:
+                    msg = "Failed to read existing user config from device"
+                    logger.error(msg)
+                    self.userConfigError.emit(msg)
+                    return
+
+                cfg.json_data = parsed
+
+                updated = motion_interface.console_module.write_config(cfg)
+                if updated is None:
+                    msg = "Failed to write user configuration to device"
+                    logger.error(msg)
+                    self.userConfigError.emit(msg)
+                    return
+
+                # Emit the saved JSON directly — no second device read needed
+                try:
+                    json_str = json.dumps(cfg.json_data, indent=2)
+                except Exception:
+                    json_str = "{}"
+                self.userConfigJsonReceived.emit(json_str)
+
+            finally:
+                self._console_mutex.unlock()
+
+        threading.Thread(target=_worker, args=(json_text,), daemon=True).start()
 
         return True
 
@@ -3096,6 +3336,11 @@ class MOTIONConnector(QObject):
                 f"User config read: TEC_TRIP={tec_trip}, OPT_GAIN={opt_gain}, "
                 f"OPT_THRESH={opt_thresh}, EE_GAIN={ee_gain}, EE_THRESH={ee_thresh}"
             )
+            try:
+                json_str = json.dumps(config.json_data, indent=2)
+            except Exception:
+                json_str = "{}"
+            self.userConfigJsonReceived.emit(json_str)
             self.userConfigLoaded.emit(
                 tec_trip, opt_gain, opt_thresh, ee_gain, ee_thresh
             )
@@ -3163,6 +3408,12 @@ class MOTIONConnector(QObject):
             logger.info(
                 f"User config written: seq={updated.header.seq}, crc=0x{updated.header.crc:04X}"
             )
+            # Emit JSON of what was actually saved so the editor reflects the device state
+            try:
+                json_str = json.dumps(config.json_data, indent=2)
+            except Exception:
+                json_str = "{}"
+            self.userConfigJsonReceived.emit(json_str)
 
         except Exception as e:
             msg = f"Error writing user configuration: {e}"

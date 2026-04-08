@@ -4,7 +4,6 @@ import QtQuick.Layouts 6.0
 import OpenMotion 1.0 
 
 import "../components"
-import "../models/FpgaModel.js" as FpgaData
 
 Rectangle {
     id: page1
@@ -793,7 +792,7 @@ Rectangle {
 
                                 ComboBox {
                                     id: fpgaSelector
-                                    model: FpgaData.fpgaAddressModel
+                                    model: MOTIONInterface.fpgaAddressModel
                                     textRole: "label"
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 32
@@ -809,7 +808,7 @@ Rectangle {
                                     id: functionSelector
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 32
-                                    model: fpgaSelector.currentIndex >= 0 ? FpgaData.fpgaAddressModel[fpgaSelector.currentIndex].functions : []
+                                    model: fpgaSelector.currentIndex >= 0 ? MOTIONInterface.fpgaAddressModel[fpgaSelector.currentIndex].functions : []
                                     textRole: "name"
                                     enabled: fpgaSelector.currentIndex >= 0
 
@@ -884,7 +883,7 @@ Rectangle {
                                     }
 
                                     onClicked: {
-                                        const fpga = FpgaData.fpgaAddressModel[fpgaSelector.currentIndex];
+                                        const fpga = MOTIONInterface.fpgaAddressModel[fpgaSelector.currentIndex];
                                         const i2cAddr = fpga.i2c_addr;
                                         const muxIdx = fpga.mux_idx;
                                         const channel = fpga.channel;

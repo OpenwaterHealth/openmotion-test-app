@@ -4,7 +4,6 @@ import QtQuick.Layouts 6.0
 import OpenMotion 1.0 
 
 import "../components"
-import "../models/FpgaModel.js" as FpgaData
 
 Rectangle {
     id: page1
@@ -98,7 +97,7 @@ Rectangle {
 
     function writeFpgaRegister(fpgaLabel, funcName, data) {
 
-        const fModel = FpgaData.fpgaAddressModel.find(fpga => fpga.label === fpgaLabel);
+        const fModel = MOTIONInterface.fpgaAddressModel.find(fpga => fpga.label === fpgaLabel);
 
         if (!fModel) {
             console.error("FPGA Label not found");
@@ -122,13 +121,13 @@ Rectangle {
         
         let fullValue = 0;
 
-        if (myFn.unit && myFn.scale) {
+            if (myFn.unit && myFn.scale) {
             const floatVal = parseFloat(data);
             if (isNaN(floatVal)) {
                 console.warn("Invalid numeric input for unit conversion.");
                 return;
             }
-            fullValue = Math.round(floatVal / FpgaData.getScale(fpgaLabel, funcName));
+            fullValue = Math.round(floatVal / MOTIONInterface.getScale(fpgaLabel, funcName));
         } else {
             let sanitized = data.replace(/0x/gi, "").replace(/\s+/g, "");
 
@@ -173,7 +172,7 @@ Rectangle {
 
     function readFpgaRegister(fpgaLabel, funcName, field) {
         
-        const fModel = FpgaData.fpgaAddressModel.find(fpga => fpga.label === fpgaLabel);
+        const fModel = MOTIONInterface.fpgaAddressModel.find(fpga => fpga.label === fpgaLabel);
 
         if (!fModel) {
             console.error("FPGA Label not found");
@@ -221,7 +220,7 @@ Rectangle {
             let rawValue = fullValue;  // store globally
 
             if (myFn.unit && myFn.scale) {
-                field.text = (fullValue * FpgaData.getScale(fpgaLabel, funcName)).toFixed(3);
+                field.text = (fullValue * MOTIONInterface.getScale(fpgaLabel, funcName)).toFixed(3);
             } else {
                 let hexStr = "0x" + fullValue.toString(16).toUpperCase().padStart(length * 2, "0");
                 field.text = hexStr;
@@ -2180,8 +2179,8 @@ Rectangle {
 
         // Apply FPGA scale overrides whenever user config is (re)loaded from device
         function onUserConfigLoaded(tecTrip, optGain, optThresh, eeGain, eeThresh) {
-            if (eeGain  > 0) FpgaData.setScaleOverride("Safety EE",  "DRIVE CL", eeGain)
-            if (optGain > 0) FpgaData.setScaleOverride("Safety OPT", "DRIVE CL", optGain)
+            if (eeGain  > 0) MOTIONInterface.setScaleOverride("Safety EE",  "DRIVE CL", eeGain)
+            if (optGain > 0) MOTIONInterface.setScaleOverride("Safety OPT", "DRIVE CL", optGain)
         }
 
     }

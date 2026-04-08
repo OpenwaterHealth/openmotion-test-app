@@ -367,20 +367,17 @@ Rectangle {
 
         function onUserConfigLoaded(tecTrip, optGain, optThresh, eeGain, eeThresh) {
             userConfigLoading = false
-            userTecTrip   = tecTrip
-            userOptGain   = optGain
-            userOptThresh = optThresh
-            userEEGain    = eeGain
-            userEEThresh  = eeThresh
-            tecTripField.text   = tecTrip.toFixed(2)
-            optGainField.text   = optGain.toFixed(2)
-            optThreshField.text = optThresh.toFixed(2)
-            eeGainField.text    = eeGain.toFixed(2)
-            eeThreshField.text  = eeThresh.toFixed(2)
+            // text is populated via onUserConfigJsonReceived which fires at the same time
+        }
+
+        function onUserConfigJsonReceived(jsonText) {
+            userConfigJsonArea.text = jsonText
+            jsonStatus.text = "Loaded"
         }
 
         function onUserConfigError(message) {
             userConfigLoading = false
+            jsonStatus.text = message || "Error"
         }
     }
 
@@ -1054,158 +1051,101 @@ Rectangle {
                     border.color: "#3E4E6F"
                     border.width: 2
 
-                    // Validators outside GridLayout so they don't occupy grid cells
-                    DoubleValidator { id: valTecTrip; bottom: 0; top: 100;  decimals: 2; notation: DoubleValidator.StandardNotation }
-                    DoubleValidator { id: valGain;    bottom: 0; top: 100; decimals: 2; notation: DoubleValidator.StandardNotation }
-                    DoubleValidator { id: valThresh;  bottom: 0; top: 50000; decimals: 2; notation: DoubleValidator.StandardNotation }
-
                     ColumnLayout {
                         anchors.fill: parent
                         anchors.margins: 16
-                        spacing: 10
+                        spacing: 8
 
-                        Text {
-                            text: "User Configuration"
-                            color: "#BDC3C7"
-                            font.pixelSize: 16
-                            font.bold: true
-                        }
-
-                        // 4-column grid: Label | Field | Label | Field
-                        GridLayout {
+                        // Header row: title + status label
+                        RowLayout {
                             Layout.fillWidth: true
-                            columns: 4
-                            columnSpacing: 8
-                            rowSpacing: 10
-
-                            // Row 1: TEC_TRIP | OPT_THRESH
-                            Text { text: "TEC_TRIP:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 90 }
-                            TextField {
-                                id: tecTripField
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 32
-                                placeholderText: "0.00 – 100.00"
-                                validator: valTecTrip
-                                inputMethodHints: Qt.ImhFormattedNumbersOnly
-                                text: userTecTrip.toFixed(2)
-                                onAccepted: {
-                                    let v = parseFloat(text)
-                                    if (isNaN(v)) { text = ""; return }
-                                    if (v < 0) v = 0
-                                    if (v > 100) v = 100
-                                    userTecTrip = v
-                                    text = userTecTrip.toFixed(2)
-                                }
-                            }
-                            Text { text: "OPT_THRESH:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 90 }
-                            TextField {
-                                id: optThreshField
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 32
-                                placeholderText: "0.00 – 50000.00"
-                                validator: valThresh
-                                inputMethodHints: Qt.ImhFormattedNumbersOnly
-                                text: userOptThresh.toFixed(2)
-                                onAccepted: {
-                                    let v = parseFloat(text)
-                                    if (isNaN(v)) { text = ""; return }
-                                    if (v < 0) v = 0
-                                    if (v > 50000) v = 50000
-                                    userOptThresh = v
-                                    text = userOptThresh.toFixed(2)
-                                }
-                            }
-
-                            // Row 2: OPT_GAIN | EE_THRESH
-                            Text { text: "OPT_GAIN:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 90 }
-                            TextField {
-                                id: optGainField
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 32
-                                placeholderText: "0.00 – 100.00"
-                                validator: valGain
-                                inputMethodHints: Qt.ImhFormattedNumbersOnly
-                                text: userOptGain.toFixed(2)
-                                onAccepted: {
-                                    let v = parseFloat(text)
-                                    if (isNaN(v)) { text = ""; return }
-                                    if (v < 0) v = 0
-                                    if (v > 100) v = 100
-                                    userOptGain = v
-                                    text = userOptGain.toFixed(2)
-                                }
-                            }
-                            Text { text: "EE_THRESH:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 90 }
-                            TextField {
-                                id: eeThreshField
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 32
-                                placeholderText: "0.00 – 50000.00"
-                                validator: valThresh
-                                inputMethodHints: Qt.ImhFormattedNumbersOnly
-                                text: userEEThresh.toFixed(2)
-                                onAccepted: {
-                                    let v = parseFloat(text)
-                                    if (isNaN(v)) { text = ""; return }
-                                    if (v < 0) v = 0
-                                    if (v > 50000) v = 50000
-                                    userEEThresh = v
-                                    text = userEEThresh.toFixed(2)
-                                }
-                            }
-
-                            // Row 3: EE_GAIN (left) | Save button (right, spans cols 3-4)
-                            Text { text: "EE_GAIN:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignRight; Layout.preferredWidth: 90 }
-                            TextField {
-                                id: eeGainField
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 32
-                                placeholderText: "0.00 – 100.00"
-                                validator: valGain
-                                inputMethodHints: Qt.ImhFormattedNumbersOnly
-                                text: userEEGain.toFixed(2)
-                                onAccepted: {
-                                    let v = parseFloat(text)
-                                    if (isNaN(v)) { text = ""; return }
-                                    if (v < 0) v = 0
-                                    if (v > 100) v = 100
-                                    userEEGain = v
-                                    text = userEEGain.toFixed(2)
-                                }
+                            spacing: 8
+                            Text {
+                                text: "User Configuration"
+                                color: "#BDC3C7"
+                                font.pixelSize: 16
+                                font.bold: true
                             }
                             Item { Layout.fillWidth: true }
-                            Rectangle {
-                                Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
-                                width: 120
-                                height: 32
-                                radius: 6
-                                color: saveConfigMouseArea.containsMouse ? "#27AE60" : "#2ECC71"
+                            Text {
+                                id: jsonStatus
+                                text: ""
+                                color: "#BDC3C7"
+                                font.pixelSize: 12
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
 
-                                Behavior on color { ColorAnimation { duration: 150 } }
+                        // Scrollable JSON editor
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            color: "#141416"
+                            radius: 6
+                            border.color: userConfigJsonArea.activeFocus ? "#4A90E2" : "#3E4E6F"
+                            border.width: 1
 
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "Save"
-                                    color: "white"
-                                    font.pixelSize: 14
-                                    font.bold: true
+                            ScrollView {
+                                id: jsonScrollView
+                                anchors.fill: parent
+                                anchors.margins: 4
+                                clip: true
+
+                                TextArea {
+                                    id: userConfigJsonArea
+                                    width: jsonScrollView.width
+                                    wrapMode: TextArea.WrapAnywhere
+                                    font.family: "monospace"
+                                    font.pixelSize: 13
+                                    color: "#E8E8E8"
+
+                                    // 🔥 KEY: remove internal styling
+                                    background: null
+
+                                    // optional padding for nicer spacing
+                                    padding: 6
+
+                                    placeholderText: '{\n  "TEC_TRIP": 40.0,\n  "EE_GAIN": 1.86,\n  "EE_THRESH": 9500.0\n}'
+                                    text: ""
                                 }
+                            }
+                        }
 
+                        // Button row
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            Rectangle {
+                                width: 110; height: 32; radius: 6
+                                color: loadJsonMA.containsMouse ? "#4A90E2" : "#3A3F4B"
+                                border.color: loadJsonMA.containsMouse ? "#FFFFFF" : "#BDC3C7"
+                                Behavior on color { ColorAnimation { duration: 120 } }
+                                Text { anchors.centerIn: parent; text: "Load"; color: "#BDC3C7"; font.pixelSize: 13 }
                                 MouseArea {
-                                    id: saveConfigMouseArea
-                                    anchors.fill: parent
-                                    hoverEnabled: true
+                                    id: loadJsonMA; anchors.fill: parent; hoverEnabled: true
                                     onClicked: {
-                                        MOTIONInterface.setUserConfig(
-                                            parseFloat(tecTripField.text)  || 0,
-                                            parseFloat(optGainField.text)  || 0,
-                                            parseFloat(optThreshField.text)|| 0,
-                                            parseFloat(eeGainField.text)   || 0,
-                                            parseFloat(eeThreshField.text) || 0
-                                        )
+                                        MOTIONInterface.readUserConfig()
+                                        jsonStatus.text = "Loading..."
                                     }
                                 }
                             }
+
+                            Rectangle {
+                                width: 110; height: 32; radius: 6
+                                color: saveJsonMA.containsMouse ? "#27AE60" : "#2ECC71"
+                                Behavior on color { ColorAnimation { duration: 120 } }
+                                Text { anchors.centerIn: parent; text: "Save"; color: "white"; font.pixelSize: 13; font.bold: true }
+                                MouseArea {
+                                    id: saveJsonMA; anchors.fill: parent; hoverEnabled: true
+                                    onClicked: {
+                                        MOTIONInterface.setUserConfigJson(userConfigJsonArea.text)
+                                        jsonStatus.text = "Saving..."
+                                    }
+                                }
+                            }
+
+                            Item { Layout.fillWidth: true }
                         }
                     }
                 }

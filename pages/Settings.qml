@@ -1279,36 +1279,23 @@ Rectangle {
                                     Layout.fillWidth: true
                                     Text { text: "TA"; font.pixelSize: 16; color: "#BDC3C7" }
                                     Item { Layout.fillWidth: true }
-                                    RowLayout {
-                                        spacing: 4
-                                        Rectangle {
-                                            width: 70; height: 28; radius: 8
-                                            color: enabled ? "#E74C3C" : "#7F8C8D"
-                                            enabled: MOTIONInterface.consoleConnected
-                                                && taFpgaLatestVersion !== "N/A"
-                                                && !MOTIONInterface.fpgaFirmwareUpdateBusy
-                                            Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
-                                            MouseArea {
-                                                anchors.fill: parent; enabled: parent.enabled
-                                                onClicked: _startFpgaUpdate("TA", taFpgaLatestVersion)
-                                                onEntered: if (parent.enabled) parent.color = "#C0392B"
-                                                onExited: if (parent.enabled) parent.color = "#E74C3C"
+                                    Rectangle {
+                                        width: 70; height: 28; radius: 8
+                                        color: enabled ? "#E74C3C" : "#7F8C8D"
+                                        enabled: MOTIONInterface.consoleConnected && !MOTIONInterface.fpgaFirmwareUpdateBusy
+                                        Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
+                                        MouseArea {
+                                            anchors.fill: parent; enabled: parent.enabled
+                                            onClicked: {
+                                                if (taFpgaLatestVersion === "N/A")
+                                                    _startFpgaFromLocal("TA")
+                                                else
+                                                    _startFpgaUpdate("TA", taFpgaLatestVersion)
                                             }
-                                            Behavior on color { ColorAnimation { duration: 200 } }
+                                            onEntered: if (parent.enabled) parent.color = "#C0392B"
+                                            onExited: if (parent.enabled) parent.color = "#E74C3C"
                                         }
-                                        Rectangle {
-                                            width: 70; height: 28; radius: 8
-                                            color: enabled ? "#2980B9" : "#7F8C8D"
-                                            enabled: MOTIONInterface.consoleConnected && !MOTIONInterface.fpgaFirmwareUpdateBusy
-                                            Text { anchors.centerIn: parent; text: "Upload…"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
-                                            MouseArea {
-                                                anchors.fill: parent; enabled: parent.enabled
-                                                onClicked: _startFpgaFromLocal("TA")
-                                                onEntered: if (parent.enabled) parent.color = "#2471A3"
-                                                onExited: if (parent.enabled) parent.color = "#2980B9"
-                                            }
-                                            Behavior on color { ColorAnimation { duration: 200 } }
-                                        }
+                                        Behavior on color { ColorAnimation { duration: 200 } }
                                     }
                                 }
 
@@ -1347,36 +1334,23 @@ Rectangle {
                                     Layout.fillWidth: true
                                     Text { text: "Seed"; font.pixelSize: 16; color: "#BDC3C7" }
                                     Item { Layout.fillWidth: true }
-                                    RowLayout {
-                                        spacing: 4
-                                        Rectangle {
-                                            width: 70; height: 28; radius: 8
-                                            color: enabled ? "#E74C3C" : "#7F8C8D"
-                                            enabled: MOTIONInterface.consoleConnected
-                                                && seedFpgaLatestVersion !== "N/A"
-                                                && !MOTIONInterface.fpgaFirmwareUpdateBusy
-                                            Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
-                                            MouseArea {
-                                                anchors.fill: parent; enabled: parent.enabled
-                                                onClicked: _startFpgaUpdate("SEED", seedFpgaLatestVersion)
-                                                onEntered: if (parent.enabled) parent.color = "#C0392B"
-                                                onExited: if (parent.enabled) parent.color = "#E74C3C"
+                                    Rectangle {
+                                        width: 70; height: 28; radius: 8
+                                        color: enabled ? "#E74C3C" : "#7F8C8D"
+                                        enabled: MOTIONInterface.consoleConnected && !MOTIONInterface.fpgaFirmwareUpdateBusy
+                                        Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
+                                        MouseArea {
+                                            anchors.fill: parent; enabled: parent.enabled
+                                            onClicked: {
+                                                if (seedFpgaLatestVersion === "N/A")
+                                                    _startFpgaFromLocal("SEED")
+                                                else
+                                                    _startFpgaUpdate("SEED", seedFpgaLatestVersion)
                                             }
-                                            Behavior on color { ColorAnimation { duration: 200 } }
+                                            onEntered: if (parent.enabled) parent.color = "#C0392B"
+                                            onExited: if (parent.enabled) parent.color = "#E74C3C"
                                         }
-                                        Rectangle {
-                                            width: 70; height: 28; radius: 8
-                                            color: enabled ? "#2980B9" : "#7F8C8D"
-                                            enabled: MOTIONInterface.consoleConnected && !MOTIONInterface.fpgaFirmwareUpdateBusy
-                                            Text { anchors.centerIn: parent; text: "Upload…"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
-                                            MouseArea {
-                                                anchors.fill: parent; enabled: parent.enabled
-                                                onClicked: _startFpgaFromLocal("SEED")
-                                                onEntered: if (parent.enabled) parent.color = "#2471A3"
-                                                onExited: if (parent.enabled) parent.color = "#2980B9"
-                                            }
-                                            Behavior on color { ColorAnimation { duration: 200 } }
-                                        }
+                                        Behavior on color { ColorAnimation { duration: 200 } }
                                     }
                                 }
 
@@ -1415,36 +1389,23 @@ Rectangle {
                                     Layout.fillWidth: true
                                     Text { text: "Safety EE"; font.pixelSize: 16; color: "#BDC3C7" }
                                     Item { Layout.fillWidth: true }
-                                    RowLayout {
-                                        spacing: 4
-                                        Rectangle {
-                                            width: 70; height: 28; radius: 8
-                                            color: enabled ? "#E74C3C" : "#7F8C8D"
-                                            enabled: MOTIONInterface.consoleConnected
-                                                && safetyFpgaLatestVersion !== "N/A"
-                                                && !MOTIONInterface.fpgaFirmwareUpdateBusy
-                                            Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
-                                            MouseArea {
-                                                anchors.fill: parent; enabled: parent.enabled
-                                                onClicked: _startFpgaUpdate("SAFETY_EE", safetyFpgaLatestVersion)
-                                                onEntered: if (parent.enabled) parent.color = "#C0392B"
-                                                onExited: if (parent.enabled) parent.color = "#E74C3C"
+                                    Rectangle {
+                                        width: 70; height: 28; radius: 8
+                                        color: enabled ? "#E74C3C" : "#7F8C8D"
+                                        enabled: MOTIONInterface.consoleConnected && !MOTIONInterface.fpgaFirmwareUpdateBusy
+                                        Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
+                                        MouseArea {
+                                            anchors.fill: parent; enabled: parent.enabled
+                                            onClicked: {
+                                                if (safetyFpgaLatestVersion === "N/A")
+                                                    _startFpgaFromLocal("SAFETY_EE")
+                                                else
+                                                    _startFpgaUpdate("SAFETY_EE", safetyFpgaLatestVersion)
                                             }
-                                            Behavior on color { ColorAnimation { duration: 200 } }
+                                            onEntered: if (parent.enabled) parent.color = "#C0392B"
+                                            onExited: if (parent.enabled) parent.color = "#E74C3C"
                                         }
-                                        Rectangle {
-                                            width: 70; height: 28; radius: 8
-                                            color: enabled ? "#2980B9" : "#7F8C8D"
-                                            enabled: MOTIONInterface.consoleConnected && !MOTIONInterface.fpgaFirmwareUpdateBusy
-                                            Text { anchors.centerIn: parent; text: "Upload…"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
-                                            MouseArea {
-                                                anchors.fill: parent; enabled: parent.enabled
-                                                onClicked: _startFpgaFromLocal("SAFETY_EE")
-                                                onEntered: if (parent.enabled) parent.color = "#2471A3"
-                                                onExited: if (parent.enabled) parent.color = "#2980B9"
-                                            }
-                                            Behavior on color { ColorAnimation { duration: 200 } }
-                                        }
+                                        Behavior on color { ColorAnimation { duration: 200 } }
                                     }
                                 }
 
@@ -1489,36 +1450,23 @@ Rectangle {
                                     Layout.fillWidth: true
                                     Text { text: "Safety OPT"; font.pixelSize: 16; color: "#BDC3C7" }
                                     Item { Layout.fillWidth: true }
-                                    RowLayout {
-                                        spacing: 4
-                                        Rectangle {
-                                            width: 70; height: 28; radius: 8
-                                            color: enabled ? "#E74C3C" : "#7F8C8D"
-                                            enabled: MOTIONInterface.consoleConnected
-                                                && safetyFpgaLatestVersion !== "N/A"
-                                                && !MOTIONInterface.fpgaFirmwareUpdateBusy
-                                            Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
-                                            MouseArea {
-                                                anchors.fill: parent; enabled: parent.enabled
-                                                onClicked: _startFpgaUpdate("SAFETY_OPT", safetyFpgaLatestVersion)
-                                                onEntered: if (parent.enabled) parent.color = "#C0392B"
-                                                onExited: if (parent.enabled) parent.color = "#E74C3C"
+                                    Rectangle {
+                                        width: 70; height: 28; radius: 8
+                                        color: enabled ? "#E74C3C" : "#7F8C8D"
+                                        enabled: MOTIONInterface.consoleConnected && !MOTIONInterface.fpgaFirmwareUpdateBusy
+                                        Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
+                                        MouseArea {
+                                            anchors.fill: parent; enabled: parent.enabled
+                                            onClicked: {
+                                                if (safetyFpgaLatestVersion === "N/A")
+                                                    _startFpgaFromLocal("SAFETY_OPT")
+                                                else
+                                                    _startFpgaUpdate("SAFETY_OPT", safetyFpgaLatestVersion)
                                             }
-                                            Behavior on color { ColorAnimation { duration: 200 } }
+                                            onEntered: if (parent.enabled) parent.color = "#C0392B"
+                                            onExited: if (parent.enabled) parent.color = "#E74C3C"
                                         }
-                                        Rectangle {
-                                            width: 70; height: 28; radius: 8
-                                            color: enabled ? "#2980B9" : "#7F8C8D"
-                                            enabled: MOTIONInterface.consoleConnected && !MOTIONInterface.fpgaFirmwareUpdateBusy
-                                            Text { anchors.centerIn: parent; text: "Upload…"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
-                                            MouseArea {
-                                                anchors.fill: parent; enabled: parent.enabled
-                                                onClicked: _startFpgaFromLocal("SAFETY_OPT")
-                                                onEntered: if (parent.enabled) parent.color = "#2471A3"
-                                                onExited: if (parent.enabled) parent.color = "#2980B9"
-                                            }
-                                            Behavior on color { ColorAnimation { duration: 200 } }
-                                        }
+                                        Behavior on color { ColorAnimation { duration: 200 } }
                                     }
                                 }
 

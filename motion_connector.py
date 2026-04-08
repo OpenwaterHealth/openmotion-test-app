@@ -814,8 +814,7 @@ class MOTIONConnector(QObject):
 
     stateChanged = pyqtSignal()  # Notifies QML when state changes
     rgbStateReceived = pyqtSignal(int, str)  # Emit both integer value and text
-    fanSpeedsReceived = pyqtSignal(int)  # Emit both integers
-    fanStatusReceived = pyqtSignal(list)  # [fan1_speed, fan2_speed, fan3_speed] (0-100 each)
+    fanFeedbackUpdated = pyqtSignal(int, int, int)  # Tachometer RPM for fans 1/2/3 (-1 on failure)
     fpgaVersionsReceived = pyqtSignal(
         "QVariant"
     )  # {"TA": str, "Seed": str, "SafetyEE": str, "SafetyOPT": str}
@@ -2705,20 +2704,6 @@ class MOTIONConnector(QObject):
             self._console_mutex.unlock()
 
     @pyqtSlot()
-    def queryFans(self):
-        """Fetch and emit Fan Speed."""
-        self._console_mutex.lock()
-        try:
-            fan_speed = motion_interface.console_module.get_fan_speed()
-
-            logger.info(f"Fan Speed: {fan_speed}")
-            self.fanSpeedsReceived.emit(fan_speed)  # Emit both values
-        except Exception as e:
-            logger.error(f"Error querying Fan Speeds: {e}")
-        finally:
-            self._console_mutex.unlock()
-
-    @pyqtSlot()
     def queryFpgaVersions(self):
         """Read 4-byte version registers from each FPGA and emit fpgaVersionsReceived.
 
@@ -3280,17 +3265,15 @@ class MOTIONConnector(QObject):
             self._console_mutex.unlock()
 
     @pyqtSlot(int, result=bool)
-    def setFanLevel(self, speed: int):
-        """Set Fan Level to device."""
+    def setFanLevel(self, speed: int) -> bool:
+        """Set console fan PWM level (0..100)."""
         self._console_mutex.lock()
         try:
             if motion_interface.console_module.set_fan_speed(fan_speed=speed) == speed:
-                logger.info("Fan set successfully")
+                logger.info(f"Fan set to {speed}%")
                 return True
-            else:
-                logger.error("Failed to set Fan Speed")
-                return False
-
+            logger.error("Failed to set Fan Speed")
+            return False
         except Exception as e:
             logger.error(f"Error setting Fan Speed: {e}")
             return False
@@ -3298,39 +3281,32 @@ class MOTIONConnector(QObject):
             self._console_mutex.unlock()
 
     @pyqtSlot()
-    def queryFanStatus(self):
-        """Fetch and emit per-fan speed for all 3 console fans (fan indices 1-3)."""
+    def readFanFeedback(self):
+        """Read tachometer RPM for all 3 console fans and emit fanFeedbackUpdated.
+
+        The console firmware samples each fan's GPIO over ~50 ms per call, so this
+        takes ~150 ms total. Intended for one-shot button-press refreshes only — do
+        not call on a periodic timer. Per-fan failures are reported as -1.
+        """
         self._console_mutex.lock()
         try:
-            speeds = []
+            rpms = []
             for fan_idx in range(1, 4):
-                speed = motion_interface.console_module.get_fan_speed(fan_index=fan_idx)
-                speeds.append(int(speed) if speed is not None else 0)
-            logger.info(f"Fan speeds: {speeds}")
-            self.fanStatusReceived.emit(speeds)
-        except Exception as e:
-            logger.error(f"Error querying fan status: {e}")
+                try:
+                    rpm = motion_interface.console_module.get_fan_rpm(fan_index=fan_idx)
+                    rpms.append(int(rpm) if rpm is not None and rpm >= 0 else -1)
+                except Exception as e:
+                    logger.error(f"Error reading fan {fan_idx} RPM: {e}")
+                    rpms.append(-1)
+            logger.info(f"Fan RPMs: {rpms}")
+            self.fanFeedbackUpdated.emit(rpms[0], rpms[1], rpms[2])
         finally:
             self._console_mutex.unlock()
 
-    @pyqtSlot(int, bool, result=bool)
-    def setFanEnabled(self, fan_index: int, enabled: bool) -> bool:
-        """Set a specific console fan on (100%) or off (0%). fan_index: 1-3."""
-        self._console_mutex.lock()
-        try:
-            speed = 100 if enabled else 0
-            result = motion_interface.console_module.set_fan_speed(fan_speed=speed, fan_index=fan_index)
-            if result == speed:
-                logger.info(f"Fan {fan_index} set to {'ON' if enabled else 'OFF'}")
-                return True
-            else:
-                logger.error(f"Failed to set fan {fan_index}")
-                return False
-        except Exception as e:
-            logger.error(f"Error setting fan {fan_index}: {e}")
-            return False
-        finally:
-            self._console_mutex.unlock()
+    @pyqtSlot()
+    def queryFanStatus(self):
+        """Backwards-compatible alias — reads fan feedback via readFanFeedback()."""
+        self.readFanFeedback()
 
     @pyqtProperty(int, notify=tecTripValueChanged)
     def tecTripValue(self):

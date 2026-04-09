@@ -1052,10 +1052,22 @@ Rectangle {
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 spacing: 2
 
-                                Text {
-                                    text: "Console Fan: " + (fanSlider.value === 0 ? "OFF" : fanSlider.value.toFixed(0) + "%")
-                                    color: "#BDC3C7"
-                                    font.pixelSize: 13
+                                RowLayout {
+                                    width: 280
+                                    Text {
+                                        text: "Console Fan: " + (fanSlider.value === 0 ? "OFF" : fanSlider.value.toFixed(0) + "%")
+                                        color: "#BDC3C7"
+                                        font.pixelSize: 13
+                                    }
+                                    Item { Layout.fillWidth: true }
+                                    Text {
+                                        // Show PASS/FAIL only after feedback is read and slider > 5%
+                                        visible: fanSlider.value > 5 && fan1Rpm >= 0 && fan2Rpm >= 0 && fan3Rpm >= 0
+                                        text: (fan1Rpm >= 4000 && fan2Rpm >= 4000 && fan3Rpm >= 4000) ? "PASS" : "FAIL"
+                                        color: (fan1Rpm >= 4000 && fan2Rpm >= 4000 && fan3Rpm >= 4000) ? "#2ECC71" : "#E74C3C"
+                                        font.pixelSize: 13
+                                        font.weight: Font.Bold
+                                    }
                                 }
 
                                 Slider {

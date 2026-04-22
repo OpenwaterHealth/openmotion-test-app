@@ -1,6 +1,8 @@
 # motion_singleton.py
-from omotion.Interface import MOTIONInterface
+#
+# Single shared MotionInterface for the test app. The interface owns its
+# own connection-monitor daemon thread; ``main.py`` calls
+# ``motion_interface.start()`` once after the QML engine is loaded.
+from omotion import MotionInterface
 
-motion_interface, console_connected, left_sensor, right_sensor = (
-    MOTIONInterface.acquire_motion_interface()
-)
+motion_interface = MotionInterface()

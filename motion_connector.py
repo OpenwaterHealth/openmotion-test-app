@@ -209,7 +209,7 @@ class _ConsoleFirmwareDownloadThread(QThread):
         connector: "MOTIONConnector",
         tag: str,
         filename: str,
-        target: str = "CONSOLE",
+        target: str = "console",
     ):
         super().__init__()
         self._connector = connector
@@ -251,7 +251,7 @@ class _ConsoleFirmwareDownloadThread(QThread):
 
             repo_name = (
                 _CONSOLE_FW_REPO_NAME
-                if self._target == "CONSOLE"
+                if self._target == "console"
                 else _SENSOR_FW_REPO_NAME
             )
             gh = GitHubReleases(_CONSOLE_FW_REPO_OWNER, repo_name, timeout=30)
@@ -407,19 +407,18 @@ class _DeviceFirmwareFlashThread(QThread):
             self.progress.emit(-1, "Requesting DFU mode…")
 
             # Request DFU mode on the correct module with appropriate mutex
-            if self._target == "CONSOLE":
+            if self._target == "console":
                 self._connector._console_mutex.lock()
                 try:
                     ok = motion_interface.console.enter_dfu()
                 finally:
                     self._connector._console_mutex.unlock()
             else:
-                # SENSOR_LEFT or SENSOR_RIGHT
+                # left or right
                 sensor_mutex = self._connector._get_sensor_mutex(self._target)
-                sensor_tag = "left" if self._target == "SENSOR_LEFT" else "right"
                 sensor_mutex.lock()
                 try:
-                    ok = getattr(motion_interface, sensor_tag).enter_dfu()
+                    ok = getattr(motion_interface, self._target).enter_dfu()
                 finally:
                     sensor_mutex.unlock()
 
@@ -991,7 +990,7 @@ class MOTIONConnector(QObject):
     def beginConsoleFirmwareDownload(self, tag: str) -> None:
         """Download motion-console-fw.bin for the selected release tag into a temp location."""
         logger.info(f"beginConsoleFirmwareDownload {tag}")
-        target = "CONSOLE"
+        target = "console"
         if not tag or tag == "N/A":
             self.consoleFirmwareUpdateError.emit(target, "No release tag selected.")
             return
@@ -1023,9 +1022,9 @@ class MOTIONConnector(QObject):
 
     @pyqtSlot(str, str)
     def beginDeviceFirmwareDownload(self, target: str, tag: str) -> None:
-        """Generic: download firmware binary for a device target (CONSOLE, SENSOR_LEFT, SENSOR_RIGHT)."""
+        """Generic: download firmware binary for a device target ("console", "left", "right")."""
         logger.info(f"beginDeviceFirmwareDownload target={target} tag={tag}")
-        if target not in ("CONSOLE", "SENSOR_LEFT", "SENSOR_RIGHT"):
+        if target not in ("console", "left", "right"):
             self.consoleFirmwareUpdateError.emit(target, "Invalid update target.")
             return
         if not tag or tag == "N/A":
@@ -1039,7 +1038,7 @@ class MOTIONConnector(QObject):
 
         self._set_console_fw_busy(True)
         filename = (
-            "motion-console-fw.bin" if target == "CONSOLE" else "motion-sensor-fw.bin"
+            "motion-console-fw.bin" if target == "console" else "motion-sensor-fw.bin"
         )
 
         self._fw_download_thread = _ConsoleFirmwareDownloadThread(
@@ -1066,7 +1065,7 @@ class MOTIONConnector(QObject):
         The QML side will receive the same ready signal and show the confirm dialog.
         """
         logger.info(f"beginDeviceFirmwareFromLocal target={target} path={local_path}")
-        if target not in ("CONSOLE", "SENSOR_LEFT", "SENSOR_RIGHT"):
+        if target not in ("console", "left", "right"):
             self.consoleFirmwareUpdateError.emit(target, "Invalid update target.")
             return
         try:
@@ -1078,7 +1077,7 @@ class MOTIONConnector(QObject):
                 return
             fname = p.name
             # Validate filename
-            if target == "CONSOLE":
+            if target == "console":
                 if fname != "motion-console-fw.bin":
                     self.consoleFirmwareUpdateError.emit(
                         target, "Filename must be motion-console-fw.bin"
@@ -1113,7 +1112,7 @@ class MOTIONConnector(QObject):
     ) -> None:
         self.consoleFirmwareDownloadReady.emit(token, tag, filename, target)
 
-    def _on_console_fw_failed(self, message: str, target: str = "CONSOLE") -> None:
+    def _on_console_fw_failed(self, message: str, target: str = "console") -> None:
         self.consoleFirmwareUpdateError.emit(target, message)
         self._set_console_fw_busy(False)
 
@@ -1128,13 +1127,13 @@ class MOTIONConnector(QObject):
         """Flash the previously-downloaded firmware using DFU."""
         if not token or token not in self._fw_temp_files:
             self.consoleFirmwareUpdateError.emit(
-                "CONSOLE", "Firmware download token is missing/invalid."
+                "console", "Firmware download token is missing/invalid."
             )
             self._set_console_fw_busy(False)
             return
         if self._fw_flash_thread is not None:
             self.consoleFirmwareUpdateError.emit(
-                "CONSOLE", "Firmware flashing is already in progress."
+                "console", "Firmware flashing is already in progress."
             )
             return
         _, bin_path, _, target = self._fw_temp_files[token]
@@ -1165,7 +1164,7 @@ class MOTIONConnector(QObject):
         self._fw_flash_thread.start()
 
     def _on_console_fw_finished(
-        self, token: str, success: bool, message: str, target: str = "CONSOLE"
+        self, token: str, success: bool, message: str, target: str = "console"
     ) -> None:
         self._cleanup_fw_token(token)
         self.consoleFirmwareUpdateFinished.emit(target, bool(success), str(message))
@@ -1444,18 +1443,18 @@ class MOTIONConnector(QObject):
 
     def _get_sensor_mutex(self, sensor_tag: str) -> QRecursiveMutex:
         """Get the appropriate mutex for the given sensor."""
-        if sensor_tag == "SENSOR_LEFT":
+        if sensor_tag == "left":
             return self._left_sensor_mutex
-        elif sensor_tag == "SENSOR_RIGHT":
+        elif sensor_tag == "right":
             return self._right_sensor_mutex
         else:
             raise ValueError(f"Invalid sensor tag: {sensor_tag}")
 
     def _get_sensor_side(self, sensor_tag: str) -> str:
         """Convert sensor tag to sensor side string."""
-        if sensor_tag == "SENSOR_LEFT":
+        if sensor_tag == "left":
             return "left"
-        elif sensor_tag == "SENSOR_RIGHT":
+        elif sensor_tag == "right":
             return "right"
         else:
             raise ValueError(f"Invalid sensor tag: {sensor_tag}")
@@ -2278,8 +2277,8 @@ class MOTIONConnector(QObject):
     def querySensorInfo(self, target: str):
         """Fetch and emit device information with mutex protection and event-based UI updates."""
         try:
-            if target == "SENSOR_LEFT" or target == "SENSOR_RIGHT":
-                sensor_tag = "left" if target == "SENSOR_LEFT" else "right"
+            if target == "left" or target == "right":
+                sensor_tag = "left" if target == "left" else "right"
                 mutex = self._get_sensor_mutex(target)
 
                 mutex.lock()
@@ -2345,13 +2344,13 @@ class MOTIONConnector(QObject):
             logger.info(f"querySensorLatestVersionInfo({target}): GitHub disabled, skipping.")
             return
         try:
-            if target != "SENSOR_LEFT" and target != "SENSOR_RIGHT":
+            if target != "left" and target != "right":
                 logger.error(
                     f"Invalid target for sensor latest version query: {target}"
                 )
                 return
 
-            sensor_tag = "left" if target == "SENSOR_LEFT" else "right"
+            sensor_tag = "left" if target == "left" else "right"
             mutex = self._get_sensor_mutex(target)
 
             mutex.lock()
@@ -2596,8 +2595,8 @@ class MOTIONConnector(QObject):
     def querySensorTemperature(self, target: str):
         """Fetch and emit Temperature data with mutex protection and event-based UI updates."""
         try:
-            if target == "SENSOR_LEFT" or target == "SENSOR_RIGHT":
-                sensor_tag = "left" if target == "SENSOR_LEFT" else "right"
+            if target == "left" or target == "right":
+                sensor_tag = "left" if target == "left" else "right"
                 mutex = self._get_sensor_mutex(target)
 
                 mutex.lock()
@@ -2842,8 +2841,8 @@ class MOTIONConnector(QObject):
     def querySensorAccelerometer(self, target: str):
         """Fetch and emit Accelerometer data with mutex protection and event-based UI updates."""
         try:
-            if target == "SENSOR_LEFT" or target == "SENSOR_RIGHT":
-                sensor_tag = "left" if target == "SENSOR_LEFT" else "right"
+            if target == "left" or target == "right":
+                sensor_tag = "left" if target == "left" else "right"
                 mutex = self._get_sensor_mutex(target)
 
                 mutex.lock()
@@ -2876,8 +2875,8 @@ class MOTIONConnector(QObject):
     def configureCamera(self, target: str, cam_mask: int):
         """Configure camera with mutex protection and event-based UI updates."""
         try:
-            if target == "SENSOR_LEFT" or target == "SENSOR_RIGHT":
-                sensor_tag = "left" if target == "SENSOR_LEFT" else "right"
+            if target == "left" or target == "right":
+                sensor_tag = "left" if target == "left" else "right"
                 mutex = self._get_sensor_mutex(target)
 
                 mutex.lock()
@@ -2958,7 +2957,7 @@ class MOTIONConnector(QObject):
     def sendPingCommand(self, target: str):
         """Send a ping command to HV device."""
         try:
-            if target == "CONSOLE":
+            if target == "console":
                 self._console_mutex.lock()
                 if motion_interface.console.ping():
                     logger.info("Ping command sent successfully")
@@ -2966,8 +2965,8 @@ class MOTIONConnector(QObject):
                 else:
                     logger.error("Failed to send ping command")
                     return False
-            elif target == "SENSOR_LEFT" or target == "SENSOR_RIGHT":
-                sensor_tag = "left" if target == "SENSOR_LEFT" else "right"
+            elif target == "left" or target == "right":
+                sensor_tag = "left" if target == "left" else "right"
                 if getattr(motion_interface, sensor_tag).ping():
                     logger.info("Ping command sent successfully")
                     return True
@@ -2981,14 +2980,14 @@ class MOTIONConnector(QObject):
             logger.error(f"Error sending ping command: {e}")
             return False
         finally:
-            if target == "CONSOLE":
+            if target == "console":
                 self._console_mutex.unlock()
 
     @pyqtSlot(str, result=bool)
     def sendLedToggleCommand(self, target: str):
         """Send a LED Toggle command to device with mutex protection."""
         try:
-            if target == "CONSOLE":
+            if target == "console":
                 self._console_mutex.lock()
                 try:
                     if motion_interface.console.toggle_led():
@@ -2999,8 +2998,8 @@ class MOTIONConnector(QObject):
                         return False
                 finally:
                     self._console_mutex.unlock()
-            elif target == "SENSOR_LEFT" or target == "SENSOR_RIGHT":
-                sensor_tag = "left" if target == "SENSOR_LEFT" else "right"
+            elif target == "left" or target == "right":
+                sensor_tag = "left" if target == "left" else "right"
                 mutex = self._get_sensor_mutex(target)
 
                 mutex.lock()
@@ -3025,13 +3024,13 @@ class MOTIONConnector(QObject):
         """Send Echo command to device."""
         try:
             expected_data = b"Hello FROM Test Application!"
-            if target == "CONSOLE":
+            if target == "console":
                 self._console_mutex.lock()
                 echoed_data, data_len = motion_interface.console.echo(
                     echo_data=expected_data
                 )
-            elif target == "SENSOR_LEFT" or target == "SENSOR_RIGHT":
-                sensor_tag = "left" if target == "SENSOR_LEFT" else "right"
+            elif target == "left" or target == "right":
+                sensor_tag = "left" if target == "left" else "right"
                 echoed_data, data_len = getattr(motion_interface, sensor_tag).echo(
                     echo_data=expected_data
                 )
@@ -3050,7 +3049,7 @@ class MOTIONConnector(QObject):
             logger.error(f"Error sending Echo command: {e}")
             return False
         finally:
-            if target == "CONSOLE":
+            if target == "console":
                 self._console_mutex.unlock()
 
     @pyqtSlot(result=int)
@@ -3098,7 +3097,7 @@ class MOTIONConnector(QObject):
                 f"i2c_addr=0x{int(i2c_addr):02X}, offset=0x{int(offset):02X}, read_len={int(data_len)}"
             )
 
-            if target == "CONSOLE":
+            if target == "console":
                 self._console_mutex.lock()
                 fpga_data, fpga_data_len = (
                     motion_interface.console.read_i2c_packet(
@@ -3119,14 +3118,14 @@ class MOTIONConnector(QObject):
                     )  # Print as hex bytes separated by spaces
                     return list(fpga_data[:fpga_data_len])
 
-            elif target == "SENSOR_LEFT" or target == "SENSOR_RIGHT":
+            elif target == "left" or target == "right":
                 logger.error("I2C Read Not Implemented")
                 return []
         except Exception as e:
             logger.error(f"Error sending i2c read command: {e}")
             return []
         finally:
-            if target == "CONSOLE":
+            if target == "console":
                 self._console_mutex.unlock()
 
     @pyqtSlot(str, int, int, int, int, list, result=bool)
@@ -3158,7 +3157,7 @@ class MOTIONConnector(QObject):
 
             byte_data = bytes(sanitized_data)
 
-            if target == "CONSOLE":
+            if target == "console":
                 self._console_mutex.lock()
                 if motion_interface.console.write_i2c_packet(
                     mux_index=mux_idx,
@@ -3172,14 +3171,14 @@ class MOTIONConnector(QObject):
                 else:
                     logger.error("Write I2C Failed")
                     return False
-            elif target == "SENSOR_LEFT" or target == "SENSOR_RIGHT":
+            elif target == "left" or target == "right":
                 logger.debug("I2C Write Not Implemented")
                 return True
         except Exception as e:
             logger.error(f"Error sending i2c write command: {e}")
             return False
         finally:
-            if target == "CONSOLE":
+            if target == "console":
                 self._console_mutex.unlock()
 
     @pyqtSlot(str)
@@ -3187,13 +3186,13 @@ class MOTIONConnector(QObject):
         """reset hardware Sensor device."""
         self._console_mutex.lock()
         try:
-            if target == "CONSOLE":
+            if target == "console":
                 if motion_interface.console.soft_reset():
                     logger.info("Software Reset Sent")
                 else:
                     logger.error("Failed to send Software Reset")
-            elif target == "SENSOR_LEFT" or target == "SENSOR_RIGHT":
-                sensor_tag = "left" if target == "SENSOR_LEFT" else "right"
+            elif target == "left" or target == "right":
+                sensor_tag = "left" if target == "left" else "right"
                 if getattr(motion_interface, sensor_tag).soft_reset():
                     logger.info("Software Reset Sent")
                 else:
@@ -3530,7 +3529,7 @@ class MOTIONConnector(QObject):
 
             for label, channel in channels.items():
                 status = self.i2cReadBytes(
-                    "CONSOLE", muxIdx, channel, i2cAddr, offset, data_len
+                    "console", muxIdx, channel, i2cAddr, offset, data_len
                 )
                 if status:
                     statuses[label] = status[0]
@@ -3564,8 +3563,8 @@ class MOTIONConnector(QObject):
     def queryCameraPowerStatus(self, target: str):
         """Query camera power status for all cameras on the specified sensor with mutex protection."""
         try:
-            if target == "SENSOR_LEFT" or target == "SENSOR_RIGHT":
-                sensor_tag = "left" if target == "SENSOR_LEFT" else "right"
+            if target == "left" or target == "right":
+                sensor_tag = "left" if target == "left" else "right"
                 mutex = self._get_sensor_mutex(target)
 
                 mutex.lock()
@@ -3606,8 +3605,8 @@ class MOTIONConnector(QObject):
     def setFanControl(self, target: str, fan_on: bool):
         """Set fan control state on the specified sensor with mutex protection."""
         try:
-            if target == "SENSOR_LEFT" or target == "SENSOR_RIGHT":
-                sensor_tag = "left" if target == "SENSOR_LEFT" else "right"
+            if target == "left" or target == "right":
+                sensor_tag = "left" if target == "left" else "right"
                 mutex = self._get_sensor_mutex(target)
 
                 mutex.lock()
@@ -3644,8 +3643,8 @@ class MOTIONConnector(QObject):
     def getFanControlStatus(self, target: str):
         """Get fan control status from the specified sensor with mutex protection."""
         try:
-            if target == "SENSOR_LEFT" or target == "SENSOR_RIGHT":
-                sensor_tag = "left" if target == "SENSOR_LEFT" else "right"
+            if target == "left" or target == "right":
+                sensor_tag = "left" if target == "left" else "right"
                 mutex = self._get_sensor_mutex(target)
 
                 mutex.lock()
@@ -3875,7 +3874,7 @@ class ConsoleStatusThread(QThread):
 
                     for label, channel in channels.items():
                         status = self.connector.i2cReadBytes(
-                            "CONSOLE", muxIdx, channel, i2cAddr, offset, data_len
+                            "console", muxIdx, channel, i2cAddr, offset, data_len
                         )
                         if status:
                             statuses[label] = status[0]
@@ -3912,10 +3911,10 @@ class ConsoleStatusThread(QThread):
                     #
                     tcm_raw = self.connector.getLsyncCount()
                     tcl_raw = self.connector.i2cReadBytes(
-                        "CONSOLE", muxIdx, 4, i2cAddr, 0x10, 4
+                        "console", muxIdx, 4, i2cAddr, 0x10, 4
                     )
                     pdc_raw = self.connector.i2cReadBytes(
-                        "CONSOLE", muxIdx, 7, i2cAddr, 0x1C, 2
+                        "console", muxIdx, 7, i2cAddr, 0x1C, 2
                     )
 
                     # Represent raw byte arrays as hex for easier reading

@@ -72,7 +72,7 @@ Rectangle {
             return
         }
 
-        let sensor_tag = (sensorSelector.currentIndex === 0) ? "SENSOR_LEFT" : "SENSOR_RIGHT";
+        let sensor_tag = (sensorSelector.currentIndex === 0) ? "left" : "right";
         // console.log("Sensor Updating all states for", sensor_tag);
         
         MOTIONInterface.querySensorInfo(sensor_tag)
@@ -89,7 +89,7 @@ Rectangle {
             // console.log("Page Loaded - Sensor Already Connected. Fetching Info...");
             updateStates();
             // Also query camera power status for the selected sensor
-            let sensor_tag = (sensorSelector.currentIndex === 0) ? "SENSOR_LEFT" : "SENSOR_RIGHT";
+            let sensor_tag = (sensorSelector.currentIndex === 0) ? "left" : "right";
             MOTIONInterface.queryCameraPowerStatus(sensor_tag);
             // Start fan status polling
             fanStatusTimer.start();
@@ -112,7 +112,7 @@ Rectangle {
         running: false
         repeat: true
         onTriggered: {
-            let sensor_tag = (sensorSelector.currentIndex === 0) ? "SENSOR_LEFT" : "SENSOR_RIGHT";
+            let sensor_tag = (sensorSelector.currentIndex === 0) ? "left" : "right";
             let isConnected = (sensorSelector.currentIndex === 0)
                 ? MOTIONInterface.leftSensorConnected
                 : MOTIONInterface.rightSensorConnected;
@@ -135,7 +135,7 @@ Rectangle {
             if (MOTIONInterface.leftSensorConnected || MOTIONInterface.rightSensorConnected) {
                 infoTimer.start()          // One-time info fetch
                 // Automatically query camera power status when sensor connects
-                let sensor_tag = (sensorSelector.currentIndex === 0) ? "SENSOR_LEFT" : "SENSOR_RIGHT";
+                let sensor_tag = (sensorSelector.currentIndex === 0) ? "left" : "right";
                 MOTIONInterface.queryCameraPowerStatus(sensor_tag);
                 // Start fan status polling
                 fanStatusTimer.start();
@@ -436,7 +436,7 @@ Rectangle {
                                     }
 
                                     onClicked: {
-                                        let sensor_tag = (sensorSelector.currentIndex === 0) ? "SENSOR_LEFT" : "SENSOR_RIGHT";
+                                        let sensor_tag = (sensorSelector.currentIndex === 0) ? "left" : "right";
                                         if(MOTIONInterface.sendPingCommand(sensor_tag)){                                        
                                             pingResult.text = "Ping SUCCESS"
                                             pingResult.color = "green"
@@ -493,7 +493,7 @@ Rectangle {
                                     }
 
                                     onClicked: {
-                                        let sensor_tag = (sensorSelector.currentIndex === 0) ? "SENSOR_LEFT" : "SENSOR_RIGHT";
+                                        let sensor_tag = (sensorSelector.currentIndex === 0) ? "left" : "right";
                                         if(MOTIONInterface.sendEchoCommand(sensor_tag)) {
                                             echoResult.text = "Echo SUCCESS"
                                             echoResult.color = "green"
@@ -550,7 +550,7 @@ Rectangle {
                                     }
 
                                     onClicked: {
-                                        let sensor_tag = (sensorSelector.currentIndex === 0) ? "SENSOR_LEFT" : "SENSOR_RIGHT";
+                                        let sensor_tag = (sensorSelector.currentIndex === 0) ? "left" : "right";
                                         if(MOTIONInterface.sendLedToggleCommand(sensor_tag)) {
                                             toggleLedResult.text = "LED Toggled"
                                             toggleLedResult.color = "green"
@@ -611,7 +611,7 @@ Rectangle {
                                     }
 
                                     onClicked: {
-                                        let sensor_tag = (sensorSelector.currentIndex === 0) ? "SENSOR_LEFT" : "SENSOR_RIGHT";
+                                        let sensor_tag = (sensorSelector.currentIndex === 0) ? "left" : "right";
                                         let newFanState = !fanControlOn;
                                         
                                         if (MOTIONInterface.setFanControl(sensor_tag, newFanState)) {
@@ -993,8 +993,8 @@ Rectangle {
                                     if (selectedIndex === 8) {
                                         cameraMask = 0xFF;  // All Cameras
                                     }
-                                    let sensor_tag = "SENSOR_LEFT";
-                                    (sensorSelector.currentIndex === 0) ? sensor_tag = "SENSOR_LEFT": sensor_tag = "SENSOR_RIGHT";
+                                    let sensor_tag = "left";
+                                    (sensorSelector.currentIndex === 0) ? sensor_tag = "left": sensor_tag = "right";
                                     // console.log("Test Camera Mask: " + cameraMask.toString(16));
                                     if(cameraMask == 0xFF){
                                         MOTIONInterface.configureAllCameras(sensor_tag);
@@ -1045,8 +1045,8 @@ Rectangle {
                                         }
                                         onClicked: {
                                             let selectedIndex = cameraDropdown.currentIndex;
-                                            let sensor_tag = "SENSOR_LEFT";
-                                            (sensorSelector.currentIndex === 0) ? sensor_tag = "SENSOR_LEFT": sensor_tag = "SENSOR_RIGHT";
+                                            let sensor_tag = "left";
+                                            (sensorSelector.currentIndex === 0) ? sensor_tag = "left": sensor_tag = "right";
                                             
                                             if (selectedIndex < 8) {
                                                 // Single camera - get its serial number from the properties
@@ -1138,8 +1138,8 @@ Rectangle {
                                             }
                                             onClicked: {
                                                 let selectedIndex = cameraDropdown.currentIndex;
-                                                let sensor_tag = "SENSOR_LEFT";
-                                                (sensorSelector.currentIndex === 0) ? sensor_tag = "SENSOR_LEFT": sensor_tag = "SENSOR_RIGHT";
+                                                let sensor_tag = "left";
+                                                (sensorSelector.currentIndex === 0) ? sensor_tag = "left": sensor_tag = "right";
                                                 
                                                 if (selectedIndex < 8) {
                                                     // Single camera - get its serial number from the properties
@@ -1269,7 +1269,7 @@ Rectangle {
                                             MOTIONInterface.powerCamerasOn(target)
                                             
                                             // Automatically query power status after powering on
-                                            let sensor_tag = (sensorSelector.currentIndex === 0) ? "SENSOR_LEFT" : "SENSOR_RIGHT";
+                                            let sensor_tag = (sensorSelector.currentIndex === 0) ? "left" : "right";
                                             MOTIONInterface.queryCameraPowerStatus(sensor_tag)
                                         }
                                     }
@@ -1326,7 +1326,7 @@ Rectangle {
                                             MOTIONInterface.powerCamerasOff(target)
                                             
                                             // Automatically query power status after powering off
-                                            let sensor_tag = (sensorSelector.currentIndex === 0) ? "SENSOR_LEFT" : "SENSOR_RIGHT";
+                                            let sensor_tag = (sensorSelector.currentIndex === 0) ? "left" : "right";
                                             MOTIONInterface.queryCameraPowerStatus(sensor_tag)
                                         }
                                     }
@@ -1618,8 +1618,8 @@ Rectangle {
                                 anchors.fill: parent
                                 enabled: parent.enabled  // Disable MouseArea when the button is disabled
                                 onClicked: {
-                                    let sensor_tag = "SENSOR_LEFT";
-                                    (sensorSelector.currentIndex === 0) ? sensor_tag = "SENSOR_LEFT": sensor_tag = "SENSOR_RIGHT";
+                                    let sensor_tag = "left";
+                                    (sensorSelector.currentIndex === 0) ? sensor_tag = "left": sensor_tag = "right";
                                     // console.log("Soft Reset Triggered")
                                     MOTIONInterface.softResetSensor(sensor_tag)
                                 }

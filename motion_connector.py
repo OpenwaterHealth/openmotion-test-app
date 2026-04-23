@@ -25,9 +25,13 @@ import pandas as pd
 from pathlib import Path
 
 from omotion.GitHubReleases import GitHubReleases
-from utils.resource_path import resource_path
 from motion_singleton import motion_interface
 from histogram_classifier import classify_histogram
+from fpga_laser_config import (
+    FpgaModel,
+    apply_laser_power_from_config,
+    load_laser_params,
+)
 
 try:
     from omotion.DFUProgrammer import DFUProgrammer, DFUProgress
@@ -886,22 +890,10 @@ class MOTIONConnector(QObject):
         self._runlog_path = None  # str or None
         self._runlog_active = False  # bool
 
-        self.laser_params = self._load_laser_params(config_dir)
+        self.laser_params = load_laser_params(config_dir)
 
-        # Load FPGA model JSON (preferred over legacy FpgaModel.js)
-        self._fpga_model = None
-        self._fpga_scale_overrides = {}
-        try:
-            model_json_path = os.path.join(os.path.dirname(__file__), "models", "fpga_model.json")
-            if os.path.exists(model_json_path):
-                with open(model_json_path, "r", encoding="utf-8") as _f:
-                    self._fpga_model = json.load(_f)
-                logger.info(f"Loaded FPGA model JSON from {model_json_path}")
-            else:
-                logger.warning(f"FPGA model JSON not found at {model_json_path}")
-        except Exception as e:
-            logger.error(f"Failed to load FPGA model JSON: {e}")
-            self._fpga_model = None
+        # Load FPGA model (preferred JSON, with legacy JS fallback)
+        self._fpga = FpgaModel()
 
         self._tcm = 0.0
         self._tcl = 0.0
@@ -1244,32 +1236,6 @@ class MOTIONConnector(QObject):
             logger.error(f"Failed to load RT model: {e}")
 
     # --- SCAN MANAGEMENT METHODS ---
-    @pyqtSlot(result=list)
-    def _load_laser_params(self, config_dir):
-
-        config_path = (
-            resource_path("config", "laser_params.json")
-            if config_dir == "config"
-            else Path(config_dir) / "laser_params.json"
-        )
-        if not config_path.exists():
-            logger.error(f"[Connector] Laser parameter file not found: {config_path}")
-            return []
-
-        try:
-            with open(config_path, "r") as f:
-                params = json.load(f)
-            logger.info(
-                f"[Connector] Loaded {len(params)} laser parameter sets from {config_path}"
-            )
-            return params
-        except FileNotFoundError:
-            logger.error(f"[Connector] Laser parameter file not found: {config_path}")
-            return []
-        except json.JSONDecodeError as e:
-            logger.error(f"[Connector] Invalid JSON in {config_path}: {e}")
-            return []
-
     def connect_signals(self):
         """Connect LIFUInterface signals to QML."""
         motion_interface.signal_connect.connect(self.on_connected)
@@ -1277,151 +1243,22 @@ class MOTIONConnector(QObject):
         motion_interface.signal_data_received.connect(self.on_data_received)
 
     def _get_fpga_scale(self, label: str, name: str):
-        """Retrieve the scale factor for a given `label` and function `name` from models/FpgaModel.js.
-
-        Returns float scale on success or None on failure. Caches results on the instance.
-        """
-        key = (label, name)
-        if getattr(self, "_fpga_scale_cache", None) is None:
-            self._fpga_scale_cache = {}
-        if key in self._fpga_scale_cache:
-            return self._fpga_scale_cache[key]
-
-        # Prefer JSON model if available
-        try:
-            # Check overrides first
-            ov_key = f"{label}|{name}"
-            if getattr(self, "_fpga_scale_overrides", None) and ov_key in self._fpga_scale_overrides:
-                scale = float(self._fpga_scale_overrides[ov_key])
-                self._fpga_scale_cache[key] = scale
-                return scale
-
-            if getattr(self, "_fpga_model", None):
-                for fpga in self._fpga_model:
-                    if fpga.get("label") == label:
-                        for fn in fpga.get("functions", []):
-                            if fn.get("name") == name or fn.get("friendlyName") == name:
-                                scale = float(fn.get("scale")) if fn.get("scale") is not None else 1.0
-                                self._fpga_scale_cache[key] = scale
-                                return scale
-
-            # Fallback: keep legacy parsing of FpgaModel.js if JSON not present
-            import re
-            model_path = os.path.join(os.path.dirname(__file__), "models", "FpgaModel.js")
-            if os.path.exists(model_path):
-                with open(model_path, "r", encoding="utf-8") as f:
-                    txt = f.read()
-
-                # Find the label block first
-                label_re = re.compile(
-                    r'label\s*:\s*"'
-                    + re.escape(label)
-                    + r'"\s*,.*?functions\s*:\s*\[(.*?)\]',
-                    re.S,
-                )
-                m_label = label_re.search(txt)
-                if not m_label:
-                    return None
-
-                functions_block = m_label.group(1)
-
-                # Find the function entry with the given name and extract scale
-                fn_re = re.compile(
-                    r'\{[^}]*name\s*:\s*"'
-                    + re.escape(name)
-                    + r'"[^}]*scale\s*:\s*([0-9]+(?:\.[0-9]+)?)',
-                    re.S,
-                )
-                m_fn = fn_re.search(functions_block)
-                if not m_fn:
-                    return None
-
-                scale = float(m_fn.group(1))
-                self._fpga_scale_cache[key] = scale
-                return scale
-        except Exception as e:
-            logging.debug(f"Failed to read FPGA model scale for {label}/{name}: {e}")
-            return None
+        """Delegate to FpgaModel (kept for backward compatibility)."""
+        return self._fpga.get_scale(label, name)
 
     def _get_fpga_entry_by_friendly_name(self, friendlyName: str):
-        """Lookup an FPGA function entry by `friendlyName` in models/FpgaModel.js.
-
-        Returns a dict with keys: label, mux_idx, channel, i2c_addr, isMsbFirst,
-        start_address, data_size, scale (may be None) or None if not found.
-        """
-        try:
-            # Prefer JSON model if available
-            if getattr(self, "_fpga_model", None):
-                for fpga in self._fpga_model:
-                    for fn in fpga.get("functions", []):
-                        if fn.get("friendlyName") == friendlyName or fn.get("name") == friendlyName:
-                            entry = {
-                                "label": fpga.get("label"),
-                                "mux_idx": fpga.get("mux_idx"),
-                                "channel": fpga.get("channel"),
-                                "i2c_addr": fpga.get("i2c_addr"),
-                                "isMsbFirst": fpga.get("isMsbFirst", False),
-                                "start_address": fn.get("start_address"),
-                                "data_size": fn.get("data_size"),
-                                "scale": fn.get("scale"),
-                            }
-                            return entry
-
-            # Fallback: legacy JS parsing
-            model_path = os.path.join(os.path.dirname(__file__), "models", "FpgaModel.js")
-            if os.path.exists(model_path):
-                with open(model_path, "r", encoding="utf-8") as f:
-                    txt = f.read()
-
-                block_re = re.compile(r"\{[^}]*label\s*:\s*\"(.*?)\"[^}]*functions\s*:\s*\[(.*?)\][^}]*\}", re.S)
-                for m in block_re.finditer(txt):
-                    label = m.group(1)
-                    outer = m.group(0)
-                    functions_block = m.group(2)
-
-                    mux_idx_m = re.search(r"mux_idx\s*:\s*(\d+)", outer)
-                    channel_m = re.search(r"channel\s*:\s*(\d+)", outer)
-                    i2c_addr_m = re.search(r"i2c_addr\s*:\s*(0x[0-9A-Fa-f]+|\d+)", outer)
-                    ismsb_m = re.search(r"isMsbFirst\s*:\s*(true|false)", outer, re.I)
-
-                    for fn in re.finditer(r"\{(.*?)\}", functions_block, re.S):
-                        fn_text = fn.group(1)
-                        ff_m = re.search(r"friendlyName\s*:\s*\"(.*?)\"", fn_text)
-                        if not ff_m:
-                            continue
-                        if ff_m.group(1) != friendlyName:
-                            continue
-
-                        start_addr_m = re.search(r"start_address\s*:\s*(0x[0-9A-Fa-f]+|\d+)", fn_text)
-                        data_size_m = re.search(r"data_size\s*:\s*\"(.*?)\"", fn_text)
-                        scale_m = re.search(r"scale\s*:\s*([0-9]+(?:\.[0-9]+)?)", fn_text)
-
-                        entry = {
-                            "label": label,
-                            "mux_idx": int(mux_idx_m.group(1)) if mux_idx_m else None,
-                            "channel": int(channel_m.group(1)) if channel_m else None,
-                            "i2c_addr": int(i2c_addr_m.group(1), 0) if i2c_addr_m else None,
-                            "isMsbFirst": True if ismsb_m and ismsb_m.group(1).lower() == "true" else False,
-                            "start_address": int(start_addr_m.group(1), 0) if start_addr_m else None,
-                            "data_size": data_size_m.group(1) if data_size_m else None,
-                            "scale": float(scale_m.group(1)) if scale_m else None,
-                        }
-                        return entry
-
-            return None
-        except Exception as e:
-            logger.debug(f"_get_fpga_entry_by_friendly_name error: {e}")
-            return None
+        """Delegate to FpgaModel (kept for backward compatibility)."""
+        return self._fpga.get_entry_by_friendly_name(friendlyName)
 
     @pyqtProperty("QVariant", constant=True)
     def fpgaAddressModel(self):
         """Expose the loaded FPGA model to QML as a QVariant (list of dicts)."""
-        return self._fpga_model if getattr(self, "_fpga_model", None) is not None else []
+        return self._fpga.model
 
     @pyqtSlot(str, str, result=float)
     def getScale(self, label: str, name: str) -> float:
         """Return effective scale for given label/name, honoring runtime overrides."""
-        val = self._get_fpga_scale(label, name)
+        val = self._fpga.get_scale(label, name)
         return float(val) if val is not None else 1.0
 
     @pyqtSlot(str, str, float)
@@ -1430,14 +1267,7 @@ class MOTIONConnector(QObject):
 
         Pass `scale <= 0` to remove the override.
         """
-        key = f"{label}|{name}"
-        try:
-            if scale > 0:
-                self._fpga_scale_overrides[key] = float(scale)
-            else:
-                self._fpga_scale_overrides.pop(key, None)
-        except Exception:
-            pass
+        self._fpga.set_scale_override(label, name, scale)
 
     def _get_sensor_mutex(self, sensor_tag: str) -> QRecursiveMutex:
         """Get the appropriate mutex for the given sensor."""
@@ -1573,149 +1403,9 @@ class MOTIONConnector(QObject):
             return False
 
     def set_laser_power_from_config(self, interface):
-        logger.info("[Connector] Setting laser power from config...")
-
-        # ------------------------------------------------------------------
-        # Read user config to discover which laser_params.json entries should
-        # be skipped and replaced by user-defined values.
-        # EE_THRESH / EE_GAIN  → Safety EE  DRIVE CL (channel 6, offset 0x10)
-        # OPT_THRESH / OPT_GAIN → Safety OPT DRIVE CL (channel 7, offset 0x10)
-        # ------------------------------------------------------------------
-        user_cfg: dict = {}
-        try:
-            cfg_obj = interface.console_module.read_config()
-            if cfg_obj is not None:
-                user_cfg = cfg_obj.json_data or {}
-                print(user_cfg)
-        except Exception as _e:
-            logger.warning(
-                f"[Connector] Could not read user config before laser init: {_e}"
-            )
-
-        ee_thresh = user_cfg.get("EE_THRESH")
-        ee_gain = user_cfg.get("EE_GAIN")
-        opt_thresh = user_cfg.get("OPT_THRESH")
-        opt_gain = user_cfg.get("OPT_GAIN")
-
-        # (channel, offset) entries to skip in the JSON pass
-        _EE_DRIVE_CL = (6, 0x10)  # Safety EE  DRIVE CL
-        _OPT_DRIVE_CL = (7, 0x10)  # Safety OPT DRIVE CL
-
-        skip_entries: set = set()
-        if ee_thresh is not None or ee_gain is not None:
-            skip_entries.add(_EE_DRIVE_CL)
-        if opt_thresh is not None or opt_gain is not None:
-            skip_entries.add(_OPT_DRIVE_CL)
-
-        self._console_mutex.lock()
-        try:
-            for idx, laser_param in enumerate(self.laser_params, start=1):
-                friendlyName = laser_param["friendlyName"]
-
-                # Lookup and log FPGA model parameters for this friendlyName
-                fpga_entry = self._get_fpga_entry_by_friendly_name(friendlyName)
-                if fpga_entry is None:
-                    logger.error(f"Laser parameter entry not found {friendlyName}")
-                    continue
-
-                muxIdx = fpga_entry["mux_idx"] 
-                channel = fpga_entry["channel"]
-                i2cAddr = fpga_entry["i2c_addr"]
-                data_size = fpga_entry["data_size"]
-                offset = fpga_entry["start_address"]
-
-                dataToSend = bytearray(laser_param["dataToSend"])
-
-                if (channel, offset) in skip_entries:
-                    logger.info(
-                        f"[Connector] Skipping JSON entry ch={channel} off=0x{offset:02X} "
-                        f"(overridden by user config)"
-                    )
-                    continue
-
-                if friendlyName in user_cfg:
-                    override_val = user_cfg[friendlyName]
-                    logger.info(
-                        f"[Connector] Override for {friendlyName}: {override_val}"
-                    )
-                    # Parse "8B"/"16B"/"24B"/"32B" → number of bytes
-                    num_bytes = int(data_size.rstrip("B")) // 8
-                    scale = fpga_entry.get("scale")
-                    try:
-                        raw_int = float(override_val)
-                        if scale:
-                            raw_int = raw_int / scale
-                        max_val = (1 << (num_bytes * 8)) - 1
-                        raw_int = max(0, min(max_val, int(round(raw_int))))
-                        is_msb = fpga_entry.get("isMsbFirst", False)
-                        byteorder = "big" if is_msb else "little"
-                        dataToSend = bytearray(raw_int.to_bytes(num_bytes, byteorder=byteorder))
-                        logger.info(
-                            f"[Connector] Override {friendlyName} raw={raw_int} "
-                            f"→ {[f'0x{b:02X}' for b in dataToSend]}"
-                        )
-                    except Exception as _ov_err:
-                        logger.warning(
-                            f"[Connector] Could not convert override for {friendlyName}: "
-                            f"{_ov_err}, using default"
-                        )
-
-                logger.info(
-                    f"[Connector] ({idx}/{len(self.laser_params)}) "
-                    f"Writing I2C: muxIdx={muxIdx}, channel={channel}, "
-                    f"i2cAddr=0x{i2cAddr:02X}, offset=0x{offset:02X}, "
-                    f"data={[f'0x{b:02X}' for b in dataToSend]}"
-                )
-
-                if not interface.console_module.write_i2c_packet(
-                    mux_index=muxIdx,
-                    channel=channel,
-                    device_addr=i2cAddr,
-                    reg_addr=offset,
-                    data=dataToSend,
-                ):
-                    logger.error(
-                        f"Failed to set laser power (muxIdx={muxIdx}, channel={channel})"
-                    )
-                    return False
-
-            # ------------------------------------------------------------------
-            # Write user-config DRIVE CL overrides after the JSON pass.
-            # Default scale matches the static FpgaModel value (1.86 mA/LSB).
-            # Data format: 16-bit LSB-first (isMsbFirst=false in FpgaModel).
-            # thresh is a raw uint16 register value; gain is a float scale factor
-            # used only for the QML FpgaData scale override.
-            # ------------------------------------------------------------------
-
-            def _write_drive_cl(ch: int, thresh, gain: float, label: str) -> bool:
-                if thresh is None:
-                    return True
-                set_value = thresh
-                gain_f = float(gain) if gain is not None else 0.0
-                if gain_f != 0.0:
-                    set_value = thresh/gain_f
-                raw = max(0, min(0xFFFF, int(round(set_value))))  # uint16 raw value
-                data = bytearray([raw & 0xFF, (raw >> 8) & 0xFF])  # LSB first
-
-                logger.info(
-                    f"[Connector] Writing user-config {label} DRIVE CL: "
-                    f"raw={raw}, gain={gain_f} → {[f'0x{b:02X}' for b in data]}"                    
-                )
-                return interface.console_module.write_i2c_packet(
-                    mux_index=1, channel=ch, device_addr=0x41, reg_addr=0x10, data=data
-                )
-
-            if not _write_drive_cl(6, ee_thresh, ee_gain, "Safety EE"):
-                logger.error("Failed to write user-config Safety EE DRIVE CL")
-                return False
-            if not _write_drive_cl(7, opt_thresh, opt_gain, "Safety OPT"):
-                logger.error("Failed to write user-config Safety OPT DRIVE CL")
-                return False
-
-            logger.info("Laser power set successfully.")
-            return True
-        finally:
-            self._console_mutex.unlock()
+        return apply_laser_power_from_config(
+            interface, self.laser_params, self._fpga, self._console_mutex
+        )
 
     @pyqtSlot(result=str)
     def getUserConfigJson(self) -> str:

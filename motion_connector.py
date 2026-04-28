@@ -2414,6 +2414,8 @@ class MOTIONConnector(QObject):
         self._console_mutex.lock()
         try:
             json_trigger_data = json.loads(triggerjson)
+            if "frequencyHz" in json_trigger_data:
+                json_trigger_data["frequencyHz"] = float(json_trigger_data["frequencyHz"])
 
             trigger_setting = motion_interface.console_module.set_trigger_json(
                 data=json_trigger_data
@@ -2446,6 +2448,8 @@ class MOTIONConnector(QObject):
         try:
             if triggerjson:
                 json_trigger_data = json.loads(triggerjson)
+                if "frequencyHz" in json_trigger_data:
+                    json_trigger_data["frequencyHz"] = float(json_trigger_data["frequencyHz"])
 
                 trigger_setting = motion_interface.console_module.set_trigger_json(
                     data=json_trigger_data

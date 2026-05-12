@@ -1620,8 +1620,12 @@ Rectangle {
                                     Layout.preferredHeight: 32
                                     enabled: MOTIONInterface.consoleConnected
                                     font.pixelSize: 12
-                                    text: "40"
-                                    validator: IntValidator { bottom: 1; top: 100 }
+                                    text: "40.00"
+                                    validator: DoubleValidator { bottom: 1.0; top: 100.0; decimals: 2; notation: DoubleValidator.StandardNotation }
+                                    onEditingFinished: {
+                                        var val = parseFloat(text)
+                                        if (!isNaN(val)) text = val.toFixed(2)
+                                    }
                                     background: Rectangle {
                                         radius: 6
                                         color: "#2B2B2E"
@@ -1741,7 +1745,7 @@ Rectangle {
                                     page1.pdcMax = NaN;
 
                                     var json_trigger_data = {
-                                        "TriggerFrequencyHz": parseInt(fsFrequency.text),
+                                        "TriggerFrequencyHz": parseFloat(fsFrequency.text),
                                         "TriggerPulseWidthUsec": parseInt(fsPulseWidth.text),
                                         "LaserPulseDelayUsec": parseInt(lsDelay.text),
                                         "LaserPulseWidthUsec": parseInt(lsPulseWidth.text),

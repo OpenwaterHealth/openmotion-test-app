@@ -1,14 +1,13 @@
 import sys
 import os
-import asyncio
 import warnings
 import logging
 import argparse
 from PyQt6.QtGui import QGuiApplication, QIcon
 from PyQt6.QtQml import QQmlApplicationEngine, qmlRegisterSingletonInstance
-from qasync import QEventLoop
 
 from motion_connector import MOTIONConnector
+from motion_singleton import motion_interface
 from version import get_version
 
 # set PYTHONPATH=%cd%\..\OpenMOTION-PyLib;%PYTHONPATH%
@@ -93,56 +92,27 @@ def main():
         print("Error: Failed to load QML file")
         sys.exit(-1)
 
-    loop = QEventLoop(app)
-    asyncio.set_event_loop(loop)
-
-    async def main_async():
-        """Start MOTION monitoring before event loop runs."""
-        logger.info("Starting MOTION monitoring...")
-        await connector._interface.start_monitoring()
-
-    async def shutdown():
-        """Ensure MOTIONConnector stops monitoring before closing."""
-        logger.info("Shutting down MOTION monitoring...")
-        connector._interface.stop_monitoring()
-
-        pending_tasks = [t for t in asyncio.all_tasks() if not t.done()]
-        if pending_tasks:
-            logger.info(f"Cancelling {len(pending_tasks)} pending tasks...")
-            for task in pending_tasks:
-                task.cancel()
-            await asyncio.gather(*pending_tasks, return_exceptions=True)
-
-        logger.info("LIFU monitoring stopped. Application shutting down.")
+    # The SDK now owns its own daemon connection-monitor thread; no
+    # asyncio loop required. start() returns once any already-attached
+    # devices have completed their CONNECTING transition (or wait_timeout).
+    logger.info("Starting MOTION monitoring...")
+    motion_interface.start(wait=True, wait_timeout=2.0)
 
     def handle_exit():
-        """Ensure QML cleans up before Python exit without blocking."""
+        """Stop the monitor cleanly before Qt tears down."""
         logger.info("Application closing...")
+        try:
+            motion_interface.stop()
+        except Exception as e:
+            logger.warning("Error stopping MotionInterface: %s", e)
+        engine.deleteLater()
 
-        # Schedule shutdown but do NOT block the loop
-        asyncio.ensure_future(shutdown()).add_done_callback(lambda _: loop.stop())
-
-        engine.deleteLater()  # Ensure QML engine is destroyed
-
-    # Connect shutdown process to app quit event
     app.aboutToQuit.connect(handle_exit)
 
     try:
-        with loop:
-            loop.run_until_complete(main_async())
-            loop.run_forever()
-    except RuntimeError as e:
-        if "Event loop stopped before Future completed" in str(e):
-            # Graceful shutdown — expected if closing while a future is active
-            logger.warning(
-                "App closed while a Future was still running (safe to ignore)"
-            )
-        else:
-            logger.error(f"Runtime error: {e}")
+        sys.exit(app.exec())
     except KeyboardInterrupt:
         logger.info("Application interrupted by user.")
-    finally:
-        loop.close()
 
 
 if __name__ == "__main__":

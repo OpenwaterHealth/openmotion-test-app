@@ -56,10 +56,10 @@ Rectangle {
     property string consoleFwStageText: ""
     property int consoleFwPercent: -1
     property string consoleFwMessage: ""
-    // Current firmware update target (CONSOLE, SENSOR_LEFT, SENSOR_RIGHT)
-    property string fwUpdateTarget: "CONSOLE"
+    // Current firmware update target ("console", "left", "right")
+    property string fwUpdateTarget: "console"
     // Target used when opening the upload dialog
-    property string fwUploadTarget: "CONSOLE"
+    property string fwUploadTarget: "console"
 
     // User configuration values (editable by user)
     property real userTecTrip: 0.00
@@ -137,11 +137,11 @@ Rectangle {
     }
 
     function refreshSensorInfo(target) {
-        if (target === "SENSOR_LEFT" && MOTIONInterface.leftSensorConnected) {
+        if (target === "left" && MOTIONInterface.leftSensorConnected) {
             MOTIONInterface.querySensorInfo(target)
             MOTIONInterface.querySensorLatestVersionInfo(target)
         }
-        if (target === "SENSOR_RIGHT" && MOTIONInterface.rightSensorConnected) {
+        if (target === "right" && MOTIONInterface.rightSensorConnected) {
             MOTIONInterface.querySensorInfo(target)
             MOTIONInterface.querySensorLatestVersionInfo(target)
         }
@@ -267,7 +267,7 @@ Rectangle {
                     return db - da
                 })
 
-                if (target === "SENSOR_LEFT") {
+                if (target === "left") {
                     if (info.latest && info.latest.tag_name) {
                         leftLatestFirmware = info.latest.tag_name
                         leftLatestFirmwareDate = info.latest.published_at || ""
@@ -278,7 +278,7 @@ Rectangle {
                     leftReleasesModel = names
                     var idxL = leftReleasesModel.indexOf(leftLatestFirmware)
                     leftLatestIndex = idxL >= 0 ? idxL : 0
-                } else if (target === "SENSOR_RIGHT") {
+                } else if (target === "right") {
                     if (info.latest && info.latest.tag_name) {
                         rightLatestFirmware = info.latest.tag_name
                         rightLatestFirmwareDate = info.latest.published_at || ""
@@ -297,10 +297,10 @@ Rectangle {
 
         // Newer signal (preferred): includes target so Settings can show both L/R.
         function onSensorDeviceInfoReceivedEx(target, fwVersion, devId) {
-            if (target === "SENSOR_LEFT") {
+            if (target === "left") {
                 leftSensorFirmwareVersion = fwVersion
                 leftSensorDeviceId = devId
-            } else if (target === "SENSOR_RIGHT") {
+            } else if (target === "right") {
                 rightSensorFirmwareVersion = fwVersion
                 rightSensorDeviceId = devId
             }
@@ -335,7 +335,7 @@ Rectangle {
             fwProgressDialog.close()
             consoleFwToken = ""
             fwResultDialog.title = success ? "Firmware Update Complete" : "Firmware Update Failed"
-            var prefix = (target === "CONSOLE") ? "Console: " : (target === "SENSOR_LEFT") ? "Left sensor: " : "Right sensor: "
+            var prefix = (target === "console") ? "Console: " : (target === "left") ? "Left sensor: " : "Right sensor: "
             fwResultDialog.message = prefix + message
             fwResultDialog.open()
         }
@@ -400,8 +400,8 @@ Rectangle {
         onTriggered: {
             refreshConsoleInfo()
             refreshFpgaInfo()
-            refreshSensorInfo("SENSOR_LEFT")
-            refreshSensorInfo("SENSOR_RIGHT")
+            refreshSensorInfo("left")
+            refreshSensorInfo("right")
             if (MOTIONInterface.consoleConnected)
                 MOTIONInterface.readUserConfig()
         }
@@ -554,12 +554,12 @@ Rectangle {
             if (idx < 0) idx = file.lastIndexOf("\\\\")
             var fname = idx >= 0 ? file.substring(idx + 1) : file
 
-            if (fwUploadTarget === "CONSOLE" && fname !== "motion-console-fw.bin") {
+            if (fwUploadTarget === "console" && fname !== "motion-console-fw.bin") {
                 fwErrorDialog.message = "Filename must be motion-console-fw.bin"
                 fwErrorDialog.open()
                 return
             }
-            if ((fwUploadTarget === "SENSOR_LEFT" || fwUploadTarget === "SENSOR_RIGHT") && fname !== "motion-sensor-fw.bin") {
+            if ((fwUploadTarget === "left" || fwUploadTarget === "right") && fname !== "motion-sensor-fw.bin") {
                 fwErrorDialog.message = "Filename must be motion-sensor-fw.bin"
                 fwErrorDialog.open()
                 return
@@ -765,7 +765,7 @@ Rectangle {
 
             Text {
                 text: {
-                    var label = (fwUpdateTarget === "CONSOLE") ? "console" : (fwUpdateTarget === "SENSOR_LEFT") ? "left sensor" : "right sensor"
+                    var label = (fwUpdateTarget === "console") ? "console" : (fwUpdateTarget === "left") ? "left sensor" : "right sensor"
                     return "Update " + label + " firmware to " + consoleFwSelectedTag + "?"
                 }
                 color: "white"
@@ -1657,7 +1657,7 @@ Rectangle {
                                         if (!tag || tag === "")
                                             tag = consoleLatestFirmware
                                         if (tag === "Upload File...") {
-                                            fwUploadTarget = "CONSOLE"
+                                            fwUploadTarget = "console"
                                             fwUploadDialog.open()
                                             return
                                         }
@@ -1727,7 +1727,7 @@ Rectangle {
                                         anchors.fill: parent
                                         enabled: parent.enabled
                                         hoverEnabled: true
-                                        onClicked: refreshSensorInfo("SENSOR_LEFT")
+                                        onClicked: refreshSensorInfo("left")
                                         onEntered: if (parent.enabled) parent.color = "#34495E"
                                         onExited: parent.color = parent.enabled ? "#2C3E50" : "#7F8C8D"
                                     }
@@ -1797,14 +1797,14 @@ Rectangle {
                                         if (!tag || tag === "")
                                             tag = leftLatestFirmware
                                         if (tag === "Upload File...") {
-                                            fwUploadTarget = "SENSOR_LEFT"
+                                            fwUploadTarget = "left"
                                             fwUploadDialog.open()
                                             return
                                         }
                                         consoleFwPercent = -1
                                         consoleFwMessage = ""
                                         consoleFwStageText = "Starting…"
-                                        MOTIONInterface.beginDeviceFirmwareDownload("SENSOR_LEFT", tag)
+                                        MOTIONInterface.beginDeviceFirmwareDownload("left", tag)
                                         fwProgressDialog.open()
                                     }
                                     onEntered: if (parent.enabled) parent.color = "#C0392B"
@@ -1867,7 +1867,7 @@ Rectangle {
                                         anchors.fill: parent
                                         enabled: parent.enabled
                                         hoverEnabled: true
-                                        onClicked: refreshSensorInfo("SENSOR_RIGHT")
+                                        onClicked: refreshSensorInfo("right")
                                         onEntered: if (parent.enabled) parent.color = "#34495E"
                                         onExited: parent.color = parent.enabled ? "#2C3E50" : "#7F8C8D"
                                     }
@@ -1937,14 +1937,14 @@ Rectangle {
                                         if (!tag || tag === "")
                                             tag = rightLatestFirmware
                                         if (tag === "Upload File...") {
-                                            fwUploadTarget = "SENSOR_RIGHT"
+                                            fwUploadTarget = "right"
                                             fwUploadDialog.open()
                                             return
                                         }
                                         consoleFwPercent = -1
                                         consoleFwMessage = ""
                                         consoleFwStageText = "Starting…"
-                                        MOTIONInterface.beginDeviceFirmwareDownload("SENSOR_RIGHT", tag)
+                                        MOTIONInterface.beginDeviceFirmwareDownload("right", tag)
                                         fwProgressDialog.open()
                                     }
                                     onEntered: if (parent.enabled) parent.color = "#C0392B"

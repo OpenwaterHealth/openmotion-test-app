@@ -157,7 +157,7 @@ Rectangle {
 
         // console.log("Data to send:", dataToSend.map(b => "0x" + b.toString(16).padStart(2, "0")).join(" "));
 
-        let success = MOTIONInterface.i2cWriteBytes("CONSOLE", muxIdx, channel, i2cAddr, offset, dataToSend);
+        let success = MOTIONInterface.i2cWriteBytes("console", muxIdx, channel, i2cAddr, offset, dataToSend);
 
         if (success) {
             // console.log("Write successful.");
@@ -195,7 +195,7 @@ Rectangle {
         const data_len = parseInt(myFn.data_size.replace("B", "")) / 8;
 
         // console.log(`READ from ${fModel.label} @ 0x${offset.toString(16)}`);
-        let result = MOTIONInterface.i2cReadBytes("CONSOLE", muxIdx, channel, i2cAddr, offset, data_len);
+        let result = MOTIONInterface.i2cReadBytes("console", muxIdx, channel, i2cAddr, offset, data_len);
 
         if (result.length === 0) {
             // console.log("Read failed or returned empty array.");
@@ -1745,10 +1745,10 @@ Rectangle {
                                     page1.pdcMax = NaN;
 
                                     var json_trigger_data = {
-                                        "frequencyHz": parseFloat(fsFrequency.text),
-                                        "triggerPulseWidthUsec": parseInt(fsPulseWidth.text),
-                                        "laserPulseDelayUsec": parseInt(lsDelay.text),
-                                        "laserPulseWidthUsec": parseInt(lsPulseWidth.text),
+                                        "TriggerFrequencyHz": parseFloat(fsFrequency.text),
+                                        "TriggerPulseWidthUsec": parseInt(fsPulseWidth.text),
+                                        "LaserPulseDelayUsec": parseInt(lsDelay.text),
+                                        "LaserPulseWidthUsec": parseInt(lsPulseWidth.text),
                                         "EnableSyncOut": enableSyncOutCheckbox.checked,
                                         "EnableTaTrigger": true
                                     }

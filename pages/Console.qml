@@ -284,7 +284,7 @@ Rectangle {
                                 }
 
                                 onClicked: {
-                                    if(MOTIONInterface.sendPingCommand("CONSOLE")){                                        
+                                    if(MOTIONInterface.sendPingCommand("console")){                                        
                                         pingResult.text = "Ping SUCCESS"
                                         pingResult.color = "green"
                                     }else{
@@ -338,7 +338,7 @@ Rectangle {
                                 }
 
                                 onClicked: {
-                                    if(MOTIONInterface.sendLedToggleCommand("CONSOLE"))
+                                    if(MOTIONInterface.sendLedToggleCommand("console"))
                                     {
                                         toggleLedResult.text = "LED Toggled"
                                         toggleLedResult.color = "green"
@@ -392,7 +392,7 @@ Rectangle {
 
                                 onClicked: {
 
-                                    if(MOTIONInterface.sendEchoCommand("CONSOLE"))
+                                    if(MOTIONInterface.sendEchoCommand("console"))
                                     {
                                         echoResult.text = "Echo SUCCESS"
                                         echoResult.color = "green"
@@ -904,7 +904,7 @@ Rectangle {
 
                                         if (dir === "Read") {
                                             // console.log(`READ from ${fpga.label} @ 0x${offset.toString(16)}`);
-                                            let result = MOTIONInterface.i2cReadBytes("CONSOLE", muxIdx, channel, i2cAddr, offset, length);
+                                            let result = MOTIONInterface.i2cReadBytes("console", muxIdx, channel, i2cAddr, offset, length);
 
                                             if (result.length === 0) {
                                                 console.error("Read failed or returned empty array.");
@@ -983,7 +983,7 @@ Rectangle {
 
                                             // console.log("Data to send:", dataToSend.map(b => "0x" + b.toString(16).padStart(2, "0")).join(" "));
 
-                                            let success = MOTIONInterface.i2cWriteBytes("CONSOLE", muxIdx, channel, i2cAddr, offset, dataToSend);
+                                            let success = MOTIONInterface.i2cWriteBytes("console", muxIdx, channel, i2cAddr, offset, dataToSend);
 
                                             if (success) {
                                                 // console.log("Write successful.");
@@ -1387,7 +1387,7 @@ Rectangle {
                                 enabled: parent.enabled  // Disable MouseArea when the button is disabled
                                 onClicked: {
                                     // console.log("Soft Reset Triggered")
-                                    MOTIONInterface.softResetSensor("CONSOLE")
+                                    MOTIONInterface.softResetSensor("console")
                                 }
 
                                 onEntered: {

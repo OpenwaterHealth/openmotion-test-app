@@ -64,8 +64,8 @@ Rectangle {
         // console.log("Sensor Updating all states...")
         
         let isConnected = (sensorSelector.currentIndex === 0)
-            ? MOTIONInterface.leftSensorConnected
-            : MOTIONInterface.rightSensorConnected
+            ? MotionInterface.leftSensorConnected
+            : MotionInterface.rightSensorConnected
 
         if (!isConnected) {
             // console.log("Selected sensor is not connected. Skipping update.")
@@ -75,22 +75,22 @@ Rectangle {
         let sensor_tag = (sensorSelector.currentIndex === 0) ? "left" : "right";
         // console.log("Sensor Updating all states for", sensor_tag);
         
-        MOTIONInterface.querySensorInfo(sensor_tag)
-        MOTIONInterface.querySensorTemperature(sensor_tag)
-        MOTIONInterface.querySensorAccelerometer(sensor_tag)
-        MOTIONInterface.queryCameraPowerStatus(sensor_tag)
-        //MOTIONInterface.queryTriggerInfo()
+        MotionInterface.querySensorInfo(sensor_tag)
+        MotionInterface.querySensorTemperature(sensor_tag)
+        MotionInterface.querySensorAccelerometer(sensor_tag)
+        MotionInterface.queryCameraPowerStatus(sensor_tag)
+        //MotionInterface.queryTriggerInfo()
     }
 
     // Run refresh logic immediately on page load if Sensor is already connected
     Component.onCompleted: {
         sensorSelector.currentIndex = 0 // default
-        if (MOTIONInterface.leftSensorConnected || MOTIONInterface.rightSensorConnected) {
+        if (MotionInterface.leftSensorConnected || MotionInterface.rightSensorConnected) {
             // console.log("Page Loaded - Sensor Already Connected. Fetching Info...");
             updateStates();
             // Also query camera power status for the selected sensor
             let sensor_tag = (sensorSelector.currentIndex === 0) ? "left" : "right";
-            MOTIONInterface.queryCameraPowerStatus(sensor_tag);
+            MotionInterface.queryCameraPowerStatus(sensor_tag);
             // Start fan status polling
             fanStatusTimer.start();
         }
@@ -114,11 +114,11 @@ Rectangle {
         onTriggered: {
             let sensor_tag = (sensorSelector.currentIndex === 0) ? "left" : "right";
             let isConnected = (sensorSelector.currentIndex === 0)
-                ? MOTIONInterface.leftSensorConnected
-                : MOTIONInterface.rightSensorConnected;
+                ? MotionInterface.leftSensorConnected
+                : MotionInterface.rightSensorConnected;
             
             if (isConnected) {
-                let currentFanStatus = MOTIONInterface.getFanControlStatus(sensor_tag);
+                let currentFanStatus = MotionInterface.getFanControlStatus(sensor_tag);
                 if (currentFanStatus !== fanControlOn) {
                     fanControlOn = currentFanStatus;
                     // console.log("Fan status updated:", currentFanStatus ? "ON" : "OFF");
@@ -128,15 +128,15 @@ Rectangle {
     }
 
     Connections {
-        target: MOTIONInterface
+        target: MotionInterface
 
         // Handle Sensor Connected state
         function onConnectionStatusChanged() {
-            if (MOTIONInterface.leftSensorConnected || MOTIONInterface.rightSensorConnected) {
+            if (MotionInterface.leftSensorConnected || MotionInterface.rightSensorConnected) {
                 infoTimer.start()          // One-time info fetch
                 // Automatically query camera power status when sensor connects
                 let sensor_tag = (sensorSelector.currentIndex === 0) ? "left" : "right";
-                MOTIONInterface.queryCameraPowerStatus(sensor_tag);
+                MotionInterface.queryCameraPowerStatus(sensor_tag);
                 // Start fan status polling
                 fanStatusTimer.start();
             } else {
@@ -260,7 +260,7 @@ Rectangle {
             
             TextField {
                 id: folderPathInput
-                text: MOTIONInterface.csvOutputDirectory
+                text: MotionInterface.csvOutputDirectory
                 Layout.fillWidth: true
                 placeholderText: "Enter folder path..."
                 selectByMouse: true
@@ -323,7 +323,7 @@ Rectangle {
                     
                     onClicked: {
                         if (folderPathInput.text.trim() !== "") {
-                            MOTIONInterface.setCsvOutputDirectory(folderPathInput.text.trim())
+                            MotionInterface.setCsvOutputDirectory(folderPathInput.text.trim())
                             csvFolderDialog.close()
                         }
                     }
@@ -406,9 +406,9 @@ Rectangle {
                                     hoverEnabled: true
                                     enabled: {
                                         if (sensorSelector.currentIndex === 0) {
-                                            return MOTIONInterface.leftSensorConnected
+                                            return MotionInterface.leftSensorConnected
                                         } else {
-                                            return MOTIONInterface.rightSensorConnected
+                                            return MotionInterface.rightSensorConnected
                                         }
                                     }
 
@@ -437,7 +437,7 @@ Rectangle {
 
                                     onClicked: {
                                         let sensor_tag = (sensorSelector.currentIndex === 0) ? "left" : "right";
-                                        if(MOTIONInterface.sendPingCommand(sensor_tag)){                                        
+                                        if(MotionInterface.sendPingCommand(sensor_tag)){                                        
                                             pingResult.text = "Ping SUCCESS"
                                             pingResult.color = "green"
                                         }else{
@@ -463,9 +463,9 @@ Rectangle {
                                     hoverEnabled: true
                                     enabled: {
                                         if (sensorSelector.currentIndex === 0) {
-                                            return MOTIONInterface.leftSensorConnected
+                                            return MotionInterface.leftSensorConnected
                                         } else {
-                                            return MOTIONInterface.rightSensorConnected
+                                            return MotionInterface.rightSensorConnected
                                         }
                                     }
 
@@ -494,7 +494,7 @@ Rectangle {
 
                                     onClicked: {
                                         let sensor_tag = (sensorSelector.currentIndex === 0) ? "left" : "right";
-                                        if(MOTIONInterface.sendEchoCommand(sensor_tag)) {
+                                        if(MotionInterface.sendEchoCommand(sensor_tag)) {
                                             echoResult.text = "Echo SUCCESS"
                                             echoResult.color = "green"
                                         } else {
@@ -520,9 +520,9 @@ Rectangle {
                                     hoverEnabled: true
                                     enabled: {
                                         if (sensorSelector.currentIndex === 0) {
-                                            return MOTIONInterface.leftSensorConnected
+                                            return MotionInterface.leftSensorConnected
                                         } else {
-                                            return MOTIONInterface.rightSensorConnected
+                                            return MotionInterface.rightSensorConnected
                                         }
                                     }
 
@@ -551,7 +551,7 @@ Rectangle {
 
                                     onClicked: {
                                         let sensor_tag = (sensorSelector.currentIndex === 0) ? "left" : "right";
-                                        if(MOTIONInterface.sendLedToggleCommand(sensor_tag)) {
+                                        if(MotionInterface.sendLedToggleCommand(sensor_tag)) {
                                             toggleLedResult.text = "LED Toggled"
                                             toggleLedResult.color = "green"
                                         } else {
@@ -581,9 +581,9 @@ Rectangle {
                                     hoverEnabled: true
                                     enabled: {
                                         if (sensorSelector.currentIndex === 0) {
-                                            return MOTIONInterface.leftSensorConnected
+                                            return MotionInterface.leftSensorConnected
                                         } else {
-                                            return MOTIONInterface.rightSensorConnected
+                                            return MotionInterface.rightSensorConnected
                                         }
                                     }
 
@@ -614,7 +614,7 @@ Rectangle {
                                         let sensor_tag = (sensorSelector.currentIndex === 0) ? "left" : "right";
                                         let newFanState = !fanControlOn;
                                         
-                                        if (MOTIONInterface.setFanControl(sensor_tag, newFanState)) {
+                                        if (MotionInterface.setFanControl(sensor_tag, newFanState)) {
                                             fanControlOn = newFanState;
                                             fanControlResult.text = newFanState ? "Fan ON" : "Fan OFF";
                                             fanControlResult.color = newFanState ? "green" : "orange";
@@ -926,9 +926,9 @@ Rectangle {
                                 currentIndex: 8  // Default to "All Cameras"
                                 enabled: {
                                     if (sensorSelector.currentIndex === 0) {
-                                        return MOTIONInterface.leftSensorConnected
+                                        return MotionInterface.leftSensorConnected
                                     } else {
-                                        return MOTIONInterface.rightSensorConnected
+                                        return MotionInterface.rightSensorConnected
                                     }
                                 }
 
@@ -961,9 +961,9 @@ Rectangle {
                                         hoverEnabled: true
                                         enabled: {
                                             if (sensorSelector.currentIndex === 0) {
-                                                return MOTIONInterface.leftSensorConnected
+                                                return MotionInterface.leftSensorConnected
                                             } else {
-                                                return MOTIONInterface.rightSensorConnected
+                                                return MotionInterface.rightSensorConnected
                                             }
                                         }
                                         contentItem: Text {
@@ -997,9 +997,9 @@ Rectangle {
                                     (sensorSelector.currentIndex === 0) ? sensor_tag = "left": sensor_tag = "right";
                                     // console.log("Test Camera Mask: " + cameraMask.toString(16));
                                     if(cameraMask == 0xFF){
-                                        MOTIONInterface.configureAllCameras(sensor_tag);
+                                        MotionInterface.configureAllCameras(sensor_tag);
                                     }else{
-                                        MOTIONInterface.configureCamera(sensor_tag, cameraMask);
+                                        MotionInterface.configureCamera(sensor_tag, cameraMask);
                                     }
                                         }
                                     }
@@ -1017,9 +1017,9 @@ Rectangle {
                                         hoverEnabled: true
                                         enabled: {
                                             if (sensorSelector.currentIndex === 0) {
-                                                return MOTIONInterface.leftSensorConnected
+                                                return MotionInterface.leftSensorConnected
                                             } else {
-                                                return MOTIONInterface.rightSensorConnected
+                                                return MotionInterface.rightSensorConnected
                                             }
                                         }
                                         contentItem: Text {
@@ -1069,7 +1069,7 @@ Rectangle {
                                                 }
                                                 
                                                 // console.log("Capturing histogram for camera", selectedIndex, "with SN", serialNumber);
-                                                    MOTIONInterface.captureHistogramToCSV(sensor_tag, selectedIndex, serialNumber, false);
+                                                    MotionInterface.captureHistogramToCSV(sensor_tag, selectedIndex, serialNumber, false);
                                             } else {
                                                 // All cameras - capture each individually with their serial numbers
                                                 // console.log("Capturing histograms for all cameras with individual serial numbers");
@@ -1097,7 +1097,7 @@ Rectangle {
                                                     serialNumbers.push(serialNumber);
                                                 }
                                                 
-                                                MOTIONInterface.captureAllCamerasHistogramToCSV(sensor_tag, false, serialNumbers);
+                                                MotionInterface.captureAllCamerasHistogramToCSV(sensor_tag, false, serialNumbers);
                                                 }
                                             }
                                         }
@@ -1110,9 +1110,9 @@ Rectangle {
                                             hoverEnabled: true
                                 enabled: {
                                     if (sensorSelector.currentIndex === 0) {
-                                        return MOTIONInterface.leftSensorConnected
+                                        return MotionInterface.leftSensorConnected
                                     } else {
-                                        return MOTIONInterface.rightSensorConnected
+                                        return MotionInterface.rightSensorConnected
                                     }
                                 }
                                             contentItem: Text {
@@ -1162,7 +1162,7 @@ Rectangle {
                                                     }
                                                     
                                                 // console.log("Capturing dark histogram for camera", selectedIndex, "with SN", serialNumber);
-                                                MOTIONInterface.captureHistogramToCSV(sensor_tag, selectedIndex, serialNumber, true);
+                                                MotionInterface.captureHistogramToCSV(sensor_tag, selectedIndex, serialNumber, true);
                                                 } else {
                                                     // All cameras - capture each individually with their serial numbers
                                                 // console.log("Capturing dark histograms for all cameras with individual serial numbers");
@@ -1190,7 +1190,7 @@ Rectangle {
                                                     serialNumbers.push(serialNumber);
                                                 }
                                                 
-                                                MOTIONInterface.captureAllCamerasHistogramToCSV(sensor_tag, true, serialNumbers);
+                                                MotionInterface.captureAllCamerasHistogramToCSV(sensor_tag, true, serialNumbers);
                                                 }
                                             }
                                         }
@@ -1237,9 +1237,9 @@ Rectangle {
                                         hoverEnabled: true
                                 enabled: {
                                     if (sensorSelector.currentIndex === 0) {
-                                        return MOTIONInterface.leftSensorConnected
+                                        return MotionInterface.leftSensorConnected
                                     } else {
-                                        return MOTIONInterface.rightSensorConnected
+                                        return MotionInterface.rightSensorConnected
                                     }
                                 }
                                 contentItem: Text {
@@ -1266,11 +1266,11 @@ Rectangle {
                                 onClicked: {
                                             let target = "left";
                                             (sensorSelector.currentIndex === 0) ? target = "left": target = "right";
-                                            MOTIONInterface.powerCamerasOn(target)
+                                            MotionInterface.powerCamerasOn(target)
                                             
                                             // Automatically query power status after powering on
                                             let sensor_tag = (sensorSelector.currentIndex === 0) ? "left" : "right";
-                                            MOTIONInterface.queryCameraPowerStatus(sensor_tag)
+                                            MotionInterface.queryCameraPowerStatus(sensor_tag)
                                         }
                                     }
                                     }
@@ -1294,9 +1294,9 @@ Rectangle {
                                         hoverEnabled: true
                                         enabled: {
                                             if (sensorSelector.currentIndex === 0) {
-                                                return MOTIONInterface.leftSensorConnected
+                                                return MotionInterface.leftSensorConnected
                                             } else {
-                                                return MOTIONInterface.rightSensorConnected
+                                                return MotionInterface.rightSensorConnected
                                             }
                                         }
                                         contentItem: Text {
@@ -1323,11 +1323,11 @@ Rectangle {
                                         onClicked: {
                                             let target = "left";
                                             (sensorSelector.currentIndex === 0) ? target = "left": target = "right";
-                                            MOTIONInterface.powerCamerasOff(target)
+                                            MotionInterface.powerCamerasOff(target)
                                             
                                             // Automatically query power status after powering off
                                             let sensor_tag = (sensorSelector.currentIndex === 0) ? "left" : "right";
-                                            MOTIONInterface.queryCameraPowerStatus(sensor_tag)
+                                            MotionInterface.queryCameraPowerStatus(sensor_tag)
                                         }
                                     }
                                     }
@@ -1349,14 +1349,14 @@ Rectangle {
 
                                 Text {
                                     id: csvOutputPathText
-                                    text: MOTIONInterface.csvOutputDirectory
+                                    text: MotionInterface.csvOutputDirectory
                                     color: "#3498DB"
                                     font.pixelSize: 12
                                     Layout.fillWidth: true
                                     elide: Text.ElideMiddle
                                     onTextChanged: {
                                         // Update text when directory changes
-                                        text = MOTIONInterface.csvOutputDirectory
+                                        text = MotionInterface.csvOutputDirectory
                                     }
                                 }
 
@@ -1487,9 +1487,9 @@ Rectangle {
                                 radius: 10
                                 color: {
                                     if (sensorSelector.currentIndex === 0) {
-                                        return MOTIONInterface.leftSensorConnected ? "green" : "red"
+                                        return MotionInterface.leftSensorConnected ? "green" : "red"
                                     } else {
-                                        return MOTIONInterface.rightSensorConnected ? "green" : "red"
+                                        return MotionInterface.rightSensorConnected ? "green" : "red"
                                     }
                                 }
                                 border.color: "black"
@@ -1511,9 +1511,9 @@ Rectangle {
                                 Layout.alignment: Qt.AlignRight  
                                 enabled: {
                                     if (sensorSelector.currentIndex === 0) {
-                                        return MOTIONInterface.leftSensorConnected
+                                        return MotionInterface.leftSensorConnected
                                     } else {
-                                        return MOTIONInterface.rightSensorConnected
+                                        return MotionInterface.rightSensorConnected
                                     }
                                 }
 
@@ -1601,9 +1601,9 @@ Rectangle {
                             color: enabled ? "#E74C3C" : "#7F8C8D"  // Red when enabled, gray when disabled
                             enabled: {
                                     if (sensorSelector.currentIndex === 0) {
-                                        return MOTIONInterface.leftSensorConnected
+                                        return MotionInterface.leftSensorConnected
                                     } else {
-                                        return MOTIONInterface.rightSensorConnected
+                                        return MotionInterface.rightSensorConnected
                                     }
                             }
                             Text {
@@ -1621,7 +1621,7 @@ Rectangle {
                                     let sensor_tag = "left";
                                     (sensorSelector.currentIndex === 0) ? sensor_tag = "left": sensor_tag = "right";
                                     // console.log("Soft Reset Triggered")
-                                    MOTIONInterface.softResetSensor(sensor_tag)
+                                    MotionInterface.softResetSensor(sensor_tag)
                                 }
 
                                 onEntered: {

@@ -6,11 +6,11 @@ import argparse
 from PyQt6.QtGui import QGuiApplication, QIcon
 from PyQt6.QtQml import QQmlApplicationEngine, qmlRegisterSingletonInstance
 
-from motion_connector import MOTIONConnector
+from motion_connector import MotionConnector
 from motion_singleton import motion_interface
 from version import get_version
 
-# set PYTHONPATH=%cd%\..\OpenMOTION-PyLib;%PYTHONPATH%
+# set PYTHONPATH=%cd%\..\openmotion-sdk;%PYTHONPATH%
 # python main.py
 
 APP_VERSION = get_version()
@@ -39,7 +39,7 @@ def resource_path(rel: str) -> str:
 
 def main():
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description="OpenMOTION Test Application")
+    parser = argparse.ArgumentParser(description="Open-Motion Test Application")
     parser.add_argument(
         "--debug", action="store_true", help="Enable debug logging and console output"
     )
@@ -78,8 +78,8 @@ def main():
 
     # Expose to QML
     log_level = logging.DEBUG if args.debug else logging.INFO
-    connector = MOTIONConnector(log_level=log_level, github_disabled=args.no_github)
-    qmlRegisterSingletonInstance("OpenMotion", 1, 0, "MOTIONInterface", connector)
+    connector = MotionConnector(log_level=log_level, github_disabled=args.no_github)
+    qmlRegisterSingletonInstance("OpenMotion", 1, 0, "MotionInterface", connector)
     engine.rootContext().setContextProperty("appVersion", APP_VERSION)
     # Also expose app version on the QGuiApplication instance so Python
     # modules (not just QML) can read it via QGuiApplication.instance().property()
@@ -95,7 +95,7 @@ def main():
     # The SDK now owns its own daemon connection-monitor thread; no
     # asyncio loop required. start() returns once any already-attached
     # devices have completed their CONNECTING transition (or wait_timeout).
-    logger.info("Starting MOTION monitoring...")
+    logger.info("Starting Open-Motion monitoring...")
     motion_interface.start(wait=True, wait_timeout=2.0)
 
     def handle_exit():

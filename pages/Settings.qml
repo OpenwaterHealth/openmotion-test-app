@@ -78,7 +78,7 @@ Rectangle {
     property string fpgaFwUploadTarget: ""
 
     function _startFpgaUpdate(target, tag) {
-        if (!MOTIONInterface.consoleConnected) {
+        if (!MotionInterface.consoleConnected) {
             fwErrorDialog.message = "Console is not connected."
             fwErrorDialog.open()
             return
@@ -91,12 +91,12 @@ Rectangle {
         fpgaFwUpdateTarget = target
         fpgaFwPercent = -1
         fpgaFwMessage = "Starting..."
-        MOTIONInterface.beginFpgaFirmwareUpdate(target, tag)
+        MotionInterface.beginFpgaFirmwareUpdate(target, tag)
         fpgaProgressDialog.open()
     }
 
     function _startFpgaFromLocal(target) {
-        if (!MOTIONInterface.consoleConnected) {
+        if (!MotionInterface.consoleConnected) {
             fwErrorDialog.message = "Console is not connected."
             fwErrorDialog.open()
             return
@@ -123,32 +123,32 @@ Rectangle {
     }
 
     function refreshConsoleInfo() {
-        if (MOTIONInterface.consoleConnected) {
-            MOTIONInterface.queryConsoleInfo()
-            MOTIONInterface.queryConsoleLatestVersionInfo()
+        if (MotionInterface.consoleConnected) {
+            MotionInterface.queryConsoleInfo()
+            MotionInterface.queryConsoleLatestVersionInfo()
         }
     }
 
     function refreshFpgaInfo() {
-        if (MOTIONInterface.consoleConnected) {
-            MOTIONInterface.queryFpgaVersions()
-            MOTIONInterface.queryConsoleLatestFpgaVersionInfo()
+        if (MotionInterface.consoleConnected) {
+            MotionInterface.queryFpgaVersions()
+            MotionInterface.queryConsoleLatestFpgaVersionInfo()
         }
     }
 
     function refreshSensorInfo(target) {
-        if (target === "left" && MOTIONInterface.leftSensorConnected) {
-            MOTIONInterface.querySensorInfo(target)
-            MOTIONInterface.querySensorLatestVersionInfo(target)
+        if (target === "left" && MotionInterface.leftSensorConnected) {
+            MotionInterface.querySensorInfo(target)
+            MotionInterface.querySensorLatestVersionInfo(target)
         }
-        if (target === "right" && MOTIONInterface.rightSensorConnected) {
-            MOTIONInterface.querySensorInfo(target)
-            MOTIONInterface.querySensorLatestVersionInfo(target)
+        if (target === "right" && MotionInterface.rightSensorConnected) {
+            MotionInterface.querySensorInfo(target)
+            MotionInterface.querySensorLatestVersionInfo(target)
         }
     }
 
     Connections {
-        target: MOTIONInterface
+        target: MotionInterface
 
         function _clearConsoleInfo() {
             consoleFirmwareVersion = "N/A"
@@ -176,17 +176,17 @@ Rectangle {
         // Mirrors Sensor.qml/Console.qml behavior: on any connection change, clear disconnected
         // fields immediately and query device info for connected modules.
         function onConnectionStatusChanged() {
-            if (!MOTIONInterface.consoleConnected) {
+            if (!MotionInterface.consoleConnected) {
                 _clearConsoleInfo()
                 userConfigLoading = false
             }
-            if (!MOTIONInterface.leftSensorConnected)
+            if (!MotionInterface.leftSensorConnected)
                 _clearLeftSensorInfo()
-            if (!MOTIONInterface.rightSensorConnected)
+            if (!MotionInterface.rightSensorConnected)
                 _clearRightSensorInfo()
 
-            if (MOTIONInterface.consoleConnected || MOTIONInterface.leftSensorConnected || MOTIONInterface.rightSensorConnected) {
-                if (MOTIONInterface.consoleConnected)
+            if (MotionInterface.consoleConnected || MotionInterface.leftSensorConnected || MotionInterface.rightSensorConnected) {
+                if (MotionInterface.consoleConnected)
                     userConfigLoading = true
                 settingsInfoTimer.restart()
             } else {
@@ -365,7 +365,7 @@ Rectangle {
                 fwResultDialog.message = message
                 fwResultDialog.open()
                 // Refresh current versions after successful reprogramming.
-                MOTIONInterface.queryFpgaVersions()
+                MotionInterface.queryFpgaVersions()
             }
         }
 
@@ -402,15 +402,15 @@ Rectangle {
             refreshFpgaInfo()
             refreshSensorInfo("left")
             refreshSensorInfo("right")
-            if (MOTIONInterface.consoleConnected)
-                MOTIONInterface.readUserConfig()
+            if (MotionInterface.consoleConnected)
+                MotionInterface.readUserConfig()
         }
     }
 
     Component.onCompleted: {
         // Populate immediately if user navigates here while already connected
-        if (MOTIONInterface.consoleConnected || MOTIONInterface.leftSensorConnected || MOTIONInterface.rightSensorConnected) {
-            if (MOTIONInterface.consoleConnected)
+        if (MotionInterface.consoleConnected || MotionInterface.leftSensorConnected || MotionInterface.rightSensorConnected) {
+            if (MotionInterface.consoleConnected)
                 userConfigLoading = true
             settingsInfoTimer.start()
         }
@@ -571,7 +571,7 @@ Rectangle {
             consoleFwPercent = -1
             consoleFwMessage = ""
             consoleFwStageText = ""
-            MOTIONInterface.beginDeviceFirmwareFromLocal(fwUploadTarget, file)
+            MotionInterface.beginDeviceFirmwareFromLocal(fwUploadTarget, file)
         }
     }
 
@@ -599,7 +599,7 @@ Rectangle {
 
             fpgaFwPercent = -1
             fpgaFwMessage = ""
-            MOTIONInterface.beginFpgaFirmwareFromLocal(fpgaFwUploadTarget, file)
+            MotionInterface.beginFpgaFirmwareFromLocal(fpgaFwUploadTarget, file)
             fpgaProgressDialog.open()
         }
     }
@@ -796,7 +796,7 @@ Rectangle {
 
                     onClicked: {
                         fwConfirmDialog.close()
-                        MOTIONInterface.cancelConsoleFirmwareUpdate(consoleFwToken)
+                        MotionInterface.cancelConsoleFirmwareUpdate(consoleFwToken)
                         consoleFwToken = ""
                     }
 
@@ -824,7 +824,7 @@ Rectangle {
                     onClicked: {
                         fwConfirmDialog.close()
                         fwProgressDialog.open()
-                        MOTIONInterface.startConsoleFirmwareUpdate(consoleFwToken)
+                        MotionInterface.startConsoleFirmwareUpdate(consoleFwToken)
                     }
 
                     contentItem: Text {
@@ -1061,14 +1061,14 @@ Rectangle {
                             Text { text: "" + appVersion; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
                             Text { text: "SDK Version:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
-                            Text { text: "" + MOTIONInterface.get_sdk_version(); color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
+                            Text { text: "" + MotionInterface.get_sdk_version(); color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
 
                             Text { text: "System State:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                             Text {
                                 text: {
-                                    const c = MOTIONInterface.consoleConnected
-                                    const l = MOTIONInterface.leftSensorConnected
-                                    const r = MOTIONInterface.rightSensorConnected
+                                    const c = MotionInterface.consoleConnected
+                                    const l = MotionInterface.leftSensorConnected
+                                    const r = MotionInterface.rightSensorConnected
                                     if (c && l && r) return "Connected"
                                     if (!c && !l && !r) return "Disconnected"
                                     return "Partially Connected"
@@ -1165,7 +1165,7 @@ Rectangle {
                                 MouseArea {
                                     id: loadJsonMA; anchors.fill: parent; hoverEnabled: true
                                     onClicked: {
-                                        MOTIONInterface.readUserConfig()
+                                        MotionInterface.readUserConfig()
                                         jsonStatus.text = "Loading..."
                                     }
                                 }
@@ -1179,7 +1179,7 @@ Rectangle {
                                 MouseArea {
                                     id: saveJsonMA; anchors.fill: parent; hoverEnabled: true
                                     onClicked: {
-                                        MOTIONInterface.setUserConfigJson(userConfigJsonArea.text)
+                                        MotionInterface.setUserConfigJson(userConfigJsonArea.text)
                                         jsonStatus.text = "Saving..."
                                     }
                                 }
@@ -1226,7 +1226,7 @@ Rectangle {
                                 Text { text: "FPGAs"; font.pixelSize: 16; color: "#BDC3C7" }
                                 Rectangle {
                                     width: 14; height: 14; radius: 7
-                                    color: MOTIONInterface.consoleConnected ? "green" : "red"
+                                    color: MotionInterface.consoleConnected ? "green" : "red"
                                     border.color: "black"; border.width: 1
                                 }
                             }
@@ -1234,7 +1234,7 @@ Rectangle {
                             Rectangle {
                                 width: 30; height: 30; radius: 15
                                 color: enabled ? "#2C3E50" : "#7F8C8D"
-                                enabled: MOTIONInterface.consoleConnected
+                                enabled: MotionInterface.consoleConnected
 
                                 Text {
                                     text: "\u21BB"
@@ -1282,7 +1282,7 @@ Rectangle {
                                     Rectangle {
                                         width: 70; height: 28; radius: 8
                                         color: enabled ? "#E74C3C" : "#7F8C8D"
-                                        enabled: MOTIONInterface.consoleConnected && !MOTIONInterface.fpgaFirmwareUpdateBusy
+                                        enabled: MotionInterface.consoleConnected && !MotionInterface.fpgaFirmwareUpdateBusy
                                         Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
                                         MouseArea {
                                             anchors.fill: parent; enabled: parent.enabled
@@ -1337,7 +1337,7 @@ Rectangle {
                                     Rectangle {
                                         width: 70; height: 28; radius: 8
                                         color: enabled ? "#E74C3C" : "#7F8C8D"
-                                        enabled: MOTIONInterface.consoleConnected && !MOTIONInterface.fpgaFirmwareUpdateBusy
+                                        enabled: MotionInterface.consoleConnected && !MotionInterface.fpgaFirmwareUpdateBusy
                                         Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
                                         MouseArea {
                                             anchors.fill: parent; enabled: parent.enabled
@@ -1392,7 +1392,7 @@ Rectangle {
                                     Rectangle {
                                         width: 70; height: 28; radius: 8
                                         color: enabled ? "#E74C3C" : "#7F8C8D"
-                                        enabled: MOTIONInterface.consoleConnected && !MOTIONInterface.fpgaFirmwareUpdateBusy
+                                        enabled: MotionInterface.consoleConnected && !MotionInterface.fpgaFirmwareUpdateBusy
                                         Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
                                         MouseArea {
                                             anchors.fill: parent; enabled: parent.enabled
@@ -1453,7 +1453,7 @@ Rectangle {
                                     Rectangle {
                                         width: 70; height: 28; radius: 8
                                         color: enabled ? "#E74C3C" : "#7F8C8D"
-                                        enabled: MOTIONInterface.consoleConnected && !MOTIONInterface.fpgaFirmwareUpdateBusy
+                                        enabled: MotionInterface.consoleConnected && !MotionInterface.fpgaFirmwareUpdateBusy
                                         Text { anchors.centerIn: parent; text: "Update"; color: parent.enabled ? "white" : "#BDC3C7"; font.pixelSize: 13; font.weight: Font.Bold }
                                         MouseArea {
                                             anchors.fill: parent; enabled: parent.enabled
@@ -1499,8 +1499,8 @@ Rectangle {
                     CheckBox {
                         id: fpgaVerifyOverlay
                         text: "Verify"
-                        checked: MOTIONInterface.fpgaFirmwareVerifyEnabled
-                        enabled: MOTIONInterface.consoleConnected && !MOTIONInterface.fpgaFirmwareUpdateBusy
+                        checked: MotionInterface.fpgaFirmwareVerifyEnabled
+                        enabled: MotionInterface.consoleConnected && !MotionInterface.fpgaFirmwareUpdateBusy
                         indicator.width: 16
                         indicator.height: 16
                         font.pixelSize: 13
@@ -1509,7 +1509,7 @@ Rectangle {
                         anchors.bottom: parent.bottom
                         anchors.bottomMargin: 8
 
-                        onToggled: MOTIONInterface.fpgaFirmwareVerifyEnabled = checked
+                        onToggled: MotionInterface.fpgaFirmwareVerifyEnabled = checked
 
                         ToolTip.visible: hovered
                         ToolTip.text: "Enable FPGA post-program verify (slower)"
@@ -1555,7 +1555,7 @@ Rectangle {
                                     width: 14
                                     height: 14
                                     radius: 7
-                                    color: MOTIONInterface.consoleConnected ? "green" : "red"
+                                    color: MotionInterface.consoleConnected ? "green" : "red"
                                     border.color: "black"
                                     border.width: 1
                                 }
@@ -1567,7 +1567,7 @@ Rectangle {
                                     height: 30
                                     radius: 15
                                     color: enabled ? "#2C3E50" : "#7F8C8D"
-                                    enabled: MOTIONInterface.consoleConnected
+                                    enabled: MotionInterface.consoleConnected
 
                                     Text {
                                         text: "\u21BB"
@@ -1623,7 +1623,7 @@ Rectangle {
                                     currentIndex: consoleLatestIndex
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 32
-                                    enabled: MOTIONInterface.consoleConnected
+                                    enabled: MotionInterface.consoleConnected
                                     onCurrentIndexChanged: consoleLatestIndex = currentIndex
                                 }
                             }
@@ -1635,11 +1635,11 @@ Rectangle {
                                 height: 40
                                 radius: 10
                                 color: enabled ? "#E74C3C" : "#7F8C8D"
-                                enabled: MOTIONInterface.consoleConnected
+                                enabled: MotionInterface.consoleConnected
                                     && consoleFirmwareVersion !== "N/A"
                                     && consoleDeviceId !== "N/A"
                                     && consoleBoardRevId !== "N/A"
-                                    && !MOTIONInterface.consoleFirmwareUpdateBusy
+                                    && !MotionInterface.consoleFirmwareUpdateBusy
 
                                 Text {
                                     text: "Update Firmware"
@@ -1664,7 +1664,7 @@ Rectangle {
                                         consoleFwPercent = -1
                                         consoleFwMessage = ""
                                         consoleFwStageText = "Starting…"
-                                        MOTIONInterface.beginConsoleFirmwareDownload(tag)
+                                        MotionInterface.beginConsoleFirmwareDownload(tag)
                                         fwProgressDialog.open()
                                     }
                                     onEntered: if (parent.enabled) parent.color = "#C0392B"
@@ -1700,7 +1700,7 @@ Rectangle {
                                     width: 14
                                     height: 14
                                     radius: 7
-                                    color: MOTIONInterface.leftSensorConnected ? "green" : "red"
+                                    color: MotionInterface.leftSensorConnected ? "green" : "red"
                                     border.color: "black"
                                     border.width: 1
                                 }
@@ -1712,7 +1712,7 @@ Rectangle {
                                     height: 30
                                     radius: 15
                                     color: enabled ? "#2C3E50" : "#7F8C8D"
-                                    enabled: MOTIONInterface.leftSensorConnected
+                                    enabled: MotionInterface.leftSensorConnected
 
                                     Text {
                                         text: "\u21BB"
@@ -1765,7 +1765,7 @@ Rectangle {
                                     currentIndex: leftLatestIndex
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 32
-                                    enabled: MOTIONInterface.leftSensorConnected && leftReleasesModel.length > 0
+                                    enabled: MotionInterface.leftSensorConnected && leftReleasesModel.length > 0
                                     onCurrentIndexChanged: leftLatestIndex = currentIndex
                                 }
                             }
@@ -1777,7 +1777,7 @@ Rectangle {
                                 height: 40
                                 radius: 10
                                 color: enabled ? "#E74C3C" : "#7F8C8D"
-                                enabled: MOTIONInterface.leftSensorConnected
+                                enabled: MotionInterface.leftSensorConnected
                                     && leftSensorFirmwareVersion !== "N/A"
                                     && leftSensorDeviceId !== "N/A"
 
@@ -1804,7 +1804,7 @@ Rectangle {
                                         consoleFwPercent = -1
                                         consoleFwMessage = ""
                                         consoleFwStageText = "Starting…"
-                                        MOTIONInterface.beginDeviceFirmwareDownload("left", tag)
+                                        MotionInterface.beginDeviceFirmwareDownload("left", tag)
                                         fwProgressDialog.open()
                                     }
                                     onEntered: if (parent.enabled) parent.color = "#C0392B"
@@ -1840,7 +1840,7 @@ Rectangle {
                                     width: 14
                                     height: 14
                                     radius: 7
-                                    color: MOTIONInterface.rightSensorConnected ? "green" : "red"
+                                    color: MotionInterface.rightSensorConnected ? "green" : "red"
                                     border.color: "black"
                                     border.width: 1
                                 }
@@ -1852,7 +1852,7 @@ Rectangle {
                                     height: 30
                                     radius: 15
                                     color: enabled ? "#2C3E50" : "#7F8C8D"
-                                    enabled: MOTIONInterface.rightSensorConnected
+                                    enabled: MotionInterface.rightSensorConnected
 
                                     Text {
                                         text: "\u21BB"
@@ -1905,7 +1905,7 @@ Rectangle {
                                     currentIndex: rightLatestIndex
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 32
-                                    enabled: MOTIONInterface.rightSensorConnected && rightReleasesModel.length > 0
+                                    enabled: MotionInterface.rightSensorConnected && rightReleasesModel.length > 0
                                     onCurrentIndexChanged: rightLatestIndex = currentIndex
                                 }
                             }
@@ -1917,7 +1917,7 @@ Rectangle {
                                 height: 40
                                 radius: 10
                                 color: enabled ? "#E74C3C" : "#7F8C8D"
-                                enabled: MOTIONInterface.rightSensorConnected
+                                enabled: MotionInterface.rightSensorConnected
                                     && rightSensorFirmwareVersion !== "N/A"
                                     && rightSensorDeviceId !== "N/A"
 
@@ -1944,7 +1944,7 @@ Rectangle {
                                         consoleFwPercent = -1
                                         consoleFwMessage = ""
                                         consoleFwStageText = "Starting…"
-                                        MOTIONInterface.beginDeviceFirmwareDownload("right", tag)
+                                        MotionInterface.beginDeviceFirmwareDownload("right", tag)
                                         fwProgressDialog.open()
                                     }
                                     onEntered: if (parent.enabled) parent.color = "#C0392B"

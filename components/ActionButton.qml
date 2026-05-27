@@ -8,7 +8,7 @@ Button {
 
     // ——— Public API ———
     // Use `text` directly to set the label (standard Button property).
-    // Bind `enabled` from the outside as usual, e.g. enabled: MOTIONInterface.consoleConnected
+    // Bind `enabled` from the outside as usual, e.g. enabled: MotionInterface.consoleConnected
     signal triggered()
     property int cornerRadius: 4
     property color textColorEnabled:  "#BDC3C7"

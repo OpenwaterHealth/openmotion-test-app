@@ -210,7 +210,7 @@ class _ConsoleFirmwareDownloadThread(QThread):
 
     def __init__(
         self,
-        connector: "MOTIONConnector",
+        connector: "MotionConnector",
         tag: str,
         filename: str,
         target: str = "console",
@@ -314,7 +314,7 @@ class _ConsoleFirmwareFlashThread(QThread):
     failed = pyqtSignal(str)
     finished_ok = pyqtSignal()
 
-    def __init__(self, connector: "MOTIONConnector", bin_path: str):
+    def __init__(self, connector: "MotionConnector", bin_path: str):
         super().__init__()
         self._connector = connector
         self._bin_path = bin_path
@@ -394,7 +394,7 @@ class _DeviceFirmwareFlashThread(QThread):
     failed = pyqtSignal(str)
     finished_ok = pyqtSignal()
 
-    def __init__(self, connector: "MOTIONConnector", bin_path: str, target: str):
+    def __init__(self, connector: "MotionConnector", bin_path: str, target: str):
         super().__init__()
         self._connector = connector
         self._bin_path = bin_path
@@ -491,7 +491,7 @@ class _ConsoleFpgaUpdateThread(QThread):
     finished_ok = pyqtSignal(str)
 
     def __init__(
-        self, connector: "MOTIONConnector", target: str, tag: str, verify: bool = False,
+        self, connector: "MotionConnector", target: str, tag: str, verify: bool = False,
         local_jed_path: str | None = None,
     ):
         super().__init__()
@@ -763,7 +763,7 @@ class CaptureThread(QThread):
         self.wait(500)
 
 
-class MOTIONConnector(QObject):
+class MotionConnector(QObject):
     # Ensure signals are correctly defined
     signalConnected = pyqtSignal(str, str)  # (descriptor, port)
     signalDisconnected = pyqtSignal(str, str)  # (descriptor, port)
@@ -1324,7 +1324,7 @@ class MOTIONConnector(QObject):
         self._runlog_active = True
 
         # --- Gather version info for header ---
-        # SDK version (MOTION SDK / sensor SDK)
+        # SDK version (Motion SDK / sensor SDK)
         try:
             sdk_ver = (
                 self._interface.get_sdk_version()
@@ -3515,7 +3515,7 @@ class MOTIONConnector(QObject):
 
     @pyqtSlot()
     def shutdown(self):
-        logger.info("Shutting down MOTIONConnector...")
+        logger.info("Shutting down MotionConnector...")
 
         if self._capture_thread:
             self._capture_thread.stop()
@@ -3529,7 +3529,7 @@ class MOTIONConnector(QObject):
 class ConsoleStatusThread(QThread):
     statusUpdate = pyqtSignal(str)
 
-    def __init__(self, connector: MOTIONConnector, parent=None):
+    def __init__(self, connector: MotionConnector, parent=None):
         super().__init__(parent)
         self.connector = connector
         self._running = True

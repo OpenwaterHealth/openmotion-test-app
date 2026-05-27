@@ -33,10 +33,10 @@ ApplicationWindow {
             anchors.right: parent.right
 
             // Set title and logo dynamically
-            titleText: "Open-MOTION Engineering App"
+            titleText: "Open-Motion Engineering App"
             logoSource: "../assets/images/OpenwaterLogo.png" // Correct relative path
             appVerText: "" + appVersion
-            sdkVerText: "" + MOTIONInterface.get_sdk_version()
+            sdkVerText: "" + MotionInterface.get_sdk_version()
         }
 
         // Layout for Sidebar and Main Content
@@ -87,6 +87,6 @@ ApplicationWindow {
     }
     
     Connections {
-        target: MOTIONInterface
+        target: MotionInterface
     }
 }

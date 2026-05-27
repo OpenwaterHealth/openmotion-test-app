@@ -96,17 +96,17 @@ Rectangle {
 
     function updateStates() {
         // console.log("Console Updating all states...")
-        MOTIONInterface.queryConsoleInfo()
-        MOTIONInterface.queryRGBState() // Query Indicator state
-        MOTIONInterface.readFanFeedback() // One-shot fan PWM feedback read
-        MOTIONInterface.queryConsoleTemperature()
-        MOTIONInterface.queryTecTripValue();
+        MotionInterface.queryConsoleInfo()
+        MotionInterface.queryRGBState() // Query Indicator state
+        MotionInterface.readFanFeedback() // One-shot fan PWM feedback read
+        MotionInterface.queryConsoleTemperature()
+        MotionInterface.queryTecTripValue();
     }
 
 
     // Run refresh logic immediately on page load if Console is already connected
     Component.onCompleted: {
-        if (MOTIONInterface.consoleConnected) {
+        if (MotionInterface.consoleConnected) {
             // console.log("Page Loaded - Console Already Connected. Fetching Info...")
             updateStates()
         }
@@ -123,11 +123,11 @@ Rectangle {
     }
 
     Connections {
-        target: MOTIONInterface
+        target: MotionInterface
 
         // Handle Console Connected state
         function onConsoleConnectedChanged() {
-            if (MOTIONInterface.consoleConnected) {
+            if (MotionInterface.consoleConnected) {
                 infoTimer.start()          // One-time info fetch
             } else {
                 // console.log("Console Disconnected - Clearing Data...")
@@ -257,7 +257,7 @@ Rectangle {
                                 Layout.preferredWidth: 80
                                 Layout.preferredHeight: 40
                                 hoverEnabled: true  // Enable hover detection
-                                enabled: MOTIONInterface.consoleConnected 
+                                enabled: MotionInterface.consoleConnected 
 
                                 contentItem: Text {
                                     text: parent.text
@@ -284,7 +284,7 @@ Rectangle {
                                 }
 
                                 onClicked: {
-                                    if(MOTIONInterface.sendPingCommand("console")){                                        
+                                    if(MotionInterface.sendPingCommand("console")){                                        
                                         pingResult.text = "Ping SUCCESS"
                                         pingResult.color = "green"
                                     }else{
@@ -311,7 +311,7 @@ Rectangle {
                                 Layout.preferredWidth: 80
                                 Layout.preferredHeight: 40
                                 hoverEnabled: true  // Enable hover detection
-                                enabled: MOTIONInterface.consoleConnected 
+                                enabled: MotionInterface.consoleConnected 
 
                                 contentItem: Text {
                                     text: parent.text
@@ -338,7 +338,7 @@ Rectangle {
                                 }
 
                                 onClicked: {
-                                    if(MOTIONInterface.sendLedToggleCommand("console"))
+                                    if(MotionInterface.sendLedToggleCommand("console"))
                                     {
                                         toggleLedResult.text = "LED Toggled"
                                         toggleLedResult.color = "green"
@@ -364,7 +364,7 @@ Rectangle {
                                 Layout.preferredWidth: 80
                                 Layout.preferredHeight: 40
                                 hoverEnabled: true  // Enable hover detection
-                                enabled: MOTIONInterface.consoleConnected 
+                                enabled: MotionInterface.consoleConnected 
 
                                 contentItem: Text {
                                     text: parent.text
@@ -392,7 +392,7 @@ Rectangle {
 
                                 onClicked: {
 
-                                    if(MOTIONInterface.sendEchoCommand("console"))
+                                    if(MotionInterface.sendEchoCommand("console"))
                                     {
                                         echoResult.text = "Echo SUCCESS"
                                         echoResult.color = "green"
@@ -420,11 +420,11 @@ Rectangle {
                                 Layout.preferredWidth: 120
                                 Layout.preferredHeight: 28
                                 model: ["Off", "IND1", "IND2", "IND3"]
-                                enabled: MOTIONInterface.consoleConnected  
+                                enabled: MotionInterface.consoleConnected  
 
                                 onActivated: {
                                     let rgbValue = rgbLedDropdown.currentIndex  // Directly map ComboBox index to integer value
-                                    MOTIONInterface.setRGBState(rgbValue)         // Assuming you implement this new method
+                                    MotionInterface.setRGBState(rgbValue)         // Assuming you implement this new method
                                     rgbLedResult.text = rgbLedDropdown.currentText
                                 }
                             }
@@ -443,7 +443,7 @@ Rectangle {
                                 Layout.preferredWidth: 80
                                 Layout.preferredHeight: 40
                                 hoverEnabled: true  // Enable hover detection
-                                enabled: MOTIONInterface.consoleConnected 
+                                enabled: MotionInterface.consoleConnected 
 
                                 contentItem: Text {
                                     text: parent.text
@@ -470,7 +470,7 @@ Rectangle {
                                 }
 
                                 onClicked: {
-                                    var devices = MOTIONInterface.scanI2C(1, 0)
+                                    var devices = MotionInterface.scanI2C(1, 0)
                                     if (devices && devices.includes("0x20") && devices.includes("0x48")  && devices.includes("0x4b")) {
                                         pduResult.text = "PDU SUCCESS"
                                         pduResult.color = "green"
@@ -498,7 +498,7 @@ Rectangle {
                                 Layout.preferredWidth: 80
                                 Layout.preferredHeight: 40
                                 hoverEnabled: true  // Enable hover detection
-                                enabled: MOTIONInterface.consoleConnected 
+                                enabled: MotionInterface.consoleConnected 
 
                                 contentItem: Text {
                                     text: parent.text
@@ -525,7 +525,7 @@ Rectangle {
                                 }
 
                                 onClicked: {
-                                    var devices = MOTIONInterface.scanI2C(1, 5)
+                                    var devices = MotionInterface.scanI2C(1, 5)
                                     if (devices && devices.includes("0x41")) {
                                         seedResult.text = "Seed SUCCESS"
                                         seedResult.color = "green"
@@ -550,7 +550,7 @@ Rectangle {
                                 Layout.preferredWidth: 80
                                 Layout.preferredHeight: 40
                                 hoverEnabled: true  // Enable hover detection
-                                enabled: MOTIONInterface.consoleConnected 
+                                enabled: MotionInterface.consoleConnected 
 
                                 contentItem: Text {
                                     text: parent.text
@@ -577,7 +577,7 @@ Rectangle {
                                 }
 
                                 onClicked: {
-                                    var devices = MOTIONInterface.scanI2C(1, 4)
+                                    var devices = MotionInterface.scanI2C(1, 4)
                                     if (devices && devices.includes("0x41")) {
                                         taResult.text = "TA SUCCESS"
                                         taResult.color = "green"
@@ -605,7 +605,7 @@ Rectangle {
                                 Layout.preferredWidth: 80
                                 Layout.preferredHeight: 40
                                 hoverEnabled: true  // Enable hover detection
-                                enabled: MOTIONInterface.consoleConnected 
+                                enabled: MotionInterface.consoleConnected 
 
                                 contentItem: Text {
                                     text: parent.text
@@ -633,7 +633,7 @@ Rectangle {
 
                                 onClicked: {
                                     
-                                    var devices = MOTIONInterface.scanI2C(1, 6)
+                                    var devices = MotionInterface.scanI2C(1, 6)
                                     if (devices && devices.includes("0x41")) {
                                         safetyResult.text = "Safety EE SUCCESS"
                                         safetyResult.color = "green"
@@ -660,7 +660,7 @@ Rectangle {
                                 Layout.preferredWidth: 80
                                 Layout.preferredHeight: 40
                                 hoverEnabled: true  // Enable hover detection
-                                enabled: MOTIONInterface.consoleConnected 
+                                enabled: MotionInterface.consoleConnected 
 
                                 contentItem: Text {
                                     text: parent.text
@@ -687,7 +687,7 @@ Rectangle {
                                 }
 
                                 onClicked: {
-                                    if (MOTIONInterface.getTecEnabled()) {
+                                    if (MotionInterface.getTecEnabled()) {
                                         tecResult.text = "TEC SUCCESS"
                                         tecResult.color = "green"
                                     } else {
@@ -714,7 +714,7 @@ Rectangle {
                                 Layout.preferredWidth: 80
                                 Layout.preferredHeight: 40
                                 hoverEnabled: true  // Enable hover detection
-                                enabled: MOTIONInterface.consoleConnected 
+                                enabled: MotionInterface.consoleConnected 
 
                                 contentItem: Text {
                                     text: parent.text
@@ -742,7 +742,7 @@ Rectangle {
 
                                 onClicked: {
                                     
-                                    var devices = MOTIONInterface.scanI2C(1, 7)
+                                    var devices = MotionInterface.scanI2C(1, 7)
                                     if (devices && devices.includes("0x41")) {
                                         safety2Result.text = "Safety OPT SUCCESS"
                                         safety2Result.color = "green"
@@ -769,7 +769,7 @@ Rectangle {
                         color: "#1E1E20"
                         border.color: "#3E4E6F"
                         border.width: 2
-                        enabled: MOTIONInterface.consoleConnected
+                        enabled: MotionInterface.consoleConnected
 
                         // Title
                         Text {
@@ -799,7 +799,7 @@ Rectangle {
 
                                 ComboBox {
                                     id: fpgaSelector
-                                    model: MOTIONInterface.fpgaAddressModel
+                                    model: MotionInterface.fpgaAddressModel
                                     textRole: "label"
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 32
@@ -815,7 +815,7 @@ Rectangle {
                                     id: functionSelector
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 32
-                                    model: fpgaSelector.currentIndex >= 0 ? MOTIONInterface.fpgaAddressModel[fpgaSelector.currentIndex].functions : []
+                                    model: fpgaSelector.currentIndex >= 0 ? MotionInterface.fpgaAddressModel[fpgaSelector.currentIndex].functions : []
                                     textRole: "name"
                                     enabled: fpgaSelector.currentIndex >= 0
 
@@ -873,7 +873,7 @@ Rectangle {
                                     Layout.preferredWidth: 100
                                     Layout.preferredHeight: 40
                                     hoverEnabled: true
-                                    enabled: MOTIONInterface.consoleConnected && functionSelector.currentIndex >= 0 &&
+                                    enabled: MotionInterface.consoleConnected && functionSelector.currentIndex >= 0 &&
                                             (accessSelector.currentText === "Read" || (hexInput.acceptableInput && hexInput.text.length > 0))
 
                                     contentItem: Text {
@@ -890,7 +890,7 @@ Rectangle {
                                     }
 
                                     onClicked: {
-                                        const fpga = MOTIONInterface.fpgaAddressModel[fpgaSelector.currentIndex];
+                                        const fpga = MotionInterface.fpgaAddressModel[fpgaSelector.currentIndex];
                                         const i2cAddr = fpga.i2c_addr;
                                         const muxIdx = fpga.mux_idx;
                                         const channel = fpga.channel;
@@ -904,7 +904,7 @@ Rectangle {
 
                                         if (dir === "Read") {
                                             // console.log(`READ from ${fpga.label} @ 0x${offset.toString(16)}`);
-                                            let result = MOTIONInterface.i2cReadBytes("console", muxIdx, channel, i2cAddr, offset, length);
+                                            let result = MotionInterface.i2cReadBytes("console", muxIdx, channel, i2cAddr, offset, length);
 
                                             if (result.length === 0) {
                                                 console.error("Read failed or returned empty array.");
@@ -983,7 +983,7 @@ Rectangle {
 
                                             // console.log("Data to send:", dataToSend.map(b => "0x" + b.toString(16).padStart(2, "0")).join(" "));
 
-                                            let success = MOTIONInterface.i2cWriteBytes("console", muxIdx, channel, i2cAddr, offset, dataToSend);
+                                            let success = MotionInterface.i2cWriteBytes("console", muxIdx, channel, i2cAddr, offset, dataToSend);
 
                                             if (success) {
                                                 // console.log("Write successful.");
@@ -1078,7 +1078,7 @@ Rectangle {
                                     to: 100
                                     stepSize: 10
                                     value: fan_speed || 0
-                                    enabled: MOTIONInterface.consoleConnected
+                                    enabled: MotionInterface.consoleConnected
 
                                     property bool userIsSliding: false
 
@@ -1089,7 +1089,7 @@ Rectangle {
                                             let snappedValue = Math.round(value / 10) * 10
                                             value = snappedValue
                                             userIsSliding = false
-                                            let success = MOTIONInterface.setFanLevel(snappedValue)
+                                            let success = MotionInterface.setFanLevel(snappedValue)
                                             if (!success) console.error("Failed to set fan speed")
                                         }
                                     }
@@ -1110,11 +1110,11 @@ Rectangle {
 
                                 Button {
                                     text: "Get Fan Feedback"
-                                    enabled: MOTIONInterface.consoleConnected
+                                    enabled: MotionInterface.consoleConnected
                                     width: 280
                                     height: 32
                                     font.pixelSize: 12
-                                    onClicked: MOTIONInterface.readFanFeedback()
+                                    onClicked: MotionInterface.readFanFeedback()
                                 }
                             }
                         }
@@ -1128,7 +1128,7 @@ Rectangle {
                             color: "#1E1E20"
                             border.color: "#3E4E6F"
                             border.width: 2
-                            enabled: MOTIONInterface.consoleConnected
+                            enabled: MotionInterface.consoleConnected
 
                             // Title
                             Text {
@@ -1174,7 +1174,7 @@ Rectangle {
                                         placeholderText: "0-125"
                                         validator: taIntVal
                                         inputMethodHints: Qt.ImhDigitsOnly
-                                        text: MOTIONInterface.tecTripValue.toString()
+                                        text: MotionInterface.tecTripValue.toString()
 
                                         onAccepted: {
                                             // Clamp and normalize
@@ -1185,7 +1185,7 @@ Rectangle {
                                                 if (v < 0) v = 0
                                                 if (v > 125) v = 125
                                                 text = v.toString()
-                                                let ok = MOTIONInterface.setTecTrip(v)
+                                                let ok = MotionInterface.setTecTrip(v)
                                                 if (!ok) {
                                                   
                                                 }
@@ -1201,12 +1201,12 @@ Rectangle {
                                             onTriggered: tecTripInput.tecTripSetError = ""
                                         }
                                         Connections {
-                                            target: MOTIONInterface
+                                            target: MotionInterface
                                             function onTecTripValueChanged() {
-                                                tecTripInput.text = MOTIONInterface.tecTripValue.toString()
+                                                tecTripInput.text = MotionInterface.tecTripValue.toString()
                                             }
                                             function onTaGainSetFailed(msg) {
-                                                tecTripInput.text = MOTIONInterface.tecTripValue.toString()
+                                                tecTripInput.text = MotionInterface.tecTripValue.toString()
                                                 tecTripInput.tecTripSetError = msg
                                                 tecTripSetErrorTimer.restart()
                                             }
@@ -1259,13 +1259,13 @@ Rectangle {
                                 width: 20
                                 height: 20
                                 radius: 10
-                                color: MOTIONInterface.consoleConnected ? "green" : "red"
+                                color: MotionInterface.consoleConnected ? "green" : "red"
                                 border.color: "black"
                                 border.width: 1
                             }
 
                             Text {
-                                text: MOTIONInterface.consoleConnected ? "Connected" : "Not Connected"
+                                text: MotionInterface.consoleConnected ? "Connected" : "Not Connected"
                                 font.pixelSize: 16
                                 color: "#BDC3C7"
                             }
@@ -1283,7 +1283,7 @@ Rectangle {
                                 radius: 15
                                 color: enabled ? "#2C3E50" : "#7F8C8D"  // Dim when disabled
                                 Layout.alignment: Qt.AlignRight  
-                                enabled: MOTIONInterface.consoleConnected
+                                enabled: MotionInterface.consoleConnected
 
                                 // Icon Text
                                 Text {
@@ -1372,7 +1372,7 @@ Rectangle {
                             height: 40
                             radius: 10
                             color: enabled ? "#E74C3C" : "#7F8C8D"  // Red when enabled, gray when disabled
-                            enabled: MOTIONInterface.consoleConnected
+                            enabled: MotionInterface.consoleConnected
 
                             Text {
                                 text: "Soft Reset"
@@ -1387,7 +1387,7 @@ Rectangle {
                                 enabled: parent.enabled  // Disable MouseArea when the button is disabled
                                 onClicked: {
                                     // console.log("Soft Reset Triggered")
-                                    MOTIONInterface.softResetSensor("console")
+                                    MotionInterface.softResetSensor("console")
                                 }
 
                                 onEntered: {

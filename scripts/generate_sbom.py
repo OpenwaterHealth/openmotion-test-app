@@ -15,7 +15,7 @@ OUTPUT_FILE = REPO_ROOT / "sbom.cyclonedx.json"
 
 PROJECT_NAME = "openmotion-test-app"
 PROJECT_DESCRIPTION = (
-    "Qt/QML desktop hardware test application for OpenMOTION blood flow volume "
+    "Qt/QML desktop hardware test application for Open-Motion blood flow volume "
     "and index measurement workflows."
 )
 PROJECT_LICENSE = "AGPL-3.0-only"
@@ -40,7 +40,7 @@ EXTERNAL_COMPONENTS = [
         "name": "libusb",
         "scope": "required",
         "type": "library",
-        "description": "USB runtime dependency required by the OpenMOTION SDK and packaging flow on Windows.",
+        "description": "USB runtime dependency required by the Open-Motion SDK and packaging flow on Windows.",
         "source": "https://github.com/libusb/libusb",
         "evidence": [
             "README.md",
@@ -282,7 +282,7 @@ def generate_sbom() -> dict:
                 "externalReferences": [
                     {
                         "type": "vcs",
-                        "url": "https://github.com/OpenwaterHealth/OpenMOTION-TestAPP",
+                        "url": "https://github.com/OpenwaterHealth/openmotion-test-app",
                     }
                 ],
                 "properties": [

@@ -1,4 +1,4 @@
-# OpenMOTION Test Application
+# Open-Motion Test Application
 
 Python example UI for OPEN Motion used for Hardware Testing and Basic Usage
 
@@ -12,15 +12,15 @@ Python example UI for OPEN Motion used for Hardware Testing and Basic Usage
 ### Steps to Set Up the Project
 1. **Install OpenLIFU Python**
    ```bash
-   https://github.com/OpenwaterHealth/OpenMOTION-Pylib
-   cd OpenMOTION-Pylib
+   https://github.com/OpenwaterHealth/openmotion-sdk
+   cd openmotion-sdk
    pip install -r requirements.txt
    ```
 
 2. **Clone the repository and Install Required Packages**:
    ```bash
-   git clone https://github.com/OpenwaterHealth/OpenMOTION-TestAPP.git
-   cd OpenMOTION-TestAPP
+   git clone https://github.com/OpenwaterHealth/openmotion-test-app.git
+   cd openmotion-test-app
    pip install -r requirements.txt
    ```
 
@@ -32,10 +32,10 @@ Python example UI for OPEN Motion used for Hardware Testing and Basic Usage
    ```
 
 3. **Run application**
-   requires OpenMOTION-Pylib to be installed or referenced prior to running main.py
+   requires openmotion-sdk to be installed or referenced prior to running main.py
 
    ```bash
-   cd OpenMOTION-TestAPP
+   cd openmotion-test-app
    python main.py
    ```
 

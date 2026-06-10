@@ -65,7 +65,8 @@ def main():
         # packet / telemetry tick); keep them at INFO unless hand-edited.
         for noisy in ("openmotion.sdk.CommInterface",
                       "openmotion.sdk.ConsoleTelemetry",
-                      "openmotion.sdk.UARTPACKET"):
+                      "openmotion.sdk.UARTPACKET",
+                      "openmotion.sdk.Sensor"):
             logging.getLogger(noisy).setLevel(logging.INFO)
     else:
         logging.basicConfig(level=logging.INFO)

@@ -60,7 +60,7 @@ Promote the burn engine into the package (precedent: `DFUProgrammer`,
   existing `ERR_MESSAGES`. An already-programmed (Done-set) part is rejected
   fast by the algorithm's own status check (VERIFY FAIL within seconds) — the
   result message notes this likely cause when failure occurs in the first
-  ~100 transactions.
+  ~200 transactions (`_EARLY_FAIL_TX`).
 - **Bundled algorithm/data files:** `omotion/nvcm/impl1_algo.iea` and
   `omotion/nvcm/impl1_data.ied`, copied from
   `openmotion-camera-fpga/HistoFPGAFw/impl1/` (current files, June 8 2026
@@ -92,24 +92,29 @@ GitHub releases once that repo publishes `.iea`/`.ied` assets.
 - `_NvcmFlashThread(QThread)` modeled on `_DeviceFirmwareFlashThread`:
   - ctor: connector, `sensor_tag` ("left"/"right"), `cameras: list[int]`
   - signals: `progress(int percent, str message)`,
-    `cameraDone(int camera, bool ok, str error)`, `failed(str)`,
-    `finished_ok()`
+    `cameraDone(int camera, bool ok, str error)`,
+    `finishedAll(bool ok, str summary)` — exactly one `finishedAll` fires
+    on every exit path (ImportError, unexpected exception, normal), so the
+    busy flag can never wedge.
   - Burns cameras sequentially under the sensor mutex
     (`_get_sensor_mutex(sensor_tag)`); continues to the next camera if one
     fails, reporting per-camera results.
 - Slots/signals on `MOTIONConnector`:
   - `@pyqtSlot(str, int) flashNvcm(sensor_tag, camera_mask)` — refuses to
-    start if a flash is already running; spawns the thread (file paths come
-    from the SDK's bundled defaults).
+    start if a flash is already running (busy flag or live thread ref);
+    spawns the thread (file paths come from the SDK's bundled defaults);
+    clears the thread ref via `finished` like the DFU path.
   - `nvcmFlashProgress(int, str)`, `nvcmFlashCameraDone(int, bool, str)`,
     `nvcmFlashFinished(bool, str)` (overall ok + summary text),
-    `nvcmFlashRunning` property for QML enable-state.
+    `nvcmFlashBusy` property (notify `nvcmFlashBusyChanged`) for QML
+    enable-state.
 
 ### UI (`pages/Sensor.qml`, Camera Tests pane)
 
-- "Flash (permanent)" button directly under the existing "Flash" (SRAM)
-  button, same dimensions, warning accent (red/orange border) to signal
-  permanence.
+- "Flash (permanent)" button at the top of the power-buttons column (above
+  "Power Cameras On"), sized to match those buttons, warning accent (red
+  border) to signal permanence. (Originally placed under the SRAM "Flash"
+  button, but that overflowed the pane height.)
 - Enabled when the selected sensor is connected and no NVCM flash is running.
 - Click → confirmation dialog:
   - Title "Permanent NVCM Flash".

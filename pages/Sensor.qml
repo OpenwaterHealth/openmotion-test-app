@@ -332,6 +332,143 @@ Rectangle {
         }
     }
 
+    // NVCM permanent-flash confirmation
+    Dialog {
+        id: nvcmConfirmDialog
+        title: "Permanent NVCM Flash"
+        width: 520
+        height: 280
+        modal: true
+
+        property string sensorTag: "left"
+        property int cameraMask: 0
+        property string cameraLabel: ""
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 16
+
+            Text {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: "#E74C3C"
+                font.pixelSize: 14
+                font.bold: true
+                text: "This permanently programs the FPGA's one-time-" +
+                      "programmable memory and CANNOT be undone."
+            }
+            Text {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: "#BDC3C7"
+                font.pixelSize: 13
+                text: "Target: " + nvcmConfirmDialog.cameraLabel + " on the " +
+                      nvcmConfirmDialog.sensorTag.toUpperCase() + " sensor.\n\n" +
+                      "Each camera takes about 5 minutes to burn and verify; " +
+                      "\"All Cameras\" takes about 40 minutes. The app must stay " +
+                      "connected for the whole burn."
+            }
+
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                spacing: 10
+
+                Button {
+                    text: "Cancel"
+                    Layout.preferredWidth: 100
+                    Layout.preferredHeight: 32
+                    background: Rectangle {
+                        color: parent.hovered ? "#4A90E2" : "#3A3F4B"
+                        radius: 4
+                        border.color: "#BDC3C7"
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        color: "#BDC3C7"
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: nvcmConfirmDialog.close()
+                }
+                Button {
+                    text: "Flash NVCM"
+                    Layout.preferredWidth: 120
+                    Layout.preferredHeight: 32
+                    background: Rectangle {
+                        color: parent.hovered ? "#E74C3C" : "#3A3F4B"
+                        radius: 4
+                        border.color: "#E74C3C"
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        color: "#E74C3C"
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                        font.bold: true
+                    }
+                    onClicked: {
+                        nvcmConfirmDialog.close()
+                        MOTIONInterface.flashNvcm(nvcmConfirmDialog.sensorTag,
+                                                  nvcmConfirmDialog.cameraMask)
+                    }
+                }
+            }
+        }
+    }
+
+    // NVCM result summary
+    Dialog {
+        id: nvcmSummaryDialog
+        title: "NVCM Flash Result"
+        width: 520
+        height: 300
+        modal: true
+
+        property bool resultOk: false
+        property string summaryText: ""
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 16
+
+            Text {
+                text: nvcmSummaryDialog.resultOk ? "All cameras PASSED"
+                                                 : "One or more cameras FAILED"
+                color: nvcmSummaryDialog.resultOk ? "#27AE60" : "#E74C3C"
+                font.pixelSize: 15
+                font.bold: true
+            }
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Text {
+                    text: nvcmSummaryDialog.summaryText
+                    color: "#BDC3C7"
+                    font.pixelSize: 12
+                    wrapMode: Text.WordWrap
+                }
+            }
+            Button {
+                text: "Close"
+                Layout.alignment: Qt.AlignRight
+                Layout.preferredWidth: 100
+                Layout.preferredHeight: 32
+                background: Rectangle {
+                    color: parent.hovered ? "#4A90E2" : "#3A3F4B"
+                    radius: 4
+                    border.color: "#BDC3C7"
+                }
+                contentItem: Text {
+                    text: parent.text
+                    color: "#BDC3C7"
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                onClicked: nvcmSummaryDialog.close()
+            }
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 20
@@ -1001,6 +1138,73 @@ Rectangle {
                                     }else{
                                         MOTIONInterface.configureCamera(sensor_tag, cameraMask);
                                     }
+                                        }
+                                    }
+
+                                    // NVCM permanent flash
+                                    Button {
+                                        id: nvcmFlashButton
+                                        text: "Flash (permanent)"
+                                        Layout.preferredWidth: 248
+                                        Layout.preferredHeight: 40
+                                        Layout.alignment: Qt.AlignLeft
+                                        hoverEnabled: true
+                                        enabled: {
+                                            if (MOTIONInterface.nvcmFlashBusy) return false
+                                            if (sensorSelector.currentIndex === 0) {
+                                                return MOTIONInterface.leftSensorConnected
+                                            } else {
+                                                return MOTIONInterface.rightSensorConnected
+                                            }
+                                        }
+                                        contentItem: Text {
+                                            text: parent.text
+                                            color: parent.enabled ? "#E74C3C" : "#7F8C8D"
+                                            horizontalAlignment: Text.AlignHCenter
+                                            verticalAlignment: Text.AlignVCenter
+                                        }
+                                        background: Rectangle {
+                                            color: parent.hovered && parent.enabled ? "#5A3A3A" : "#3A3F4B"
+                                            radius: 4
+                                            border.color: parent.enabled ? "#E74C3C" : "#7F8C8D"
+                                        }
+                                        onClicked: {
+                                            let selectedIndex = cameraDropdown.currentIndex;
+                                            let cameraMask = 0x01 << selectedIndex;
+                                            let label = "Camera " + (selectedIndex + 1);
+                                            if (selectedIndex === 8) {
+                                                cameraMask = 0xFF;
+                                                label = "ALL cameras (1-8)";
+                                            }
+                                            nvcmConfirmDialog.sensorTag =
+                                                (sensorSelector.currentIndex === 0) ? "left" : "right";
+                                            nvcmConfirmDialog.cameraMask = cameraMask;
+                                            nvcmConfirmDialog.cameraLabel = label;
+                                            nvcmConfirmDialog.open();
+                                        }
+                                    }
+
+                                    // NVCM progress line
+                                    Text {
+                                        id: nvcmProgressText
+                                        visible: MOTIONInterface.nvcmFlashBusy
+                                        Layout.preferredWidth: 248
+                                        color: "#F39C12"
+                                        font.pixelSize: 12
+                                        wrapMode: Text.WordWrap
+                                        text: ""
+                                    }
+
+                                    Connections {
+                                        target: MOTIONInterface
+                                        function onNvcmFlashProgress(percent, message) {
+                                            nvcmProgressText.text = message
+                                        }
+                                        function onNvcmFlashFinished(ok, summary) {
+                                            nvcmProgressText.text = ""
+                                            nvcmSummaryDialog.resultOk = ok
+                                            nvcmSummaryDialog.summaryText = summary
+                                            nvcmSummaryDialog.open()
                                         }
                                     }
 

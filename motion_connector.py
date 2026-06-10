@@ -507,38 +507,44 @@ class _NvcmFlashThread(QThread):
                 False, "NvcmProgrammer unavailable — omotion SDK too old.")
             return
 
-        sensor = getattr(motion_interface, self._sensor_tag)
-        programmer = NvcmProgrammer(sensor)
-        mutex = self._connector._get_sensor_mutex(self._sensor_tag)
-        results = []
+        try:
+            sensor = getattr(motion_interface, self._sensor_tag)
+            programmer = NvcmProgrammer(sensor)
+            mutex = self._connector._get_sensor_mutex(self._sensor_tag)
+            results = []
 
-        for idx, cam in enumerate(self._cameras):
-            self.progress.emit(
-                0, f"Camera {cam}: starting NVCM burn "
-                   f"({idx + 1} of {len(self._cameras)})…")
-
-            def cb(done, total, cam=cam):
-                pct = int(done * 100 / total) if total else 0
+            for idx, cam in enumerate(self._cameras):
                 self.progress.emit(
-                    pct, f"Camera {cam} — {pct}% ({done:,}/{total:,})")
+                    0, f"Camera {cam}: starting NVCM burn "
+                       f"({idx + 1} of {len(self._cameras)})…")
 
-            mutex.lock()
-            try:
-                result = programmer.burn(cam, progress_cb=cb)
-                ok, err = result.success, (result.error or "")
-            except Exception as exc:  # never let the thread die silently
-                logger.exception("NVCM burn raised for camera %d", cam)
-                ok, err = False, str(exc)
-            finally:
-                mutex.unlock()
+                def cb(done, total, cam=cam):
+                    pct = int(done * 100 / total) if total else 0
+                    self.progress.emit(
+                        pct, f"Camera {cam} — {pct}% ({done:,}/{total:,})")
 
-            self.cameraDone.emit(cam, ok, err)
-            results.append((cam, ok, err))
+                mutex.lock()
+                try:
+                    result = programmer.burn(cam, progress_cb=cb)
+                    ok, err = result.success, (result.error or "")
+                except Exception as exc:  # never let the thread die silently
+                    logger.exception("NVCM burn raised for camera %d", cam)
+                    ok, err = False, str(exc)
+                finally:
+                    mutex.unlock()
 
-        all_ok = all(ok for _, ok, _ in results)
-        summary = "\n".join(
-            f"Camera {cam}: {'PASS' if ok else 'FAIL — ' + err}"
-            for cam, ok, err in results)
+                self.cameraDone.emit(cam, ok, err)
+                results.append((cam, ok, err))
+
+            all_ok = all(ok for _, ok, _ in results)
+            summary = "\n".join(
+                f"Camera {cam}: {'PASS' if ok else 'FAIL — ' + err}"
+                for cam, ok, err in results)
+        except Exception as exc:
+            logger.exception("NVCM flash thread failed")
+            self.finishedAll.emit(False, str(exc))
+            return
+
         self.finishedAll.emit(all_ok, summary)
 
 
@@ -1008,15 +1014,6 @@ class MOTIONConnector(QObject):
     def fpgaFirmwareVerifyEnabled(self) -> bool:
         return bool(getattr(self, "_fpga_fw_verify", False))
 
-    @pyqtProperty(bool, notify=nvcmFlashBusyChanged)
-    def nvcmFlashBusy(self) -> bool:
-        return self._nvcm_busy
-
-    def _set_nvcm_busy(self, busy: bool) -> None:
-        if self._nvcm_busy != busy:
-            self._nvcm_busy = busy
-            self.nvcmFlashBusyChanged.emit()
-
     @fpgaFirmwareVerifyEnabled.setter
     def fpgaFirmwareVerifyEnabled(self, enabled: bool) -> None:
         enabled = bool(enabled)
@@ -1025,6 +1022,15 @@ class MOTIONConnector(QObject):
         self._fpga_fw_verify = enabled
         logger.info(f"[FPGA-UPD] verify toggle set to {enabled}")
         self.fpgaFirmwareVerifyEnabledChanged.emit()
+
+    @pyqtProperty(bool, notify=nvcmFlashBusyChanged)
+    def nvcmFlashBusy(self) -> bool:
+        return self._nvcm_busy
+
+    def _set_nvcm_busy(self, busy: bool) -> None:
+        if self._nvcm_busy != busy:
+            self._nvcm_busy = busy
+            self.nvcmFlashBusyChanged.emit()
 
     def _set_console_fw_busy(self, busy: bool) -> None:
         if getattr(self, "_console_fw_busy", False) == busy:
@@ -1135,7 +1141,7 @@ class MOTIONConnector(QObject):
         if sensor_tag not in ("left", "right"):
             self.nvcmFlashFinished.emit(False, "Invalid sensor target.")
             return
-        if self._nvcm_busy:
+        if self._nvcm_busy or self._nvcm_thread is not None:
             self.nvcmFlashFinished.emit(
                 False, "An NVCM flash is already in progress.")
             return
@@ -1154,6 +1160,9 @@ class MOTIONConnector(QObject):
             self.nvcmFlashFinished.emit(ok, summary)
 
         self._nvcm_thread.finishedAll.connect(_done)
+        self._nvcm_thread.finished.connect(
+            lambda: setattr(self, "_nvcm_thread", None)
+        )
         self._nvcm_thread.start()
 
     @pyqtSlot(str, str)

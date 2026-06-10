@@ -61,24 +61,31 @@ Promote the burn engine into the package (precedent: `DFUProgrammer`,
   fast by the algorithm's own status check (VERIFY FAIL within seconds) — the
   result message notes this likely cause when failure occurs in the first
   ~100 transactions.
+- **Bundled algorithm/data files:** `omotion/nvcm/impl1_algo.iea` and
+  `omotion/nvcm/impl1_data.ied`, copied from
+  `openmotion-camera-fpga/HistoFPGAFw/impl1/` (current files, June 8 2026
+  build), plus `omotion/nvcm/README.md` recording provenance and how to
+  update. Shipped as package data in the wheel — same mechanism that already
+  bundles the `dfu-util` binaries. `burn()`'s `algo_path`/`data_path`
+  arguments become optional, defaulting to the bundled files (resolved via
+  `importlib.resources` / path-relative lookup like `_bundled_dfu_util()`).
 - `scripts/test_factory_prog.py` becomes a thin CLI wrapper importing the
-  class (behavior-compatible: same args, same PASS/FAIL output).
+  class (behavior-compatible: same args, same PASS/FAIL output; the file
+  arguments become optional, defaulting to the bundled pair).
 - Unit test (`tests/test_nvcm_programmer.py`): scripted mock sensor verifies
   transaction grouping (write / write-read / read dispatch), progress
-  callback monotonicity, and error mapping. No hardware.
+  callback monotonicity, error mapping, and that the bundled default files
+  resolve and parse. No hardware.
 
 ## Part 2 — Test app
 
-### Bundled algorithm/data files
+The app carries **no NVCM assets**: it calls `burn()` with default paths.
+One packaging check: confirm PyInstaller collects the `omotion/nvcm/`
+package data into the .exe the same way it already collects the bundled
+`dfu-util` binaries.
 
-- `assets/nvcm/impl1_algo.iea`, `assets/nvcm/impl1_data.ied` — copied from
-  `openmotion-camera-fpga/HistoFPGAFw/impl1/` (current files, June 8 2026
-  build). `assets/nvcm/README.md` records provenance and how to update.
-- Hardcoded path resolution mirroring `models/fpga_model.json` handling, and
-  the files are added to `openwater.spec` datas so the packaged .exe includes
-  them.
-- Follow-up (out of scope): fetch from `openmotion-camera-fpga` GitHub
-  releases once that repo publishes `.iea`/`.ied` assets.
+Follow-up (out of scope): source the files from `openmotion-camera-fpga`
+GitHub releases once that repo publishes `.iea`/`.ied` assets.
 
 ### Connector (`motion_connector.py`)
 
@@ -92,8 +99,8 @@ Promote the burn engine into the package (precedent: `DFUProgrammer`,
     fails, reporting per-camera results.
 - Slots/signals on `MOTIONConnector`:
   - `@pyqtSlot(str, int) flashNvcm(sensor_tag, camera_mask)` — refuses to
-    start if a flash is already running; resolves bundled file paths;
-    spawns the thread.
+    start if a flash is already running; spawns the thread (file paths come
+    from the SDK's bundled defaults).
   - `nvcmFlashProgress(int, str)`, `nvcmFlashCameraDone(int, bool, str)`,
     `nvcmFlashFinished(bool, str)` (overall ok + summary text),
     `nvcmFlashRunning` property for QML enable-state.

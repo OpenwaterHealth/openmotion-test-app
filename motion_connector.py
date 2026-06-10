@@ -481,6 +481,73 @@ class _DeviceFirmwareFlashThread(QThread):
             self.failed.emit(str(exc))
 
 
+class _NvcmFlashThread(QThread):
+    """Burn CrossLink NVCM on one or more cameras, sequentially.
+
+    NVCM is one-time programmable; QML gates this behind a confirmation
+    dialog. Each camera takes ~4-5 minutes (full readback verification).
+    """
+
+    progress = pyqtSignal(int, str)          # percent (0-100), message
+    cameraDone = pyqtSignal(int, bool, str)  # camera (1-8), ok, error
+    finishedAll = pyqtSignal(bool, str)      # overall ok, summary text
+
+    def __init__(self, connector: "MOTIONConnector", sensor_tag: str,
+                 cameras: list):
+        super().__init__()
+        self._connector = connector
+        self._sensor_tag = sensor_tag
+        self._cameras = cameras
+
+    def run(self):
+        try:
+            from omotion.NvcmProgrammer import NvcmProgrammer
+        except ImportError:
+            self.finishedAll.emit(
+                False, "NvcmProgrammer unavailable — omotion SDK too old.")
+            return
+
+        try:
+            sensor = getattr(motion_interface, self._sensor_tag)
+            programmer = NvcmProgrammer(sensor)
+            mutex = self._connector._get_sensor_mutex(self._sensor_tag)
+            results = []
+
+            for idx, cam in enumerate(self._cameras):
+                self.progress.emit(
+                    0, f"Camera {cam}: starting NVCM burn "
+                       f"({idx + 1} of {len(self._cameras)})…")
+
+                def cb(done, total, cam=cam):
+                    pct = int(done * 100 / total) if total else 0
+                    self.progress.emit(
+                        pct, f"Camera {cam} — {pct}% ({done:,}/{total:,})")
+
+                mutex.lock()
+                try:
+                    result = programmer.burn(cam, progress_cb=cb)
+                    ok, err = result.success, (result.error or "")
+                except Exception as exc:  # never let the thread die silently
+                    logger.exception("NVCM burn raised for camera %d", cam)
+                    ok, err = False, str(exc)
+                finally:
+                    mutex.unlock()
+
+                self.cameraDone.emit(cam, ok, err)
+                results.append((cam, ok, err))
+
+            all_ok = all(ok for _, ok, _ in results)
+            summary = "\n".join(
+                f"Camera {cam}: {'PASS' if ok else 'FAIL — ' + err}"
+                for cam, ok, err in results)
+        except Exception as exc:
+            logger.exception("NVCM flash thread failed")
+            self.finishedAll.emit(False, str(exc))
+            return
+
+        self.finishedAll.emit(all_ok, summary)
+
+
 class _FpgaSourceError(Exception):
     """Raised when a .jed source (local file or GitHub release) can't be resolved."""
 
@@ -834,6 +901,12 @@ class MOTIONConnector(QObject):
     # Emits: target, message
     fpgaFirmwareUpdateError = pyqtSignal(str, str)
 
+    # NVCM flash signals (one-time-programmable CrossLink NVCM burn)
+    nvcmFlashProgress = pyqtSignal(int, str)           # percent, message
+    nvcmFlashCameraDone = pyqtSignal(int, bool, str)   # camera, ok, error
+    nvcmFlashFinished = pyqtSignal(bool, str)          # overall ok, summary
+    nvcmFlashBusyChanged = pyqtSignal()
+
     tcmChanged = pyqtSignal()
     tclChanged = pyqtSignal()
     pdcChanged = pyqtSignal()
@@ -920,6 +993,8 @@ class MOTIONConnector(QObject):
         self._fpga_fw_busy = False
         self._fpga_fw_verify = False
         self._fpga_update_thread: _ConsoleFpgaUpdateThread | None = None
+        self._nvcm_thread = None
+        self._nvcm_busy = False
 
         # Sensor mutexes for left and right sensors (following console mutex pattern)
         self._left_sensor_mutex = QRecursiveMutex()
@@ -947,6 +1022,15 @@ class MOTIONConnector(QObject):
         self._fpga_fw_verify = enabled
         logger.info(f"[FPGA-UPD] verify toggle set to {enabled}")
         self.fpgaFirmwareVerifyEnabledChanged.emit()
+
+    @pyqtProperty(bool, notify=nvcmFlashBusyChanged)
+    def nvcmFlashBusy(self) -> bool:
+        return self._nvcm_busy
+
+    def _set_nvcm_busy(self, busy: bool) -> None:
+        if self._nvcm_busy != busy:
+            self._nvcm_busy = busy
+            self.nvcmFlashBusyChanged.emit()
 
     def _set_console_fw_busy(self, busy: bool) -> None:
         if getattr(self, "_console_fw_busy", False) == busy:
@@ -1049,6 +1133,37 @@ class MOTIONConnector(QObject):
             lambda: setattr(self, "_fw_download_thread", None)
         )
         self._fw_download_thread.start()
+
+    @pyqtSlot(str, int)
+    def flashNvcm(self, sensor_tag: str, camera_mask: int) -> None:
+        """Permanently burn NVCM on the masked cameras of one sensor."""
+        logger.info(f"flashNvcm sensor={sensor_tag} mask=0x{camera_mask:02X}")
+        if sensor_tag not in ("left", "right"):
+            self.nvcmFlashFinished.emit(False, "Invalid sensor target.")
+            return
+        if self._nvcm_busy or self._nvcm_thread is not None:
+            self.nvcmFlashFinished.emit(
+                False, "An NVCM flash is already in progress.")
+            return
+        cameras = [i + 1 for i in range(8) if camera_mask & (1 << i)]
+        if not cameras:
+            self.nvcmFlashFinished.emit(False, "No cameras selected.")
+            return
+
+        self._set_nvcm_busy(True)
+        self._nvcm_thread = _NvcmFlashThread(self, sensor_tag, cameras)
+        self._nvcm_thread.progress.connect(self.nvcmFlashProgress)
+        self._nvcm_thread.cameraDone.connect(self.nvcmFlashCameraDone)
+
+        def _done(ok: bool, summary: str) -> None:
+            self._set_nvcm_busy(False)
+            self.nvcmFlashFinished.emit(ok, summary)
+
+        self._nvcm_thread.finishedAll.connect(_done)
+        self._nvcm_thread.finished.connect(
+            lambda: setattr(self, "_nvcm_thread", None)
+        )
+        self._nvcm_thread.start()
 
     @pyqtSlot(str, str)
     def beginDeviceFirmwareFromLocal(self, target: str, local_path: str) -> None:

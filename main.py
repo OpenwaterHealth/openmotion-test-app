@@ -61,6 +61,13 @@ def main():
             ],
         )
         logger.info("Debug mode enabled - logging level set to DEBUG")
+        # Wire-level and polling logs flood DEBUG output (one line per USB
+        # packet / telemetry tick); keep them at INFO unless hand-edited.
+        for noisy in ("openmotion.sdk.CommInterface",
+                      "openmotion.sdk.ConsoleTelemetry",
+                      "openmotion.sdk.UARTPACKET",
+                      "openmotion.sdk.Sensor"):
+            logging.getLogger(noisy).setLevel(logging.INFO)
     else:
         logging.basicConfig(level=logging.INFO)
 

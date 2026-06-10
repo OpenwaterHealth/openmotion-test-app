@@ -1147,72 +1147,6 @@ Rectangle {
                                         }
                                     }
 
-                                    // NVCM permanent flash
-                                    Button {
-                                        id: nvcmFlashButton
-                                        text: "Flash (permanent)"
-                                        Layout.preferredWidth: 248
-                                        Layout.preferredHeight: 40
-                                        Layout.alignment: Qt.AlignLeft
-                                        hoverEnabled: true
-                                        enabled: {
-                                            if (MOTIONInterface.nvcmFlashBusy) return false
-                                            if (sensorSelector.currentIndex === 0) {
-                                                return MOTIONInterface.leftSensorConnected
-                                            } else {
-                                                return MOTIONInterface.rightSensorConnected
-                                            }
-                                        }
-                                        contentItem: Text {
-                                            text: parent.text
-                                            color: parent.enabled ? "#E74C3C" : "#7F8C8D"
-                                            horizontalAlignment: Text.AlignHCenter
-                                            verticalAlignment: Text.AlignVCenter
-                                        }
-                                        background: Rectangle {
-                                            color: parent.hovered && parent.enabled ? "#5A3A3A" : "#3A3F4B"
-                                            radius: 4
-                                            border.color: parent.enabled ? "#E74C3C" : "#7F8C8D"
-                                        }
-                                        onClicked: {
-                                            let selectedIndex = cameraDropdown.currentIndex;
-                                            let cameraMask = 0x01 << selectedIndex;
-                                            let label = "Camera " + (selectedIndex + 1);
-                                            if (selectedIndex === 8) {
-                                                cameraMask = 0xFF;
-                                                label = "ALL cameras (1-8)";
-                                            }
-                                            nvcmConfirmDialog.sensorTag =
-                                                (sensorSelector.currentIndex === 0) ? "left" : "right";
-                                            nvcmConfirmDialog.cameraMask = cameraMask;
-                                            nvcmConfirmDialog.cameraLabel = label;
-                                            nvcmConfirmDialog.open();
-                                        }
-                                    }
-
-                                    // NVCM progress line
-                                    Text {
-                                        id: nvcmProgressText
-                                        visible: MOTIONInterface.nvcmFlashBusy
-                                        Layout.preferredWidth: 248
-                                        color: "#F39C12"
-                                        font.pixelSize: 12
-                                        wrapMode: Text.WordWrap
-                                        text: ""
-                                    }
-
-                                    Connections {
-                                        target: MOTIONInterface
-                                        function onNvcmFlashProgress(percent, message) {
-                                            nvcmProgressText.text = message
-                                        }
-                                        function onNvcmFlashFinished(ok, summary) {
-                                            nvcmProgressText.text = ""
-                                            nvcmSummaryDialog.resultOk = ok
-                                            nvcmSummaryDialog.summaryText = summary
-                                            nvcmSummaryDialog.open()
-                                        }
-                                    }
 
                                     // Capture buttons row
                                     RowLayout {
@@ -1417,6 +1351,73 @@ Rectangle {
                                     spacing: 8
                                     Layout.alignment: Qt.AlignBottom | Qt.AlignRight
 
+                                    // NVCM permanent flash
+                                    Button {
+                                        id: nvcmFlashButton
+                                        text: "Flash (permanent)"
+                                        Layout.preferredWidth: 160
+                                        Layout.preferredHeight: 40
+                                        Layout.alignment: Qt.AlignRight
+                                        hoverEnabled: true
+                                        enabled: {
+                                            if (MOTIONInterface.nvcmFlashBusy) return false
+                                            if (sensorSelector.currentIndex === 0) {
+                                                return MOTIONInterface.leftSensorConnected
+                                            } else {
+                                                return MOTIONInterface.rightSensorConnected
+                                            }
+                                        }
+                                        contentItem: Text {
+                                            text: parent.text
+                                            color: parent.enabled ? "#E74C3C" : "#7F8C8D"
+                                            horizontalAlignment: Text.AlignHCenter
+                                            verticalAlignment: Text.AlignVCenter
+                                        }
+                                        background: Rectangle {
+                                            color: parent.hovered && parent.enabled ? "#5A3A3A" : "#3A3F4B"
+                                            radius: 4
+                                            border.color: parent.enabled ? "#E74C3C" : "#7F8C8D"
+                                        }
+                                        onClicked: {
+                                            let selectedIndex = cameraDropdown.currentIndex;
+                                            let cameraMask = 0x01 << selectedIndex;
+                                            let label = "Camera " + (selectedIndex + 1);
+                                            if (selectedIndex === 8) {
+                                                cameraMask = 0xFF;
+                                                label = "ALL cameras (1-8)";
+                                            }
+                                            nvcmConfirmDialog.sensorTag =
+                                                (sensorSelector.currentIndex === 0) ? "left" : "right";
+                                            nvcmConfirmDialog.cameraMask = cameraMask;
+                                            nvcmConfirmDialog.cameraLabel = label;
+                                            nvcmConfirmDialog.open();
+                                        }
+                                    }
+
+                                    // NVCM progress line
+                                    Text {
+                                        id: nvcmProgressText
+                                        visible: MOTIONInterface.nvcmFlashBusy
+                                        Layout.preferredWidth: 160
+                                        Layout.alignment: Qt.AlignRight
+                                        color: "#F39C12"
+                                        font.pixelSize: 12
+                                        wrapMode: Text.WordWrap
+                                        text: ""
+                                    }
+
+                                    Connections {
+                                        target: MOTIONInterface
+                                        function onNvcmFlashProgress(percent, message) {
+                                            nvcmProgressText.text = message
+                                        }
+                                        function onNvcmFlashFinished(ok, summary) {
+                                            nvcmProgressText.text = ""
+                                            nvcmSummaryDialog.resultOk = ok
+                                            nvcmSummaryDialog.summaryText = summary
+                                            nvcmSummaryDialog.open()
+                                        }
+                                    }
 
                                     // Power On button with status indicator
                                     RowLayout {

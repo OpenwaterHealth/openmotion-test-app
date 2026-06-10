@@ -339,6 +339,8 @@ Rectangle {
         width: 520
         height: 280
         modal: true
+        x: (parent.width - width) / 2
+        y: (parent.height - height) / 2
 
         property string sensorTag: "left"
         property int cameraMask: 0
@@ -423,6 +425,8 @@ Rectangle {
         width: 520
         height: 300
         modal: true
+        x: (parent.width - width) / 2
+        y: (parent.height - height) / 2
 
         property bool resultOk: false
         property string summaryText: ""
@@ -439,9 +443,11 @@ Rectangle {
                 font.bold: true
             }
             ScrollView {
+                id: nvcmSummaryScroll
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Text {
+                    width: nvcmSummaryScroll.availableWidth
                     text: nvcmSummaryDialog.summaryText
                     color: "#BDC3C7"
                     font.pixelSize: 12

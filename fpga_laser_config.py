@@ -310,7 +310,7 @@ def apply_laser_power_from_config(
                 logger.info(
                     f"[Connector] Override for {friendlyName}: {override_val}"
                 )
-                # Parse "8B"/"16B"/"24B"/"32B" → number of bytes
+                # Parse "8B"/"16B"/"24B"/"32B" -> number of bytes
                 num_bytes = int(data_size.rstrip("B")) // 8
                 scale = fpga_entry.get("scale")
                 try:
@@ -326,7 +326,7 @@ def apply_laser_power_from_config(
                     )
                     logger.info(
                         f"[Connector] Override {friendlyName} raw={raw_int} "
-                        f"→ {[f'0x{b:02X}' for b in dataToSend]}"
+                        f"-> {[f'0x{b:02X}' for b in dataToSend]}"
                     )
                 except Exception as _ov_err:
                     logger.warning(
@@ -372,7 +372,7 @@ def apply_laser_power_from_config(
 
             logger.info(
                 f"[Connector] Writing user-config {label} DRIVE CL: "
-                f"raw={raw}, gain={gain_f} → {[f'0x{b:02X}' for b in data]}"
+                f"raw={raw}, gain={gain_f} -> {[f'0x{b:02X}' for b in data]}"
             )
             return interface.console.write_i2c_packet(
                 mux_index=1, channel=ch, device_addr=0x41, reg_addr=0x10, data=data

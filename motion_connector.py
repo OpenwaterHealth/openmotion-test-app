@@ -3011,6 +3011,27 @@ class MOTIONConnector(QObject):
         finally:
             self._console_mutex.unlock()
 
+    @pyqtSlot(int, result=bool)
+    def resetOdometer(self, target: int = 2) -> bool:
+        """Reset the console odometer(s) and persist the cleared state to flash.
+
+        target: 0 = system uptime, 1 = laser pulses, 2 = both (default).
+        Permanent — the previous lifetime totals cannot be recovered.
+        """
+        self._console_mutex.lock()
+        try:
+            ok = motion_interface.console.reset_odometer(target)
+            if ok:
+                logger.info(f"Odometer reset (target={target})")
+            else:
+                logger.error(f"Odometer reset failed (target={target})")
+            return ok
+        except Exception as e:
+            logger.error(f"Error resetting odometer: {e}")
+            return False
+        finally:
+            self._console_mutex.unlock()
+
     @pyqtSlot(int, int, result="QStringList")
     def scanI2C(self, mux: int, chan: int) -> list[str]:
         self._console_mutex.lock()

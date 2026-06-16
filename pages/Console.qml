@@ -1132,13 +1132,42 @@ Rectangle {
 
                             // Title
                             Text {
-                                text: "User Config Values"
+                                text: "Odometer"
                                 color: "#BDC3C7"
-                                font.pixelSize: 18
+                                font.pixelSize: 16
                                 anchors.top: parent.top
                                 anchors.horizontalCenter: parent.horizontalCenter
-                                anchors.topMargin: 5
-                                visible: false
+                                anchors.topMargin: 3
+                            }
+
+                            // Reset Odometer Button
+                            Rectangle {
+                                width: 280
+                                height: 40
+                                radius: 10
+                                anchors.centerIn: parent
+                                color: enabled ? "#E67E22" : "#7F8C8D"  // Orange when enabled, gray when disabled
+                                enabled: MOTIONInterface.consoleConnected
+
+                                Text {
+                                    text: "Reset Odometer"
+                                    anchors.centerIn: parent
+                                    color: parent.enabled ? "white" : "#BDC3C7"
+                                    font.pixelSize: 16
+                                    font.weight: Font.Bold
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: parent.enabled
+                                    onClicked: odometerResetDialog.open()
+                                    onEntered: if (parent.enabled) parent.color = "#CA6F1E"
+                                    onExited: if (parent.enabled) parent.color = "#E67E22"
+                                }
+
+                                Behavior on color {
+                                    ColorAnimation { duration: 200 }
+                                }
                             }
 
                             Column {
@@ -1408,7 +1437,85 @@ Rectangle {
                         }
                     }
                 }
-            }                    
+            }
+        }
+    }
+
+    // Confirmation for the permanent odometer reset
+    Dialog {
+        id: odometerResetDialog
+        title: "Reset Odometer"
+        width: 480
+        height: 230
+        modal: true
+        x: (parent.width - width) / 2
+        y: (parent.height - height) / 2
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 16
+
+            Text {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: "#E67E22"
+                font.pixelSize: 14
+                font.bold: true
+                text: "This clears the console's lifetime usage counters " +
+                      "(system uptime and laser pulses) and CANNOT be undone."
+            }
+            Text {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: "#BDC3C7"
+                font.pixelSize: 13
+                text: "The cleared totals are written to console flash. " +
+                      "Continue?"
+            }
+
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                spacing: 10
+
+                Button {
+                    text: "Cancel"
+                    Layout.preferredWidth: 100
+                    Layout.preferredHeight: 32
+                    background: Rectangle {
+                        color: parent.hovered ? "#4A90E2" : "#3A3F4B"
+                        radius: 4
+                        border.color: "#BDC3C7"
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        color: "#BDC3C7"
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: odometerResetDialog.close()
+                }
+                Button {
+                    text: "Reset"
+                    Layout.preferredWidth: 120
+                    Layout.preferredHeight: 32
+                    background: Rectangle {
+                        color: parent.hovered ? "#E67E22" : "#3A3F4B"
+                        radius: 4
+                        border.color: "#E67E22"
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        color: "#E67E22"
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                        font.bold: true
+                    }
+                    onClicked: {
+                        odometerResetDialog.close()
+                        MOTIONInterface.resetOdometer(2)  // 2 = both counters
+                    }
+                }
+            }
         }
     }
 

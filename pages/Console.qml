@@ -1512,8 +1512,66 @@ Rectangle {
                     }
                     onClicked: {
                         odometerResetDialog.close()
-                        MOTIONInterface.resetOdometer(2)  // 2 = both counters
+                        var ok = MOTIONInterface.resetOdometer(2)  // 2 = both counters
+                        odometerResetResultDialog.success = ok
+                        odometerResetResultDialog.open()
                     }
+                }
+            }
+        }
+    }
+
+    // Result feedback shown after an odometer reset attempt
+    Dialog {
+        id: odometerResetResultDialog
+        title: "Reset Odometer"
+        width: 480
+        height: 200
+        modal: true
+        x: (parent.width - width) / 2
+        y: (parent.height - height) / 2
+
+        // True = console acknowledged the reset, false = NAK / error
+        property bool success: false
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 16
+
+            Text {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: odometerResetResultDialog.success ? "#2ECC71" : "#E74C3C"
+                font.pixelSize: 14
+                font.bold: true
+                text: odometerResetResultDialog.success
+                      ? "Both odometers reset. System uptime and laser-pulse " +
+                        "counters were cleared and saved to console flash."
+                      : "Odometer reset failed — the console did not " +
+                        "acknowledge. The counters were not changed. " +
+                        "See log for details."
+            }
+
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                spacing: 10
+
+                Button {
+                    text: "Close"
+                    Layout.preferredWidth: 100
+                    Layout.preferredHeight: 32
+                    background: Rectangle {
+                        color: parent.hovered ? "#4A90E2" : "#3A3F4B"
+                        radius: 4
+                        border.color: "#BDC3C7"
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        color: "#BDC3C7"
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: odometerResetResultDialog.close()
                 }
             }
         }

@@ -1589,6 +1589,10 @@ Rectangle {
                         var ok = MOTIONInterface.resetOdometer(2)  // 2 = both counters
                         odometerResetResultDialog.success = ok
                         odometerResetResultDialog.open()
+                        // Refresh the displayed counters from the console so the
+                        // panel reflects the cleared state (consoleOdometerReceived).
+                        if (ok)
+                            MOTIONInterface.queryConsoleOdometer()
                     }
                 }
             }

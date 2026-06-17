@@ -1403,51 +1403,20 @@ class MOTIONConnector(QObject):
         self._set_console_fw_busy(False)
 
     def _configure_logging(self, log_level):
-        """Configure logging for motion_connector with the specified log level."""
+        """Set up the connector's module loggers.
+
+        Console + file handlers are owned by main.py (``configure_app_logging``
+        in utils/log_setup.py), which configures the root logger. The
+        ``ow-testapp`` logger just propagates its records up to root.
+        """
         global logger, run_logger
 
-        # Get logger instance
         logger = logging.getLogger("ow-testapp")
         logger.setLevel(log_level)
+        logger.propagate = True
 
-        # Common formatter
-        formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-
-        # Configure handlers - ensure console output for debug messages
-        if not logger.hasHandlers():
-            # Check if root logger has handlers (main.py configured logging)
-            root_logger = logging.getLogger()
-            if root_logger.handlers:
-                # Let messages propagate to root logger (main.py handles console/file output)
-                logger.propagate = True
-            else:
-                # No root handlers, set up our own console handler
-                console_handler = logging.StreamHandler()
-                console_handler.setLevel(log_level)
-                console_handler.setFormatter(formatter)
-                logger.addHandler(console_handler)
-
-                # Also add file handler for local logging
-                run_dir = os.path.join(os.getcwd(), "app-logs")
-                os.makedirs(run_dir, exist_ok=True)
-
-                # Build timestamp like 20251029_124455
-                ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-                # ow-testapp-<ts>.log
-                logfile_path = os.path.join(run_dir, f"ow-testapp-{ts}.log")
-
-                file_handler = logging.FileHandler(
-                    logfile_path, mode="w", encoding="utf-8"
-                )
-                file_handler.setLevel(log_level)
-                file_handler.setFormatter(formatter)
-                logger.addHandler(file_handler)
-
-                # Optional: announce where we're logging
-                logger.info(f"logging to {logfile_path}")
-
-        # Run logger (ONLY writes to run.log, no console spam)
+        # Run logger: isolated from root so it doesn't reach the console/file
+        # handlers (kept for callers that wire it up separately).
         run_logger = logging.getLogger("runlog")
         run_logger.setLevel(log_level)
         run_logger.propagate = False

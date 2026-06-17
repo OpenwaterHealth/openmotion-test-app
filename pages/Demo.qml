@@ -1156,7 +1156,12 @@ Rectangle {
                             Component.onCompleted: {
                                 try{
                                     MOTIONInterface.tec_status();
-                                    MOTIONInterface.queryTecTripValue();
+                                    // Only meaningful once connected; the real
+                                    // read happens on connect (consoleUpdateTimer)
+                                    // and on TEC CTRL tab selection.
+                                    if (MOTIONInterface.consoleConnected) {
+                                        MOTIONInterface.queryTecTripValue();
+                                    }
                                 }catch(e){
                                     console.error(e);
                                 }
@@ -1409,10 +1414,13 @@ Rectangle {
                                             Layout.preferredHeight: 30
                                             enabled: MOTIONInterface.consoleConnected
                                             font.pixelSize: 12
-                                            placeholderText: "0-125"
+                                            placeholderText: "1-125"
                                             text: MOTIONInterface.tecTripValue.toString()
                                             inputMethodHints: Qt.ImhDigitsOnly
-                                            validator: IntValidator { bottom: 0; top: 125 }
+                                            // Min is 1, not 0: firmware treats a 0 V trip
+                                            // threshold as "trip disabled", so 0 would
+                                            // silently turn off the over-temp safety.
+                                            validator: IntValidator { bottom: 1; top: 125 }
 
                                             property string tripError: ""
                                             background: Rectangle {
@@ -1425,11 +1433,12 @@ Rectangle {
                                             function applyTrip() {
                                                 var v = parseInt(text)
                                                 if (isNaN(v)) {
-                                                    tripError = "enter 0-125"
+                                                    tripError = "enter 1-125"
                                                     tripErrorTimer.restart()
                                                     return
                                                 }
-                                                if (v < 0) v = 0
+                                                // Clamp to 1 (not 0): 0 disables the trip.
+                                                if (v < 1) v = 1
                                                 if (v > 125) v = 125
                                                 text = v.toString()
                                                 tripError = ""
@@ -2210,6 +2219,10 @@ Rectangle {
                 }
                 
                 updateLaserUI();
+
+                // Refresh the TEC trip temperature now that the console is
+                // connected (the page loads before USB enumeration completes).
+                MOTIONInterface.queryTecTripValue();
             }
             demoLoading = false
         }
@@ -2321,7 +2334,12 @@ Rectangle {
             switch (safetyStack.currentIndex) {
             case 0: break;
             case 1: break;
-            case 2: break;
+            case 2:
+                // TEC CTRL tab: refresh the trip temperature when viewed
+                if (MOTIONInterface.consoleConnected) {
+                    MOTIONInterface.queryTecTripValue();
+                }
+                break;
             }
         }
     }

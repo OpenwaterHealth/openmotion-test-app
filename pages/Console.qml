@@ -1353,7 +1353,7 @@ Rectangle {
                     // Console Serial Number
                     Rectangle {
                         width: 650
-                        height: 150
+                        height: 160
                         radius: 8
                         color: "#1E1E20"
                         border.color: "#3E4E6F"

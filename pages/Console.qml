@@ -101,6 +101,7 @@ Rectangle {
         MOTIONInterface.readFanFeedback() // One-shot fan PWM feedback read
         MOTIONInterface.queryConsoleTemperature()
         MOTIONInterface.queryTecTripValue();
+        MOTIONInterface.queryConsoleOdometer()
     }
 
 
@@ -1130,6 +1131,31 @@ Rectangle {
                             border.width: 2
                             enabled: MOTIONInterface.consoleConnected
 
+                            // Lifetime odometer values (-1 = not available / old firmware)
+                            property int odoSystemMinutes: -1
+                            property int odoLaserPulses: -1
+
+                            function fmtThousands(n) {
+                                var s = Math.round(n).toString()
+                                var neg = s.charAt(0) === "-"
+                                if (neg) s = s.substring(1)
+                                var out = ""
+                                for (var i = 0; i < s.length; i++) {
+                                    if (i > 0 && (s.length - i) % 3 === 0) out += ","
+                                    out += s.charAt(i)
+                                }
+                                return (neg ? "-" : "") + out
+                            }
+
+                            // Values are refreshed by the page's updateStates().
+                            Connections {
+                                target: MOTIONInterface
+                                function onConsoleOdometerReceived(systemMinutes, laserPulses) {
+                                    tecTripBox.odoSystemMinutes = systemMinutes
+                                    tecTripBox.odoLaserPulses = laserPulses
+                                }
+                            }
+
                             // Title
                             Text {
                                 text: "Odometer"
@@ -1140,12 +1166,60 @@ Rectangle {
                                 anchors.topMargin: 3
                             }
 
+                            // Lifetime value readout
+                            Column {
+                                anchors.top: parent.top
+                                anchors.topMargin: 26
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.margins: 16
+                                spacing: 6
+
+                                RowLayout {
+                                    width: parent.width
+                                    Text {
+                                        text: "Uptime:"
+                                        color: "#BDC3C7"
+                                        font.pixelSize: 14
+                                    }
+                                    Item { Layout.fillWidth: true }
+                                    Text {
+                                        text: tecTripBox.odoSystemMinutes < 0
+                                              ? "--"
+                                              : (tecTripBox.odoSystemMinutes / 60).toFixed(1) + " h"
+                                        color: "#3498DB"
+                                        font.pixelSize: 14
+                                        font.weight: Font.Bold
+                                    }
+                                }
+
+                                RowLayout {
+                                    width: parent.width
+                                    Text {
+                                        text: "Laser pulses:"
+                                        color: "#BDC3C7"
+                                        font.pixelSize: 14
+                                    }
+                                    Item { Layout.fillWidth: true }
+                                    Text {
+                                        text: tecTripBox.odoLaserPulses < 0
+                                              ? "--"
+                                              : tecTripBox.fmtThousands(tecTripBox.odoLaserPulses)
+                                        color: "#3498DB"
+                                        font.pixelSize: 14
+                                        font.weight: Font.Bold
+                                    }
+                                }
+                            }
+
                             // Reset Odometer Button
                             Rectangle {
                                 width: 280
-                                height: 40
-                                radius: 10
-                                anchors.centerIn: parent
+                                height: 34
+                                radius: 8
+                                anchors.bottom: parent.bottom
+                                anchors.bottomMargin: 10
+                                anchors.horizontalCenter: parent.horizontalCenter
                                 color: enabled ? "#E67E22" : "#7F8C8D"  // Orange when enabled, gray when disabled
                                 enabled: MOTIONInterface.consoleConnected
 
@@ -1153,7 +1227,7 @@ Rectangle {
                                     text: "Reset Odometer"
                                     anchors.centerIn: parent
                                     color: parent.enabled ? "white" : "#BDC3C7"
-                                    font.pixelSize: 16
+                                    font.pixelSize: 14
                                     font.weight: Font.Bold
                                 }
 

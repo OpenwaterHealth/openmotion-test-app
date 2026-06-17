@@ -475,6 +475,65 @@ Rectangle {
         }
     }
 
+    // NVCM programmed-check result (read-only sweep across all 8 cameras)
+    Dialog {
+        id: nvcmCheckSummaryDialog
+        title: "NVCM Programmed Check"
+        width: 520
+        height: 320
+        modal: true
+        x: (parent.width - width) / 2
+        y: (parent.height - height) / 2
+
+        property bool allProgrammed: false
+        property string summaryText: ""
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 16
+
+            Text {
+                text: nvcmCheckSummaryDialog.allProgrammed
+                      ? "All 8 cameras PROGRAMMED"
+                      : "One or more cameras not PROGRAMMED"
+                color: nvcmCheckSummaryDialog.allProgrammed ? "#27AE60" : "#E74C3C"
+                font.pixelSize: 15
+                font.bold: true
+            }
+            ScrollView {
+                id: nvcmCheckSummaryScroll
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Text {
+                    width: nvcmCheckSummaryScroll.availableWidth
+                    text: nvcmCheckSummaryDialog.summaryText
+                    color: "#BDC3C7"
+                    font.pixelSize: 12
+                    font.family: "monospace"
+                    wrapMode: Text.WordWrap
+                }
+            }
+            Button {
+                text: "Close"
+                Layout.alignment: Qt.AlignRight
+                Layout.preferredWidth: 100
+                Layout.preferredHeight: 32
+                background: Rectangle {
+                    color: parent.hovered ? "#4A90E2" : "#3A3F4B"
+                    radius: 4
+                    border.color: "#BDC3C7"
+                }
+                contentItem: Text {
+                    text: parent.text
+                    color: "#BDC3C7"
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                onClicked: nvcmCheckSummaryDialog.close()
+            }
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 20
@@ -1351,56 +1410,103 @@ Rectangle {
                                     spacing: 8
                                     Layout.alignment: Qt.AlignBottom | Qt.AlignRight
 
-                                    // NVCM permanent flash
-                                    Button {
-                                        id: nvcmFlashButton
-                                        text: "Flash (permanent)"
-                                        Layout.preferredWidth: 160
-                                        Layout.preferredHeight: 40
+                                    // NVCM row: permanent flash (left) + read-only programmed check (right)
+                                    RowLayout {
+                                        spacing: 8
                                         Layout.alignment: Qt.AlignRight
-                                        hoverEnabled: true
-                                        enabled: {
-                                            if (MOTIONInterface.nvcmFlashBusy) return false
-                                            if (sensorSelector.currentIndex === 0) {
-                                                return MOTIONInterface.leftSensorConnected
-                                            } else {
-                                                return MOTIONInterface.rightSensorConnected
+
+                                        Button {
+                                            id: nvcmFlashButton
+                                            text: "Flash (permanent)"
+                                            Layout.preferredWidth: 150
+                                            Layout.preferredHeight: 40
+                                            hoverEnabled: true
+                                            enabled: {
+                                                if (MOTIONInterface.nvcmFlashBusy) return false
+                                                if (sensorSelector.currentIndex === 0) {
+                                                    return MOTIONInterface.leftSensorConnected
+                                                } else {
+                                                    return MOTIONInterface.rightSensorConnected
+                                                }
+                                            }
+                                            contentItem: Text {
+                                                text: parent.text
+                                                color: parent.enabled ? "#E74C3C" : "#7F8C8D"
+                                                horizontalAlignment: Text.AlignHCenter
+                                                verticalAlignment: Text.AlignVCenter
+                                            }
+                                            background: Rectangle {
+                                                color: parent.hovered && parent.enabled ? "#5A3A3A" : "#3A3F4B"
+                                                radius: 4
+                                                border.color: parent.enabled ? "#E74C3C" : "#7F8C8D"
+                                            }
+                                            onClicked: {
+                                                let selectedIndex = cameraDropdown.currentIndex;
+                                                let cameraMask = 0x01 << selectedIndex;
+                                                let label = "Camera " + (selectedIndex + 1);
+                                                if (selectedIndex === 8) {
+                                                    cameraMask = 0xFF;
+                                                    label = "ALL cameras (1-8)";
+                                                }
+                                                nvcmConfirmDialog.sensorTag =
+                                                    (sensorSelector.currentIndex === 0) ? "left" : "right";
+                                                nvcmConfirmDialog.cameraMask = cameraMask;
+                                                nvcmConfirmDialog.cameraLabel = label;
+                                                nvcmConfirmDialog.open();
                                             }
                                         }
-                                        contentItem: Text {
-                                            text: parent.text
-                                            color: parent.enabled ? "#E74C3C" : "#7F8C8D"
-                                            horizontalAlignment: Text.AlignHCenter
-                                            verticalAlignment: Text.AlignVCenter
-                                        }
-                                        background: Rectangle {
-                                            color: parent.hovered && parent.enabled ? "#5A3A3A" : "#3A3F4B"
-                                            radius: 4
-                                            border.color: parent.enabled ? "#E74C3C" : "#7F8C8D"
-                                        }
-                                        onClicked: {
-                                            let selectedIndex = cameraDropdown.currentIndex;
-                                            let cameraMask = 0x01 << selectedIndex;
-                                            let label = "Camera " + (selectedIndex + 1);
-                                            if (selectedIndex === 8) {
-                                                cameraMask = 0xFF;
-                                                label = "ALL cameras (1-8)";
+
+                                        // NVCM programmed check (read-only, all 8 cameras)
+                                        Button {
+                                            id: nvcmCheckButton
+                                            text: "Check NVCM (all)"
+                                            Layout.preferredWidth: 150
+                                            Layout.preferredHeight: 40
+                                            hoverEnabled: true
+                                            enabled: {
+                                                if (MOTIONInterface.nvcmFlashBusy) return false
+                                                if (sensorSelector.currentIndex === 0) {
+                                                    return MOTIONInterface.leftSensorConnected
+                                                } else {
+                                                    return MOTIONInterface.rightSensorConnected
+                                                }
                                             }
-                                            nvcmConfirmDialog.sensorTag =
-                                                (sensorSelector.currentIndex === 0) ? "left" : "right";
-                                            nvcmConfirmDialog.cameraMask = cameraMask;
-                                            nvcmConfirmDialog.cameraLabel = label;
-                                            nvcmConfirmDialog.open();
+                                            contentItem: Text {
+                                                text: parent.text
+                                                color: parent.enabled ? "#4A90E2" : "#7F8C8D"
+                                                horizontalAlignment: Text.AlignHCenter
+                                                verticalAlignment: Text.AlignVCenter
+                                            }
+                                            background: Rectangle {
+                                                color: parent.hovered && parent.enabled ? "#33425A" : "#3A3F4B"
+                                                radius: 4
+                                                border.color: parent.enabled ? "#4A90E2" : "#7F8C8D"
+                                            }
+                                            onClicked: {
+                                                let tag = (sensorSelector.currentIndex === 0) ? "left" : "right";
+                                                nvcmCheckProgressText.text = "Starting NVCM check…";
+                                                MOTIONInterface.checkNvcmProgrammed(tag);
+                                            }
                                         }
                                     }
 
-                                    // NVCM progress line
+                                    // NVCM progress line (shared row for flash / check status)
                                     Text {
                                         id: nvcmProgressText
-                                        visible: MOTIONInterface.nvcmFlashBusy
-                                        Layout.preferredWidth: 160
+                                        visible: MOTIONInterface.nvcmFlashBusy && text !== ""
+                                        Layout.preferredWidth: 308
                                         Layout.alignment: Qt.AlignRight
                                         color: "#F39C12"
+                                        font.pixelSize: 12
+                                        wrapMode: Text.WordWrap
+                                        text: ""
+                                    }
+                                    Text {
+                                        id: nvcmCheckProgressText
+                                        visible: MOTIONInterface.nvcmFlashBusy && text !== ""
+                                        Layout.preferredWidth: 308
+                                        Layout.alignment: Qt.AlignRight
+                                        color: "#4A90E2"
                                         font.pixelSize: 12
                                         wrapMode: Text.WordWrap
                                         text: ""
@@ -1416,6 +1522,15 @@ Rectangle {
                                             nvcmSummaryDialog.resultOk = ok
                                             nvcmSummaryDialog.summaryText = summary
                                             nvcmSummaryDialog.open()
+                                        }
+                                        function onNvcmCheckProgress(percent, message) {
+                                            nvcmCheckProgressText.text = message
+                                        }
+                                        function onNvcmCheckFinished(allProgrammed, summary) {
+                                            nvcmCheckProgressText.text = ""
+                                            nvcmCheckSummaryDialog.allProgrammed = allProgrammed
+                                            nvcmCheckSummaryDialog.summaryText = summary
+                                            nvcmCheckSummaryDialog.open()
                                         }
                                     }
 

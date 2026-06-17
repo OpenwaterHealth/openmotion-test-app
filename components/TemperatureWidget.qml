@@ -3,8 +3,8 @@ import QtQuick.Controls 6.0
 import QtQuick.Shapes 6.0
 
 Rectangle {
-    width: 160
-    height: 160
+    width: 120
+    height: 120
     color: "transparent"
 
     property real temperature: 0    // Starting temperature
@@ -18,8 +18,8 @@ Rectangle {
     Canvas {
         id: arcCanvas
         anchors.centerIn: parent
-        width: 140
-        height: 140
+        width: 105
+        height: 105
 
         onPaint: {
             var ctx = getContext("2d")
@@ -27,16 +27,16 @@ Rectangle {
 
             // Background Arc (Light Gray)
             ctx.beginPath()
-            ctx.arc(width / 2, height / 2, 60, Math.PI * 0.75, Math.PI * 2.25, false)
-            ctx.lineWidth = 10
+            ctx.arc(width / 2, height / 2, 45, Math.PI * 0.75, Math.PI * 2.25, false)
+            ctx.lineWidth = 7.5
             ctx.strokeStyle = "#D0D3D4"
             ctx.stroke()
 
             // Foreground Arc (Dynamic Color)
             var angle = (temperature / 70) * 270  // Correct scaling for 0-70°C range
             ctx.beginPath()
-            ctx.arc(width / 2, height / 2, 60, Math.PI * 0.75, Math.PI * (0.75 + (angle / 180)), false)
-            ctx.lineWidth = 10
+            ctx.arc(width / 2, height / 2, 45, Math.PI * 0.75, Math.PI * (0.75 + (angle / 180)), false)
+            ctx.lineWidth = 7.5
             ctx.strokeStyle = gaugeColor
             ctx.stroke()
         }
@@ -51,7 +51,7 @@ Rectangle {
     Text {
         text: temperature.toFixed(0) + "°C"
         anchors.centerIn: parent
-        font.pixelSize: 24
+        font.pixelSize: 18
         color: "#4B4B4B"
         font.weight: Font.Bold
     }
@@ -62,9 +62,9 @@ Rectangle {
         anchors {
             top: parent.bottom
             horizontalCenter: parent.horizontalCenter
-            topMargin: 5
+            topMargin: 4
         }
-        font.pixelSize: 16
+        font.pixelSize: 12
         color: "#BDC3C7"
         font.weight: Font.Medium
     }

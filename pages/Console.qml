@@ -1582,9 +1582,11 @@ Rectangle {
 
 
 
-                        ColumnLayout {
-                            Layout.alignment: Qt.AlignHCenter 
-                            spacing: 25  
+                        GridLayout {
+                            Layout.alignment: Qt.AlignHCenter
+                            columns: 2
+                            columnSpacing: 20
+                            rowSpacing: 20
 
                             // TEMP #1 Widget
                             MiniTemperatureWidget {

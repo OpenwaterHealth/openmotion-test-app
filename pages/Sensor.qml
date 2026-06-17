@@ -177,9 +177,8 @@ Rectangle {
         function onSensorSerialNumberReceived(target, serial) {
             var tgt = (sensorSelector.currentIndex === 0) ? "left" : "right"
             if (target !== tgt) return
-            sensorSerialCurrent.programmed = (serial.length > 0)
-            sensorSerialCurrent.text = serial.length > 0 ? ("Current: " + serial)
-                                                         : "Current: not programmed"
+            sensorSerialValue.programmed = (serial.length > 0)
+            sensorSerialValue.text = serial.length > 0 ? serial : "not programmed"
         }
         function onSensorSerialNumberWritten(target, ok, message) {
             var tgt = (sensorSelector.currentIndex === 0) ? "left" : "right"
@@ -187,7 +186,10 @@ Rectangle {
             sensorSerialStatus.text = message
             sensorSerialStatus.color = ok ? "lightgreen" : "red"
             clearSensorSerialStatusTimer.restart()
-            if (ok) sensorSerialInput.text = ""
+            if (ok) {
+                sensorSerialInput.text = ""
+                sensorSerialRow.editing = false
+            }
         }
 
         // Handle temperature updates
@@ -1818,10 +1820,11 @@ Rectangle {
                                     // Clear fan control status
                                     fanControlOn = false;
 
-                                    // Clear serial box so stale value doesn't linger
-                                    sensorSerialCurrent.text = "Current: not programmed"
-                                    sensorSerialCurrent.programmed = false
+                                    // Clear serial row so stale value doesn't linger
+                                    sensorSerialValue.text = "not programmed"
+                                    sensorSerialValue.programmed = false
                                     sensorSerialInput.text = ""
+                                    sensorSerialRow.editing = false
 
                                     // Fetch new sensor states
                                     updateStates()
@@ -1910,126 +1913,142 @@ Rectangle {
                             Text { text: deviceId; color: "#3498DB"; font.pixelSize: 14 }
                         }
 
+                        // Serial Number — matches the Device ID row, with a pencil to edit
+                        ColumnLayout {
+                            id: sensorSerialRow
+                            property bool editing: false
+                            Layout.fillWidth: true
+                            spacing: 6
+
+                            // Display mode: label + value + pencil
+                            RowLayout {
+                                spacing: 8
+                                visible: !sensorSerialRow.editing
+
+                                Text { text: "Serial Number:"; color: "#BDC3C7"; font.pixelSize: 14 }
+                                Text {
+                                    id: sensorSerialValue
+                                    property bool programmed: false
+                                    text: "not programmed"
+                                    color: "#3498DB"
+                                    font.pixelSize: 14
+                                }
+
+                                // Pencil edit affordance
+                                Text {
+                                    id: sensorSerialEditIcon
+                                    text: "✎"  // pencil
+                                    font.pixelSize: 16
+                                    font.family: iconFont.name
+                                    color: sensorSerialPencilMouse.containsMouse ? "#FFFFFF" : "#BDC3C7"
+                                    visible: (sensorSelector.currentIndex === 0) ? MOTIONInterface.leftSensorConnected
+                                                                                 : MOTIONInterface.rightSensorConnected
+
+                                    MouseArea {
+                                        id: sensorSerialPencilMouse
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: sensorSerialEditConfirmDialog.open()
+                                    }
+                                    ToolTip.visible: sensorSerialPencilMouse.containsMouse
+                                    ToolTip.text: "Edit serial number"
+                                    ToolTip.delay: 400
+                                }
+                            }
+
+                            // Edit mode: revealed only after the user confirms via the pencil
+                            RowLayout {
+                                spacing: 8
+                                visible: sensorSerialRow.editing
+
+                                Text { text: "Serial Number:"; color: "#BDC3C7"; font.pixelSize: 14 }
+
+                                RegularExpressionValidator {
+                                    id: sensorSerialValidator
+                                    regularExpression: /^[A-Z0-9]{0,24}$/
+                                }
+
+                                TextField {
+                                    id: sensorSerialInput
+                                    Layout.preferredWidth: 180
+                                    Layout.preferredHeight: 28
+                                    placeholderText: "e.g. QWW04Q10003"
+                                    maximumLength: 24
+                                    validator: sensorSerialValidator
+                                    inputMethodHints: Qt.ImhUppercaseOnly
+                                }
+
+                                Button {
+                                    text: "Save"
+                                    Layout.preferredWidth: 70
+                                    Layout.preferredHeight: 28
+                                    hoverEnabled: true
+                                    enabled: sensorSerialInput.acceptableInput && sensorSerialInput.text.length > 0
+                                    contentItem: Text {
+                                        text: parent.text
+                                        color: parent.enabled ? "#BDC3C7" : "#7F8C8D"
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                    background: Rectangle {
+                                        color: parent.hovered ? "#4A90E2" : "#3A3F4B"
+                                        radius: 4
+                                        border.color: parent.hovered ? "#FFFFFF" : "#BDC3C7"
+                                    }
+                                    onClicked: {
+                                        var tgt = (sensorSelector.currentIndex === 0) ? "left" : "right"
+                                        MOTIONInterface.writeSensorSerialNumber(tgt, sensorSerialInput.text, true)
+                                    }
+                                }
+
+                                Button {
+                                    text: "Cancel"
+                                    Layout.preferredWidth: 70
+                                    Layout.preferredHeight: 28
+                                    hoverEnabled: true
+                                    contentItem: Text {
+                                        text: parent.text
+                                        color: "#BDC3C7"
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                    background: Rectangle {
+                                        color: parent.hovered ? "#4A90E2" : "#3A3F4B"
+                                        radius: 4
+                                        border.color: "#BDC3C7"
+                                    }
+                                    onClicked: {
+                                        sensorSerialRow.editing = false
+                                        sensorSerialInput.text = ""
+                                    }
+                                }
+                            }
+
+                            // Write result status (auto-clears)
+                            Text {
+                                id: sensorSerialStatus
+                                text: ""
+                                visible: text.length > 0
+                                color: "#BDC3C7"
+                                font.pixelSize: 12
+                            }
+
+                            Timer {
+                                id: clearSensorSerialStatusTimer
+                                interval: 3000
+                                running: false
+                                repeat: false
+                                onTriggered: sensorSerialStatus.text = ""
+                            }
+                        }
+
                         // Display Firmware Version (Smaller Text)
                         RowLayout {
                             spacing: 8
                             Text { text: "Firmware Version:"; color: "#BDC3C7"; font.pixelSize: 14 }
                             Text { text: firmwareVersion; color: "#2ECC71"; font.pixelSize: 14 }
                         }
-
-                        // Sensor Serial Number
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredWidth: 650
-                            Layout.preferredHeight: 160
-                            radius: 8
-                            color: "#1E1E20"
-                            border.color: "#3E4E6F"
-                            border.width: 2
-                            enabled: (sensorSelector.currentIndex === 0) ? MOTIONInterface.leftSensorConnected
-                                                                         : MOTIONInterface.rightSensorConnected
-
-                            Text {
-                                id: sensorSerialTitle
-                                text: "Sensor Serial Number"
-                                color: "#BDC3C7"
-                                font.pixelSize: 16
-                                font.bold: true
-                                anchors.top: parent.top
-                                anchors.topMargin: 12
-                                anchors.horizontalCenter: parent.horizontalCenter
-                            }
-
-                            ColumnLayout {
-                                anchors.top: sensorSerialTitle.bottom
-                                anchors.topMargin: 12
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.margins: 12
-                                spacing: 10
-
-                                Text {
-                                    id: sensorSerialCurrent
-                                    property bool programmed: false
-                                    Layout.fillWidth: true
-                                    text: "Current: not programmed"
-                                    color: "#3498DB"
-                                    font.pixelSize: 13
-                                }
-
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 12
-
-                                    RegularExpressionValidator {
-                                        id: sensorSerialValidator
-                                        regularExpression: /^[A-Z0-9]{0,24}$/
-                                    }
-
-                                    TextField {
-                                        id: sensorSerialInput
-                                        Layout.fillWidth: true
-                                        Layout.preferredHeight: 32
-                                        placeholderText: "e.g. QWW04Q10003"
-                                        maximumLength: 24
-                                        validator: sensorSerialValidator
-                                        inputMethodHints: Qt.ImhUppercaseOnly
-                                    }
-
-                                    Button {
-                                        id: sensorSerialWriteButton
-                                        text: "Write"
-                                        Layout.preferredWidth: 100
-                                        Layout.preferredHeight: 40
-                                        hoverEnabled: true
-                                        enabled: ((sensorSelector.currentIndex === 0) ? MOTIONInterface.leftSensorConnected
-                                                                                      : MOTIONInterface.rightSensorConnected) &&
-                                                 sensorSerialInput.acceptableInput && sensorSerialInput.text.length > 0
-
-                                        contentItem: Text {
-                                            text: parent.text
-                                            color: parent.enabled ? "#BDC3C7" : "#7F8C8D"
-                                            horizontalAlignment: Text.AlignHCenter
-                                            verticalAlignment: Text.AlignVCenter
-                                        }
-                                        background: Rectangle {
-                                            color: parent.hovered ? "#4A90E2" : "#3A3F4B"
-                                            radius: 4
-                                            border.color: parent.hovered ? "#FFFFFF" : "#BDC3C7"
-                                        }
-
-                                        onClicked: {
-                                            var tgt = (sensorSelector.currentIndex === 0) ? "left" : "right"
-                                            if (sensorSerialCurrent.programmed) {
-                                                sensorSerialConfirmDialog.pending = sensorSerialInput.text
-                                                sensorSerialConfirmDialog.target = tgt
-                                                sensorSerialConfirmDialog.open()
-                                            } else {
-                                                MOTIONInterface.writeSensorSerialNumber(tgt, sensorSerialInput.text, false)
-                                            }
-                                        }
-                                    }
-                                }
-
-                                Text {
-                                    id: sensorSerialStatus
-                                    text: ""
-                                    color: "#BDC3C7"
-                                    font.pixelSize: 12
-                                    Layout.fillWidth: true
-                                    horizontalAlignment: Text.AlignHCenter
-                                }
-
-                                Timer {
-                                    id: clearSensorSerialStatusTimer
-                                    interval: 3000
-                                    running: false
-                                    repeat: false
-                                    onTriggered: sensorSerialStatus.text = ""
-                                }
-                            }
-                        }
-
 
                         ColumnLayout {
                             Layout.alignment: Qt.AlignHCenter 
@@ -2107,18 +2126,15 @@ Rectangle {
         }
     }
 
-    // Confirmation for overwriting an already-programmed sensor serial number
+    // Confirmation before editing the sensor serial number (opened by the pencil)
     Dialog {
-        id: sensorSerialConfirmDialog
-        title: "Overwrite Sensor Serial Number"
-        width: 480
-        height: 220
+        id: sensorSerialEditConfirmDialog
+        title: "Change Serial Number"
+        width: 440
+        height: 190
         modal: true
         x: (parent.width - width) / 2
         y: (parent.height - height) / 2
-
-        property string pending: ""
-        property string target: ""
 
         ColumnLayout {
             anchors.fill: parent
@@ -2130,9 +2146,7 @@ Rectangle {
                 color: "#E67E22"
                 font.pixelSize: 14
                 font.bold: true
-                text: "This sensor already has a serial number (" +
-                      sensorSerialCurrent.text.replace("Current: ", "") +
-                      "). Overwrite it with '" + sensorSerialConfirmDialog.pending + "'?"
+                text: "Are you sure you want to change this sensor's serial number?"
             }
 
             RowLayout {
@@ -2145,17 +2159,19 @@ Rectangle {
                     Layout.preferredHeight: 32
                     background: Rectangle { color: parent.hovered ? "#4A90E2" : "#3A3F4B"; radius: 4; border.color: "#BDC3C7" }
                     contentItem: Text { text: parent.text; color: "#BDC3C7"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    onClicked: sensorSerialConfirmDialog.close()
+                    onClicked: sensorSerialEditConfirmDialog.close()
                 }
                 Button {
-                    text: "Overwrite"
-                    Layout.preferredWidth: 120
+                    text: "Yes, change it"
+                    Layout.preferredWidth: 140
                     Layout.preferredHeight: 32
                     background: Rectangle { color: parent.hovered ? "#E67E22" : "#3A3F4B"; radius: 4; border.color: "#E67E22" }
                     contentItem: Text { text: parent.text; color: "#E67E22"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.bold: true }
                     onClicked: {
-                        sensorSerialConfirmDialog.close()
-                        MOTIONInterface.writeSensorSerialNumber(sensorSerialConfirmDialog.target, sensorSerialConfirmDialog.pending, true)
+                        sensorSerialEditConfirmDialog.close()
+                        sensorSerialInput.text = ""
+                        sensorSerialRow.editing = true
+                        sensorSerialInput.forceActiveFocus()
                     }
                 }
             }

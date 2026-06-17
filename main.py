@@ -3,12 +3,24 @@ import os
 import warnings
 import logging
 import argparse
+
+# PyInstaller --windowed/--noconsole builds set sys.stdout and sys.stderr to
+# None (no console attached). Any code that does sys.stdout.write(...) —
+# including logging.StreamHandler — then raises AttributeError on first use.
+# Redirect None streams to a safe sink BEFORE any logging is configured or any
+# import that might attach a logger runs.
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w", encoding="utf-8", buffering=1)
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w", encoding="utf-8", buffering=1)
+
 from PyQt6.QtGui import QGuiApplication, QIcon
 from PyQt6.QtQml import QQmlApplicationEngine, qmlRegisterSingletonInstance
 
 from motion_connector import MOTIONConnector
 from motion_singleton import motion_interface
 from version import get_version
+from utils.log_setup import configure_app_logging
 
 # set PYTHONPATH=%cd%\..\OpenMOTION-PyLib;%PYTHONPATH%
 # python main.py
@@ -50,26 +62,13 @@ def main():
     )
     args = parser.parse_args()
 
-    # Configure logging based on debug flag
+    # Configure logging: console + a timestamped file under <root>/app-logs/.
+    # Written on every launch, not just --debug. (Noisy SDK loggers are pinned
+    # to INFO inside configure_app_logging.)
+    logfile_path = configure_app_logging(args.debug, APP_VERSION)
     if args.debug:
-        logging.basicConfig(
-            level=logging.DEBUG,
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-            handlers=[
-                logging.StreamHandler(sys.stdout),  # Console output
-                logging.FileHandler("debug.log"),  # File output
-            ],
-        )
         logger.info("Debug mode enabled - logging level set to DEBUG")
-        # Wire-level and polling logs flood DEBUG output (one line per USB
-        # packet / telemetry tick); keep them at INFO unless hand-edited.
-        for noisy in ("openmotion.sdk.CommInterface",
-                      "openmotion.sdk.ConsoleTelemetry",
-                      "openmotion.sdk.UARTPACKET",
-                      "openmotion.sdk.Sensor"):
-            logging.getLogger(noisy).setLevel(logging.INFO)
-    else:
-        logging.basicConfig(level=logging.INFO)
+    logger.info("Logging to %s", logfile_path)
 
     os.environ["QT_QUICK_CONTROLS_STYLE"] = "Material"
     os.environ["QT_QUICK_CONTROLS_MATERIAL_THEME"] = "Dark"

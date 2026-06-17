@@ -97,6 +97,7 @@ Rectangle {
     function updateStates() {
         // console.log("Console Updating all states...")
         MOTIONInterface.queryConsoleInfo()
+        MOTIONInterface.readConsoleSerialNumber()
         MOTIONInterface.queryRGBState() // Query Indicator state
         MOTIONInterface.readFanFeedback() // One-shot fan PWM feedback read
         MOTIONInterface.queryConsoleTemperature()
@@ -184,6 +185,18 @@ Rectangle {
             temperature1 = temp1
             temperature2 = temp2
             temperature3 = temp3
+        }
+
+        function onConsoleSerialNumberReceived(serial) {
+            serialCurrent.programmed = (serial.length > 0)
+            serialCurrent.text = serial.length > 0 ? ("Current: " + serial)
+                                                   : "Current: not programmed"
+        }
+        function onConsoleSerialNumberWritten(ok, message) {
+            serialStatus.text = message
+            serialStatus.color = ok ? "lightgreen" : "red"
+            clearSerialStatusTimer.restart()
+            if (ok) serialInput.text = ""
         }
     }
 
@@ -1336,6 +1349,114 @@ Rectangle {
                             }
                         }
                     }
+
+                    // Console Serial Number
+                    Rectangle {
+                        width: 650
+                        height: 150
+                        radius: 8
+                        color: "#1E1E20"
+                        border.color: "#3E4E6F"
+                        border.width: 2
+                        enabled: MOTIONInterface.consoleConnected
+
+                        Text {
+                            id: serialTitle
+                            text: "Console Serial Number"
+                            color: "#BDC3C7"
+                            font.pixelSize: 16
+                            font.bold: true
+                            anchors.top: parent.top
+                            anchors.topMargin: 12
+                            anchors.horizontalCenter: parent.horizontalCenter
+                        }
+
+                        ColumnLayout {
+                            anchors.top: serialTitle.bottom
+                            anchors.topMargin: 12
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.margins: 12
+                            spacing: 10
+
+                            Text {
+                                id: serialCurrent
+                                property bool programmed: false
+                                Layout.fillWidth: true
+                                text: "Current: not programmed"
+                                color: "#3498DB"
+                                font.pixelSize: 13
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+
+                                RegularExpressionValidator {
+                                    id: serialValidator
+                                    regularExpression: /^[A-Z0-9]{0,24}$/
+                                }
+
+                                TextField {
+                                    id: serialInput
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 32
+                                    placeholderText: "e.g. QWW04Q10003"
+                                    maximumLength: 24
+                                    validator: serialValidator
+                                    inputMethodHints: Qt.ImhUppercaseOnly
+                                }
+
+                                Button {
+                                    id: serialWriteButton
+                                    text: "Write"
+                                    Layout.preferredWidth: 100
+                                    Layout.preferredHeight: 40
+                                    hoverEnabled: true
+                                    enabled: MOTIONInterface.consoleConnected &&
+                                             serialInput.acceptableInput && serialInput.text.length > 0
+
+                                    contentItem: Text {
+                                        text: parent.text
+                                        color: parent.enabled ? "#BDC3C7" : "#7F8C8D"
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                    background: Rectangle {
+                                        color: parent.hovered ? "#4A90E2" : "#3A3F4B"
+                                        radius: 4
+                                        border.color: parent.hovered ? "#FFFFFF" : "#BDC3C7"
+                                    }
+
+                                    onClicked: {
+                                        if (serialCurrent.programmed) {
+                                            serialConfirmDialog.pending = serialInput.text
+                                            serialConfirmDialog.open()
+                                        } else {
+                                            MOTIONInterface.writeConsoleSerialNumber(serialInput.text, false)
+                                        }
+                                    }
+                                }
+                            }
+
+                            Text {
+                                id: serialStatus
+                                text: ""
+                                color: "#BDC3C7"
+                                font.pixelSize: 12
+                                Layout.fillWidth: true
+                                horizontalAlignment: Text.AlignHCenter
+                            }
+
+                            Timer {
+                                id: clearSerialStatusTimer
+                                interval: 3000
+                                running: false
+                                repeat: false
+                                onTriggered: serialStatus.text = ""
+                            }
+                        }
+                    }
                 }
 
                 // Large Third Column
@@ -1650,6 +1771,60 @@ Rectangle {
                         verticalAlignment: Text.AlignVCenter
                     }
                     onClicked: odometerResetResultDialog.close()
+                }
+            }
+        }
+    }
+
+    // Confirmation for overwriting an already-programmed serial number
+    Dialog {
+        id: serialConfirmDialog
+        title: "Overwrite Serial Number"
+        width: 480
+        height: 220
+        modal: true
+        x: (parent.width - width) / 2
+        y: (parent.height - height) / 2
+
+        property string pending: ""
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 16
+
+            Text {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: "#E67E22"
+                font.pixelSize: 14
+                font.bold: true
+                text: "This console already has a serial number (" +
+                      serialCurrent.text.replace("Current: ", "") +
+                      "). Overwrite it with '" + serialConfirmDialog.pending + "'?"
+            }
+
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                spacing: 10
+
+                Button {
+                    text: "Cancel"
+                    Layout.preferredWidth: 100
+                    Layout.preferredHeight: 32
+                    background: Rectangle { color: parent.hovered ? "#4A90E2" : "#3A3F4B"; radius: 4; border.color: "#BDC3C7" }
+                    contentItem: Text { text: parent.text; color: "#BDC3C7"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    onClicked: serialConfirmDialog.close()
+                }
+                Button {
+                    text: "Overwrite"
+                    Layout.preferredWidth: 120
+                    Layout.preferredHeight: 32
+                    background: Rectangle { color: parent.hovered ? "#E67E22" : "#3A3F4B"; radius: 4; border.color: "#E67E22" }
+                    contentItem: Text { text: parent.text; color: "#E67E22"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.bold: true }
+                    onClicked: {
+                        serialConfirmDialog.close()
+                        MOTIONInterface.writeConsoleSerialNumber(serialConfirmDialog.pending, true)
+                    }
                 }
             }
         }

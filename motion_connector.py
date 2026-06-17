@@ -924,9 +924,13 @@ class MOTIONConnector(QObject):
     signalDataReceived = pyqtSignal(str, str)  # (descriptor, data)
 
     consoleDeviceInfoReceived = pyqtSignal(str, str, str)
+    consoleSerialNumberReceived = pyqtSignal(str)        # current serial ("" if unprogrammed)
+    consoleSerialNumberWritten = pyqtSignal(bool, str)   # (ok, message)
     sensorDeviceInfoReceived = pyqtSignal(str, str)
     # Target-aware variant for pages that need both left/right info simultaneously
     sensorDeviceInfoReceivedEx = pyqtSignal(str, str, str)
+    sensorSerialNumberReceived = pyqtSignal(str, str)        # (target, serial) serial "" if unprogrammed
+    sensorSerialNumberWritten = pyqtSignal(str, bool, str)   # (target, ok, message)
     temperatureSensorUpdated = pyqtSignal(float)  # (imu_temp)
     accelerometerSensorUpdated = pyqtSignal(int, int, int)  # (imu_accel)
     gyroscopeSensorUpdated = pyqtSignal(int, int, int)  # (imu_accel)
@@ -2190,6 +2194,8 @@ class MOTIONConnector(QObject):
                     # Emit signal for async UI update
                     self.sensorDeviceInfoReceived.emit(fw_version, device_id)
                     self.sensorDeviceInfoReceivedEx.emit(target, fw_version, device_id)
+                    serial = getattr(motion_interface, sensor_tag).read_serial_number() or ""
+                    self.sensorSerialNumberReceived.emit(target, serial)
                     logger.info(
                         f"Sensor Device Info - Firmware: {fw_version}, Device ID: {device_id}"
                     )
@@ -2201,6 +2207,54 @@ class MOTIONConnector(QObject):
         except Exception as e:
             logger.error(f"Error querying device info: {e}")
 
+    @pyqtSlot(str, result=str)
+    def readSensorSerialNumber(self, target: str) -> str:
+        """Read the selected sensor's serial; emit (target, serial); return "" if unprogrammed."""
+        if target not in ("left", "right"):
+            logger.error(f"Invalid target for sensor serial read: {target}")
+            return ""
+        mutex = self._get_sensor_mutex(target)
+        mutex.lock()
+        try:
+            serial = getattr(motion_interface, target).read_serial_number() or ""
+            self.sensorSerialNumberReceived.emit(target, serial)
+            return serial
+        except Exception as e:
+            logger.error(f"Error reading sensor serial number: {e}")
+            self.sensorSerialNumberReceived.emit(target, "")
+            return ""
+        finally:
+            mutex.unlock()
+
+    @pyqtSlot(str, str, bool, result=bool)
+    def writeSensorSerialNumber(self, target: str, serial: str, force: bool) -> bool:
+        """Write the selected sensor's serial; emit (target, ok, message)."""
+        if target not in ("left", "right"):
+            logger.error(f"Invalid target for sensor serial write: {target}")
+            self.sensorSerialNumberWritten.emit(target, False, "Invalid sensor target")
+            return False
+        mutex = self._get_sensor_mutex(target)
+        mutex.lock()
+        try:
+            ok = getattr(motion_interface, target).write_serial_number(serial, force=force)
+            if ok:
+                msg = f"Serial '{serial}' written"
+                logger.info(msg)
+                self.sensorSerialNumberWritten.emit(target, True, msg)
+                self.sensorSerialNumberReceived.emit(target, serial)
+                return True
+            msg = "Write failed (already programmed? use overwrite, or check input)"
+            logger.error(msg)
+            self.sensorSerialNumberWritten.emit(target, False, msg)
+            return False
+        except Exception as e:
+            msg = f"Error writing serial: {e}"
+            logger.error(msg)
+            self.sensorSerialNumberWritten.emit(target, False, msg)
+            return False
+        finally:
+            mutex.unlock()
+
     @pyqtSlot()
     def queryConsoleInfo(self):
         """Fetch and emit device information."""
@@ -2211,12 +2265,54 @@ class MOTIONConnector(QObject):
             hw_id = motion_interface.console.get_hardware_id()
             device_id = base58.b58encode(bytes.fromhex(hw_id)).decode()
             board_id = motion_interface.console.read_board_id()
+            serial = motion_interface.console.read_serial_number() or ""
             self.consoleDeviceInfoReceived.emit(fw_version, device_id, str(board_id))
+            self.consoleSerialNumberReceived.emit(serial)
             logger.info(
                 f"Console Device Info - Firmware: {fw_version}, Device ID: {device_id}, Board ID: {board_id}"
             )
         except Exception as e:
             logger.error(f"Error querying device info: {e}")
+        finally:
+            self._console_mutex.unlock()
+
+    @pyqtSlot(result=str)
+    def readConsoleSerialNumber(self) -> str:
+        """Read the console serial; emit it and return it ("" if unprogrammed)."""
+        self._console_mutex.lock()
+        try:
+            serial = motion_interface.console.read_serial_number()
+            serial = serial or ""
+            self.consoleSerialNumberReceived.emit(serial)
+            return serial
+        except Exception as e:
+            logger.error(f"Error reading console serial number: {e}")
+            self.consoleSerialNumberReceived.emit("")
+            return ""
+        finally:
+            self._console_mutex.unlock()
+
+    @pyqtSlot(str, bool, result=bool)
+    def writeConsoleSerialNumber(self, serial: str, force: bool) -> bool:
+        """Write the console serial; emit (ok, message)."""
+        self._console_mutex.lock()
+        try:
+            ok = motion_interface.console.write_serial_number(serial, force=force)
+            if ok:
+                msg = f"Serial '{serial}' written"
+                logger.info(msg)
+                self.consoleSerialNumberWritten.emit(True, msg)
+                self.consoleSerialNumberReceived.emit(serial)
+                return True
+            msg = "Write failed (already programmed? use overwrite, or check input)"
+            logger.error(msg)
+            self.consoleSerialNumberWritten.emit(False, msg)
+            return False
+        except Exception as e:
+            msg = f"Error writing serial: {e}"
+            logger.error(msg)
+            self.consoleSerialNumberWritten.emit(False, msg)
+            return False
         finally:
             self._console_mutex.unlock()
 

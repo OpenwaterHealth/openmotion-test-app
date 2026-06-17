@@ -2,8 +2,8 @@ import QtQuick 6.0
 import QtQuick.Controls 6.0
 
 Rectangle {
-    width: 160
-    height: 160
+    width: 120
+    height: 120
     color: "transparent"
 
     // === Properties for IMU data ===
@@ -15,12 +15,12 @@ Rectangle {
 
     // === Border Circle ===
     Rectangle {
-        width: 140
-        height: 140
-        radius: 70
+        width: 105
+        height: 105
+        radius: 52.5
         anchors.centerIn: parent
         border.color: "#D0D3D4"
-        border.width: 4
+        border.width: 3
         color: "transparent"
     }
 
@@ -31,7 +31,7 @@ Rectangle {
 
         Text {
             text: mode
-            font.pixelSize: 16
+            font.pixelSize: 12
             font.bold: true
             color: "#2C3E50"
             horizontalAlignment: Text.AlignHCenter
@@ -40,21 +40,21 @@ Rectangle {
 
         Text {
             text: "X: " + xVal
-            font.pixelSize: 14
+            font.pixelSize: 11
             color: "#3498DB"
             anchors.horizontalCenter: parent.horizontalCenter
         }
 
         Text {
             text: "Y: " + yVal
-            font.pixelSize: 14
+            font.pixelSize: 11
             color: "#27AE60"
             anchors.horizontalCenter: parent.horizontalCenter
         }
 
         Text {
             text: "Z: " + zVal
-            font.pixelSize: 14
+            font.pixelSize: 11
             color: "#E67E22"
             anchors.horizontalCenter: parent.horizontalCenter
         }

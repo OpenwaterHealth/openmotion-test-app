@@ -188,15 +188,17 @@ Rectangle {
         }
 
         function onConsoleSerialNumberReceived(serial) {
-            serialCurrent.programmed = (serial.length > 0)
-            serialCurrent.text = serial.length > 0 ? ("Current: " + serial)
-                                                   : "Current: not programmed"
+            consoleSerialValue.programmed = (serial.length > 0)
+            consoleSerialValue.text = serial.length > 0 ? serial : "not programmed"
         }
         function onConsoleSerialNumberWritten(ok, message) {
-            serialStatus.text = message
-            serialStatus.color = ok ? "lightgreen" : "red"
-            clearSerialStatusTimer.restart()
-            if (ok) serialInput.text = ""
+            consoleSerialStatus.text = message
+            consoleSerialStatus.color = ok ? "lightgreen" : "red"
+            clearConsoleSerialStatusTimer.restart()
+            if (ok) {
+                consoleSerialInput.text = ""
+                consoleSerialRow.editing = false
+            }
         }
     }
 
@@ -1350,113 +1352,6 @@ Rectangle {
                         }
                     }
 
-                    // Console Serial Number
-                    Rectangle {
-                        width: 650
-                        height: 160
-                        radius: 8
-                        color: "#1E1E20"
-                        border.color: "#3E4E6F"
-                        border.width: 2
-                        enabled: MOTIONInterface.consoleConnected
-
-                        Text {
-                            id: serialTitle
-                            text: "Console Serial Number"
-                            color: "#BDC3C7"
-                            font.pixelSize: 16
-                            font.bold: true
-                            anchors.top: parent.top
-                            anchors.topMargin: 12
-                            anchors.horizontalCenter: parent.horizontalCenter
-                        }
-
-                        ColumnLayout {
-                            anchors.top: serialTitle.bottom
-                            anchors.topMargin: 12
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.margins: 12
-                            spacing: 10
-
-                            Text {
-                                id: serialCurrent
-                                property bool programmed: false
-                                Layout.fillWidth: true
-                                text: "Current: not programmed"
-                                color: "#3498DB"
-                                font.pixelSize: 13
-                            }
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 12
-
-                                RegularExpressionValidator {
-                                    id: serialValidator
-                                    regularExpression: /^[A-Z0-9]{0,24}$/
-                                }
-
-                                TextField {
-                                    id: serialInput
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: 32
-                                    placeholderText: "e.g. QWW04Q10003"
-                                    maximumLength: 24
-                                    validator: serialValidator
-                                    inputMethodHints: Qt.ImhUppercaseOnly
-                                }
-
-                                Button {
-                                    id: serialWriteButton
-                                    text: "Write"
-                                    Layout.preferredWidth: 100
-                                    Layout.preferredHeight: 40
-                                    hoverEnabled: true
-                                    enabled: MOTIONInterface.consoleConnected &&
-                                             serialInput.acceptableInput && serialInput.text.length > 0
-
-                                    contentItem: Text {
-                                        text: parent.text
-                                        color: parent.enabled ? "#BDC3C7" : "#7F8C8D"
-                                        horizontalAlignment: Text.AlignHCenter
-                                        verticalAlignment: Text.AlignVCenter
-                                    }
-                                    background: Rectangle {
-                                        color: parent.hovered ? "#4A90E2" : "#3A3F4B"
-                                        radius: 4
-                                        border.color: parent.hovered ? "#FFFFFF" : "#BDC3C7"
-                                    }
-
-                                    onClicked: {
-                                        if (serialCurrent.programmed) {
-                                            serialConfirmDialog.pending = serialInput.text
-                                            serialConfirmDialog.open()
-                                        } else {
-                                            MOTIONInterface.writeConsoleSerialNumber(serialInput.text, false)
-                                        }
-                                    }
-                                }
-                            }
-
-                            Text {
-                                id: serialStatus
-                                text: ""
-                                color: "#BDC3C7"
-                                font.pixelSize: 12
-                                Layout.fillWidth: true
-                                horizontalAlignment: Text.AlignHCenter
-                            }
-
-                            Timer {
-                                id: clearSerialStatusTimer
-                                interval: 3000
-                                running: false
-                                repeat: false
-                                onTriggered: serialStatus.text = ""
-                            }
-                        }
-                    }
                 }
 
                 // Large Third Column
@@ -1543,6 +1438,132 @@ Rectangle {
                             spacing: 8
                             Text { text: "Device ID:"; color: "#BDC3C7"; font.pixelSize: 14 }
                             Text { text: deviceId; color: "#3498DB"; font.pixelSize: 14 }
+                        }
+
+                        // Serial Number — matches the Device ID row, with a pencil to edit
+                        ColumnLayout {
+                            id: consoleSerialRow
+                            property bool editing: false
+                            Layout.fillWidth: true
+                            spacing: 6
+
+                            // Display mode: label + value + pencil
+                            RowLayout {
+                                spacing: 8
+                                visible: !consoleSerialRow.editing
+
+                                Text { text: "Serial Number:"; color: "#BDC3C7"; font.pixelSize: 14 }
+                                Text {
+                                    id: consoleSerialValue
+                                    property bool programmed: false
+                                    text: "not programmed"
+                                    color: "#3498DB"
+                                    font.pixelSize: 14
+                                }
+
+                                // Pencil edit affordance
+                                Text {
+                                    id: consoleSerialEditIcon
+                                    text: "✎"  // pencil
+                                    font.pixelSize: 16
+                                    font.family: iconFont.name
+                                    color: consoleSerialPencilMouse.containsMouse ? "#FFFFFF" : "#BDC3C7"
+                                    visible: MOTIONInterface.consoleConnected
+
+                                    MouseArea {
+                                        id: consoleSerialPencilMouse
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: consoleSerialEditConfirmDialog.open()
+                                    }
+                                    ToolTip.visible: consoleSerialPencilMouse.containsMouse
+                                    ToolTip.text: "Edit serial number"
+                                    ToolTip.delay: 400
+                                }
+                            }
+
+                            // Edit mode: revealed only after the user confirms via the pencil
+                            RowLayout {
+                                spacing: 8
+                                visible: consoleSerialRow.editing
+
+                                Text { text: "Serial Number:"; color: "#BDC3C7"; font.pixelSize: 14 }
+
+                                RegularExpressionValidator {
+                                    id: consoleSerialValidator
+                                    regularExpression: /^[A-Z0-9]{0,24}$/
+                                }
+
+                                TextField {
+                                    id: consoleSerialInput
+                                    Layout.preferredWidth: 180
+                                    Layout.preferredHeight: 28
+                                    placeholderText: "e.g. QWW04Q10003"
+                                    maximumLength: 24
+                                    validator: consoleSerialValidator
+                                    inputMethodHints: Qt.ImhUppercaseOnly
+                                }
+
+                                Button {
+                                    text: "Save"
+                                    Layout.preferredWidth: 70
+                                    Layout.preferredHeight: 28
+                                    hoverEnabled: true
+                                    enabled: consoleSerialInput.acceptableInput && consoleSerialInput.text.length > 0
+                                    contentItem: Text {
+                                        text: parent.text
+                                        color: parent.enabled ? "#BDC3C7" : "#7F8C8D"
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                    background: Rectangle {
+                                        color: parent.hovered ? "#4A90E2" : "#3A3F4B"
+                                        radius: 4
+                                        border.color: parent.hovered ? "#FFFFFF" : "#BDC3C7"
+                                    }
+                                    onClicked: MOTIONInterface.writeConsoleSerialNumber(consoleSerialInput.text, true)
+                                }
+
+                                Button {
+                                    text: "Cancel"
+                                    Layout.preferredWidth: 70
+                                    Layout.preferredHeight: 28
+                                    hoverEnabled: true
+                                    contentItem: Text {
+                                        text: parent.text
+                                        color: "#BDC3C7"
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                    background: Rectangle {
+                                        color: parent.hovered ? "#4A90E2" : "#3A3F4B"
+                                        radius: 4
+                                        border.color: "#BDC3C7"
+                                    }
+                                    onClicked: {
+                                        consoleSerialRow.editing = false
+                                        consoleSerialInput.text = ""
+                                    }
+                                }
+                            }
+
+                            // Write result status (auto-clears)
+                            Text {
+                                id: consoleSerialStatus
+                                text: ""
+                                visible: text.length > 0
+                                color: "#BDC3C7"
+                                font.pixelSize: 12
+                            }
+
+                            Timer {
+                                id: clearConsoleSerialStatusTimer
+                                interval: 3000
+                                running: false
+                                repeat: false
+                                onTriggered: consoleSerialStatus.text = ""
+                            }
                         }
 
                         // Board Rev ID (Smaller Text)
@@ -1776,17 +1797,15 @@ Rectangle {
         }
     }
 
-    // Confirmation for overwriting an already-programmed serial number
+    // Confirmation before editing the console serial number (opened by the pencil)
     Dialog {
-        id: serialConfirmDialog
-        title: "Overwrite Serial Number"
-        width: 480
-        height: 220
+        id: consoleSerialEditConfirmDialog
+        title: "Change Serial Number"
+        width: 440
+        height: 190
         modal: true
         x: (parent.width - width) / 2
         y: (parent.height - height) / 2
-
-        property string pending: ""
 
         ColumnLayout {
             anchors.fill: parent
@@ -1798,9 +1817,7 @@ Rectangle {
                 color: "#E67E22"
                 font.pixelSize: 14
                 font.bold: true
-                text: "This console already has a serial number (" +
-                      serialCurrent.text.replace("Current: ", "") +
-                      "). Overwrite it with '" + serialConfirmDialog.pending + "'?"
+                text: "Are you sure you want to change this console's serial number?"
             }
 
             RowLayout {
@@ -1813,17 +1830,19 @@ Rectangle {
                     Layout.preferredHeight: 32
                     background: Rectangle { color: parent.hovered ? "#4A90E2" : "#3A3F4B"; radius: 4; border.color: "#BDC3C7" }
                     contentItem: Text { text: parent.text; color: "#BDC3C7"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    onClicked: serialConfirmDialog.close()
+                    onClicked: consoleSerialEditConfirmDialog.close()
                 }
                 Button {
-                    text: "Overwrite"
-                    Layout.preferredWidth: 120
+                    text: "Yes, change it"
+                    Layout.preferredWidth: 140
                     Layout.preferredHeight: 32
                     background: Rectangle { color: parent.hovered ? "#E67E22" : "#3A3F4B"; radius: 4; border.color: "#E67E22" }
                     contentItem: Text { text: parent.text; color: "#E67E22"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.bold: true }
                     onClicked: {
-                        serialConfirmDialog.close()
-                        MOTIONInterface.writeConsoleSerialNumber(serialConfirmDialog.pending, true)
+                        consoleSerialEditConfirmDialog.close()
+                        consoleSerialInput.text = ""
+                        consoleSerialRow.editing = true
+                        consoleSerialInput.forceActiveFocus()
                     }
                 }
             }

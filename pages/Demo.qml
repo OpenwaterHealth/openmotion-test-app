@@ -1156,6 +1156,7 @@ Rectangle {
                             Component.onCompleted: {
                                 try{
                                     MOTIONInterface.tec_status();
+                                    MOTIONInterface.queryTecTripValue();
                                 }catch(e){
                                     console.error(e);
                                 }
@@ -1365,7 +1366,107 @@ Rectangle {
                                                 }
 
 
-                                            }                                        
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // ----- TEC Trip temperature (°C) -----
+                                // Writes the TEC_TRIP key in the console user config;
+                                // firmware converts °C -> thermistor R -> comparator trip V.
+                                Text {
+                                    text: "TEC Trip:"
+                                    color: "white"
+                                    Layout.row: 2
+                                    Layout.column: 0
+                                    Layout.preferredWidth: 100
+                                    Layout.topMargin: 15
+                                    Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
+                                }
+
+                                ColumnLayout {
+                                    Layout.row: 2
+                                    Layout.column: 1
+                                    Layout.columnSpan: 3
+                                    Layout.fillWidth: true
+                                    spacing: 4
+
+                                    Text {
+                                        text: "Trip Temp (°C)"
+                                        color: "#BDC3C7"
+                                        font.pixelSize: 12
+                                    }
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 8
+
+                                        TextField {
+                                            id: tecTripField
+                                            Layout.preferredWidth: 80
+                                            Layout.minimumWidth: 80
+                                            Layout.maximumWidth: 80
+                                            Layout.preferredHeight: 30
+                                            enabled: MOTIONInterface.consoleConnected
+                                            font.pixelSize: 12
+                                            placeholderText: "0-125"
+                                            text: MOTIONInterface.tecTripValue.toString()
+                                            inputMethodHints: Qt.ImhDigitsOnly
+                                            validator: IntValidator { bottom: 0; top: 125 }
+
+                                            property string tripError: ""
+                                            background: Rectangle {
+                                                radius: 6
+                                                color: "#2B2B2E"
+                                                border.color: tecTripField.tripError ? "#E74C3C" : "#555"
+                                                border.width: tecTripField.tripError ? 2 : 1
+                                            }
+
+                                            function applyTrip() {
+                                                var v = parseInt(text)
+                                                if (isNaN(v)) {
+                                                    tripError = "enter 0-125"
+                                                    tripErrorTimer.restart()
+                                                    return
+                                                }
+                                                if (v < 0) v = 0
+                                                if (v > 125) v = 125
+                                                text = v.toString()
+                                                tripError = ""
+                                                if (!MOTIONInterface.setTecTrip(v)) {
+                                                    console.error("Failed to set TEC trip temperature")
+                                                }
+                                            }
+
+                                            onAccepted: applyTrip()
+                                        }
+
+                                        // inline error feedback
+                                        Text {
+                                            text: tecTripField.tripError
+                                            visible: tecTripField.tripError.length > 0
+                                            color: "#E74C3C"
+                                            font.pixelSize: 11
+                                            Layout.alignment: Qt.AlignVCenter
+                                        }
+
+                                        Timer {
+                                            id: tripErrorTimer
+                                            interval: 2500
+                                            onTriggered: tecTripField.tripError = ""
+                                        }
+
+                                        // spacer pushes the button to the far right
+                                        Item { Layout.fillWidth: true }
+
+                                        ActionButton {
+                                            id: btnTecTrip
+                                            text: "Set Trip"
+                                            Layout.alignment: Qt.AlignRight
+                                            Layout.rightMargin: 30
+                                            Layout.preferredWidth: 100
+                                            enabled: MOTIONInterface.consoleConnected
+                                            onTriggered: tecTripField.applyTrip()
                                         }
                                     }
                                 }
@@ -2179,6 +2280,16 @@ Rectangle {
 
         function onTecDacChanged() {
             // console.log("DAC Changed")
+        }
+
+        function onTecTripValueChanged() {
+            // Refresh the field after an async read or a successful write
+            tecTripField.text = MOTIONInterface.tecTripValue.toString()
+        }
+
+        function onTecTripSetFailed(msg) {
+            tecTripField.tripError = msg
+            tripErrorTimer.restart()
         }
 
         // Apply FPGA scale overrides whenever user config is (re)loaded from device

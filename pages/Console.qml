@@ -101,6 +101,7 @@ Rectangle {
         MOTIONInterface.readFanFeedback() // One-shot fan PWM feedback read
         MOTIONInterface.queryConsoleTemperature()
         MOTIONInterface.queryTecTripValue();
+        MOTIONInterface.queryConsoleOdometer()
     }
 
 
@@ -1130,15 +1131,117 @@ Rectangle {
                             border.width: 2
                             enabled: MOTIONInterface.consoleConnected
 
+                            // Lifetime odometer values (-1 = not available / old firmware)
+                            property int odoSystemMinutes: -1
+                            property int odoLaserPulses: -1
+
+                            function fmtThousands(n) {
+                                var s = Math.round(n).toString()
+                                var neg = s.charAt(0) === "-"
+                                if (neg) s = s.substring(1)
+                                var out = ""
+                                for (var i = 0; i < s.length; i++) {
+                                    if (i > 0 && (s.length - i) % 3 === 0) out += ","
+                                    out += s.charAt(i)
+                                }
+                                return (neg ? "-" : "") + out
+                            }
+
+                            // Values are refreshed by the page's updateStates().
+                            Connections {
+                                target: MOTIONInterface
+                                function onConsoleOdometerReceived(systemMinutes, laserPulses) {
+                                    tecTripBox.odoSystemMinutes = systemMinutes
+                                    tecTripBox.odoLaserPulses = laserPulses
+                                }
+                            }
+
                             // Title
                             Text {
-                                text: "User Config Values"
+                                text: "Odometer"
                                 color: "#BDC3C7"
-                                font.pixelSize: 18
+                                font.pixelSize: 16
                                 anchors.top: parent.top
                                 anchors.horizontalCenter: parent.horizontalCenter
-                                anchors.topMargin: 5
-                                visible: false
+                                anchors.topMargin: 3
+                            }
+
+                            // Lifetime value readout
+                            Column {
+                                anchors.top: parent.top
+                                anchors.topMargin: 26
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.margins: 16
+                                spacing: 6
+
+                                RowLayout {
+                                    width: parent.width
+                                    Text {
+                                        text: "Uptime:"
+                                        color: "#BDC3C7"
+                                        font.pixelSize: 14
+                                    }
+                                    Item { Layout.fillWidth: true }
+                                    Text {
+                                        text: tecTripBox.odoSystemMinutes < 0
+                                              ? "--"
+                                              : (tecTripBox.odoSystemMinutes / 60).toFixed(1) + " h"
+                                        color: "#3498DB"
+                                        font.pixelSize: 14
+                                        font.weight: Font.Bold
+                                    }
+                                }
+
+                                RowLayout {
+                                    width: parent.width
+                                    Text {
+                                        text: "Laser pulses:"
+                                        color: "#BDC3C7"
+                                        font.pixelSize: 14
+                                    }
+                                    Item { Layout.fillWidth: true }
+                                    Text {
+                                        text: tecTripBox.odoLaserPulses < 0
+                                              ? "--"
+                                              : tecTripBox.fmtThousands(tecTripBox.odoLaserPulses)
+                                        color: "#3498DB"
+                                        font.pixelSize: 14
+                                        font.weight: Font.Bold
+                                    }
+                                }
+                            }
+
+                            // Reset Odometer Button
+                            Rectangle {
+                                width: 280
+                                height: 34
+                                radius: 8
+                                anchors.bottom: parent.bottom
+                                anchors.bottomMargin: 10
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                color: enabled ? "#E67E22" : "#7F8C8D"  // Orange when enabled, gray when disabled
+                                enabled: MOTIONInterface.consoleConnected
+
+                                Text {
+                                    text: "Reset Odometer"
+                                    anchors.centerIn: parent
+                                    color: parent.enabled ? "white" : "#BDC3C7"
+                                    font.pixelSize: 14
+                                    font.weight: Font.Bold
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: parent.enabled
+                                    onClicked: odometerResetDialog.open()
+                                    onEntered: if (parent.enabled) parent.color = "#CA6F1E"
+                                    onExited: if (parent.enabled) parent.color = "#E67E22"
+                                }
+
+                                Behavior on color {
+                                    ColorAnimation { duration: 200 }
+                                }
                             }
 
                             Column {
@@ -1408,7 +1511,143 @@ Rectangle {
                         }
                     }
                 }
-            }                    
+            }
+        }
+    }
+
+    // Confirmation for the permanent odometer reset
+    Dialog {
+        id: odometerResetDialog
+        title: "Reset Odometer"
+        width: 480
+        height: 230
+        modal: true
+        x: (parent.width - width) / 2
+        y: (parent.height - height) / 2
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 16
+
+            Text {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: "#E67E22"
+                font.pixelSize: 14
+                font.bold: true
+                text: "This clears the console's lifetime usage counters " +
+                      "(system uptime and laser pulses) and CANNOT be undone."
+            }
+            Text {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: "#BDC3C7"
+                font.pixelSize: 13
+                text: "The cleared totals are written to console flash. " +
+                      "Continue?"
+            }
+
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                spacing: 10
+
+                Button {
+                    text: "Cancel"
+                    Layout.preferredWidth: 100
+                    Layout.preferredHeight: 32
+                    background: Rectangle {
+                        color: parent.hovered ? "#4A90E2" : "#3A3F4B"
+                        radius: 4
+                        border.color: "#BDC3C7"
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        color: "#BDC3C7"
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: odometerResetDialog.close()
+                }
+                Button {
+                    text: "Reset"
+                    Layout.preferredWidth: 120
+                    Layout.preferredHeight: 32
+                    background: Rectangle {
+                        color: parent.hovered ? "#E67E22" : "#3A3F4B"
+                        radius: 4
+                        border.color: "#E67E22"
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        color: "#E67E22"
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                        font.bold: true
+                    }
+                    onClicked: {
+                        odometerResetDialog.close()
+                        var ok = MOTIONInterface.resetOdometer(2)  // 2 = both counters
+                        odometerResetResultDialog.success = ok
+                        odometerResetResultDialog.open()
+                    }
+                }
+            }
+        }
+    }
+
+    // Result feedback shown after an odometer reset attempt
+    Dialog {
+        id: odometerResetResultDialog
+        title: "Reset Odometer"
+        width: 480
+        height: 200
+        modal: true
+        x: (parent.width - width) / 2
+        y: (parent.height - height) / 2
+
+        // True = console acknowledged the reset, false = NAK / error
+        property bool success: false
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 16
+
+            Text {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: odometerResetResultDialog.success ? "#2ECC71" : "#E74C3C"
+                font.pixelSize: 14
+                font.bold: true
+                text: odometerResetResultDialog.success
+                      ? "Both odometers reset. System uptime and laser-pulse " +
+                        "counters were cleared and saved to console flash."
+                      : "Odometer reset failed — the console did not " +
+                        "acknowledge. The counters were not changed. " +
+                        "See log for details."
+            }
+
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                spacing: 10
+
+                Button {
+                    text: "Close"
+                    Layout.preferredWidth: 100
+                    Layout.preferredHeight: 32
+                    background: Rectangle {
+                        color: parent.hovered ? "#4A90E2" : "#3A3F4B"
+                        radius: 4
+                        border.color: "#BDC3C7"
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        color: "#BDC3C7"
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: odometerResetResultDialog.close()
+                }
+            }
         }
     }
 

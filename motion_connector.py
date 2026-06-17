@@ -481,6 +481,160 @@ class _DeviceFirmwareFlashThread(QThread):
             self.failed.emit(str(exc))
 
 
+class _NvcmFlashThread(QThread):
+    """Burn CrossLink NVCM on one or more cameras, sequentially.
+
+    NVCM is one-time programmable; QML gates this behind a confirmation
+    dialog. Each camera takes ~4-5 minutes (full readback verification).
+    """
+
+    progress = pyqtSignal(int, str)          # percent (0-100), message
+    cameraDone = pyqtSignal(int, bool, str)  # camera (1-8), ok, error
+    finishedAll = pyqtSignal(bool, str)      # overall ok, summary text
+
+    def __init__(self, connector: "MOTIONConnector", sensor_tag: str,
+                 cameras: list):
+        super().__init__()
+        self._connector = connector
+        self._sensor_tag = sensor_tag
+        self._cameras = cameras
+
+    def run(self):
+        try:
+            from omotion.NvcmProgrammer import NvcmProgrammer
+        except ImportError:
+            self.finishedAll.emit(
+                False, "NvcmProgrammer unavailable — omotion SDK too old.")
+            return
+
+        try:
+            sensor = getattr(motion_interface, self._sensor_tag)
+            programmer = NvcmProgrammer(sensor)
+            mutex = self._connector._get_sensor_mutex(self._sensor_tag)
+            results = []
+
+            for idx, cam in enumerate(self._cameras):
+                self.progress.emit(
+                    0, f"Camera {cam}: starting NVCM burn "
+                       f"({idx + 1} of {len(self._cameras)})…")
+
+                def cb(done, total, cam=cam):
+                    pct = int(done * 100 / total) if total else 0
+                    self.progress.emit(
+                        pct, f"Camera {cam} — {pct}% ({done:,}/{total:,})")
+
+                mutex.lock()
+                try:
+                    result = programmer.burn(cam, progress_cb=cb)
+                    ok, err = result.success, (result.error or "")
+                except Exception as exc:  # never let the thread die silently
+                    logger.exception("NVCM burn raised for camera %d", cam)
+                    ok, err = False, str(exc)
+                finally:
+                    mutex.unlock()
+
+                self.cameraDone.emit(cam, ok, err)
+                results.append((cam, ok, err))
+
+            all_ok = all(ok for _, ok, _ in results)
+            summary = "\n".join(
+                f"Camera {cam}: {'PASS' if ok else 'FAIL — ' + err}"
+                for cam, ok, err in results)
+        except Exception as exc:
+            logger.exception("NVCM flash thread failed")
+            self.finishedAll.emit(False, str(exc))
+            return
+
+        self.finishedAll.emit(all_ok, summary)
+
+
+def _interpret_nvcm_blob(blob: bytes) -> tuple[str, str]:
+    """Reduce an OW_FACTORY_NVCM_CHECK response to a verdict + detail string.
+
+    Ported from openmotion-sdk scripts/nvcm_probe.py. The behaviorally-
+    definitive signal is the auto-boot test: with a valid IDCODE, the config
+    port at 0x40 *disappearing* after CRESETB is released (without the
+    activation key) means the FPGA booted a user design from NVCM.
+
+    Returns (verdict, detail) where verdict is one of:
+        PROGRAMMED, BLANK, INCONCLUSIVE, NO RESPONSE.
+    """
+    if not blob:
+        return "NO RESPONSE", "firmware returned no data (camera absent/unpowered?)"
+    if len(blob) < 27:
+        return "NO RESPONSE", f"short response ({len(blob)} bytes)"
+    idcode_ok = blob[4]
+    boot_probe_done = blob[24]
+    boot_0x40_responds = blob[25]
+    if idcode_ok != 1:
+        return "INCONCLUSIVE", "IDCODE mismatch — check power / mux / CRESETB"
+    if not boot_probe_done:
+        return "INCONCLUSIVE", "boot test did not run"
+    if boot_0x40_responds == 0:
+        return "PROGRAMMED", "0x40 disappeared after auto-boot"
+    return "BLANK", "0x40 still ACKs — nothing auto-booted"
+
+
+class _NvcmCheckThread(QThread):
+    """Read-only sweep that probes NVCM programmed-state on all 8 cameras.
+
+    Each camera is powered on, the TCA mux is routed to it, and the firmware
+    OW_FACTORY_NVCM_CHECK command is run. Nothing is written; camera power is
+    left on afterwards (the page's power controls own the final state).
+    """
+
+    progress = pyqtSignal(int, str)          # percent (0-100), message
+    cameraResult = pyqtSignal(int, str, str)  # camera (1-8), verdict, detail
+    finishedAll = pyqtSignal(bool, str)       # all programmed?, summary text
+
+    def __init__(self, connector: "MOTIONConnector", sensor_tag: str):
+        super().__init__()
+        self._connector = connector
+        self._sensor_tag = sensor_tag
+
+    def run(self):
+        try:
+            sensor = getattr(motion_interface, self._sensor_tag)
+            mutex = self._connector._get_sensor_mutex(self._sensor_tag)
+            results = []
+
+            for cam in range(1, 9):
+                idx = cam - 1
+                mask = 1 << idx
+                self.progress.emit(
+                    int((cam - 1) * 100 / 8),
+                    f"Camera {cam}: probing NVCM ({cam} of 8)…")
+
+                mutex.lock()
+                try:
+                    sensor.enable_camera_power(mask)
+                    time.sleep(0.3)
+                    sensor.switch_camera(idx)
+                    time.sleep(0.1)
+                    blob = sensor.nvcm_check()
+                    verdict, detail = _interpret_nvcm_blob(blob)
+                except Exception as exc:  # never let the thread die silently
+                    logger.exception("NVCM check raised for camera %d", cam)
+                    verdict, detail = "NO RESPONSE", str(exc)
+                finally:
+                    mutex.unlock()
+
+                self.cameraResult.emit(cam, verdict, detail)
+                results.append((cam, verdict, detail))
+
+            all_programmed = all(v == "PROGRAMMED" for _, v, _ in results)
+            summary = "\n".join(
+                f"Camera {cam}: {verdict}" + (f" — {detail}" if detail else "")
+                for cam, verdict, detail in results)
+        except Exception as exc:
+            logger.exception("NVCM check thread failed")
+            self.finishedAll.emit(False, str(exc))
+            return
+
+        self.progress.emit(100, "NVCM check complete.")
+        self.finishedAll.emit(all_programmed, summary)
+
+
 class _FpgaSourceError(Exception):
     """Raised when a .jed source (local file or GitHub release) can't be resolved."""
 
@@ -834,6 +988,20 @@ class MOTIONConnector(QObject):
     # Emits: target, message
     fpgaFirmwareUpdateError = pyqtSignal(str, str)
 
+    # NVCM flash signals (one-time-programmable CrossLink NVCM burn)
+    nvcmFlashProgress = pyqtSignal(int, str)           # percent, message
+    nvcmFlashCameraDone = pyqtSignal(int, bool, str)   # camera, ok, error
+    nvcmFlashFinished = pyqtSignal(bool, str)          # overall ok, summary
+    nvcmFlashBusyChanged = pyqtSignal()
+
+    # NVCM programmed-check signals (read-only sweep across all 8 cameras)
+    nvcmCheckProgress = pyqtSignal(int, str)           # percent, message
+    nvcmCheckCameraResult = pyqtSignal(int, str, str)  # camera, verdict, detail
+    nvcmCheckFinished = pyqtSignal(bool, str)          # all programmed?, summary
+
+    # Console odometer read (system uptime minutes, laser LSYNC pulses; -1 = n/a)
+    consoleOdometerReceived = pyqtSignal(int, int)
+
     tcmChanged = pyqtSignal()
     tclChanged = pyqtSignal()
     pdcChanged = pyqtSignal()
@@ -920,6 +1088,9 @@ class MOTIONConnector(QObject):
         self._fpga_fw_busy = False
         self._fpga_fw_verify = False
         self._fpga_update_thread: _ConsoleFpgaUpdateThread | None = None
+        self._nvcm_thread = None
+        self._nvcm_check_thread = None
+        self._nvcm_busy = False
 
         # Sensor mutexes for left and right sensors (following console mutex pattern)
         self._left_sensor_mutex = QRecursiveMutex()
@@ -947,6 +1118,15 @@ class MOTIONConnector(QObject):
         self._fpga_fw_verify = enabled
         logger.info(f"[FPGA-UPD] verify toggle set to {enabled}")
         self.fpgaFirmwareVerifyEnabledChanged.emit()
+
+    @pyqtProperty(bool, notify=nvcmFlashBusyChanged)
+    def nvcmFlashBusy(self) -> bool:
+        return self._nvcm_busy
+
+    def _set_nvcm_busy(self, busy: bool) -> None:
+        if self._nvcm_busy != busy:
+            self._nvcm_busy = busy
+            self.nvcmFlashBusyChanged.emit()
 
     def _set_console_fw_busy(self, busy: bool) -> None:
         if getattr(self, "_console_fw_busy", False) == busy:
@@ -1049,6 +1229,66 @@ class MOTIONConnector(QObject):
             lambda: setattr(self, "_fw_download_thread", None)
         )
         self._fw_download_thread.start()
+
+    @pyqtSlot(str, int)
+    def flashNvcm(self, sensor_tag: str, camera_mask: int) -> None:
+        """Permanently burn NVCM on the masked cameras of one sensor."""
+        logger.info(f"flashNvcm sensor={sensor_tag} mask=0x{camera_mask:02X}")
+        if sensor_tag not in ("left", "right"):
+            self.nvcmFlashFinished.emit(False, "Invalid sensor target.")
+            return
+        if self._nvcm_busy or self._nvcm_thread is not None:
+            self.nvcmFlashFinished.emit(
+                False, "An NVCM flash is already in progress.")
+            return
+        cameras = [i + 1 for i in range(8) if camera_mask & (1 << i)]
+        if not cameras:
+            self.nvcmFlashFinished.emit(False, "No cameras selected.")
+            return
+
+        self._set_nvcm_busy(True)
+        self._nvcm_thread = _NvcmFlashThread(self, sensor_tag, cameras)
+        self._nvcm_thread.progress.connect(self.nvcmFlashProgress)
+        self._nvcm_thread.cameraDone.connect(self.nvcmFlashCameraDone)
+
+        def _done(ok: bool, summary: str) -> None:
+            self._set_nvcm_busy(False)
+            self.nvcmFlashFinished.emit(ok, summary)
+
+        self._nvcm_thread.finishedAll.connect(_done)
+        self._nvcm_thread.finished.connect(
+            lambda: setattr(self, "_nvcm_thread", None)
+        )
+        self._nvcm_thread.start()
+
+    @pyqtSlot(str)
+    def checkNvcmProgrammed(self, sensor_tag: str) -> None:
+        """Read-only NVCM programmed-state sweep across all 8 cameras."""
+        logger.info(f"checkNvcmProgrammed sensor={sensor_tag}")
+        if sensor_tag not in ("left", "right"):
+            self.nvcmCheckFinished.emit(False, "Invalid sensor target.")
+            return
+        # Share the NVCM busy gate so a check and a flash can't overlap.
+        if self._nvcm_busy or self._nvcm_thread is not None \
+                or self._nvcm_check_thread is not None:
+            self.nvcmCheckFinished.emit(
+                False, "An NVCM operation is already in progress.")
+            return
+
+        self._set_nvcm_busy(True)
+        self._nvcm_check_thread = _NvcmCheckThread(self, sensor_tag)
+        self._nvcm_check_thread.progress.connect(self.nvcmCheckProgress)
+        self._nvcm_check_thread.cameraResult.connect(self.nvcmCheckCameraResult)
+
+        def _done(ok: bool, summary: str) -> None:
+            self._set_nvcm_busy(False)
+            self.nvcmCheckFinished.emit(ok, summary)
+
+        self._nvcm_check_thread.finishedAll.connect(_done)
+        self._nvcm_check_thread.finished.connect(
+            lambda: setattr(self, "_nvcm_check_thread", None)
+        )
+        self._nvcm_check_thread.start()
 
     @pyqtSlot(str, str)
     def beginDeviceFirmwareFromLocal(self, target: str, local_path: str) -> None:
@@ -2893,6 +3133,48 @@ class MOTIONConnector(QObject):
                     logger.error("Failed to send Software Reset")
         except Exception as e:
             logger.error(f"Error Sending Software Reset: {e}")
+        finally:
+            self._console_mutex.unlock()
+
+    @pyqtSlot()
+    def queryConsoleOdometer(self) -> None:
+        """Read the console lifetime odometers and emit them to QML.
+
+        Emits consoleOdometerReceived(system_minutes, laser_pulses); either
+        value is -1 when the firmware NAKs the opcode (predates the feature).
+        """
+        self._console_mutex.lock()
+        try:
+            minutes = motion_interface.console.get_system_odometer_minutes()
+            pulses = motion_interface.console.get_laser_odometer_pulses()
+            sys_val = -1 if minutes is None else int(minutes)
+            laser_val = -1 if pulses is None else int(pulses)
+            logger.info(f"Odometer: system={sys_val} min, laser={laser_val} pulses")
+            self.consoleOdometerReceived.emit(sys_val, laser_val)
+        except Exception as e:
+            logger.error(f"Error reading odometer: {e}")
+            self.consoleOdometerReceived.emit(-1, -1)
+        finally:
+            self._console_mutex.unlock()
+
+    @pyqtSlot(int, result=bool)
+    def resetOdometer(self, target: int = 2) -> bool:
+        """Reset the console odometer(s) and persist the cleared state to flash.
+
+        target: 0 = system uptime, 1 = laser pulses, 2 = both (default).
+        Permanent — the previous lifetime totals cannot be recovered.
+        """
+        self._console_mutex.lock()
+        try:
+            ok = motion_interface.console.reset_odometer(target)
+            if ok:
+                logger.info(f"Odometer reset (target={target})")
+            else:
+                logger.error(f"Odometer reset failed (target={target})")
+            return ok
+        except Exception as e:
+            logger.error(f"Error resetting odometer: {e}")
+            return False
         finally:
             self._console_mutex.unlock()
 

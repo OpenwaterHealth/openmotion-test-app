@@ -1012,6 +1012,7 @@ class MOTIONConnector(QObject):
 
     tecTripValueChanged = pyqtSignal()
     taGainSetFailed = pyqtSignal(str)
+    tecTripSetFailed = pyqtSignal(str)  # error message when reading/writing TEC_TRIP fails
 
     userConfigLoaded = pyqtSignal(
         float, float, float, float, float
@@ -3229,41 +3230,62 @@ class MOTIONConnector(QObject):
 
     @pyqtSlot()
     def queryTecTripValue(self):
-        """
-        Query current TEC trip value from the console module.
-        Currently stubbed; prefer implementing actual SDK call.
-        """
-        # TODO: replace stub with actual SDK query when available
-        self.set_tec_trip_value(0)
+        """Read the current TEC trip temperature (°C) from the console's user
+        config and publish it via tecTripValue. Runs on a worker thread so the
+        UI stays responsive."""
+        import threading
+
+        threading.Thread(target=self._do_query_tec_trip, daemon=True).start()
+
+    def _do_query_tec_trip(self):
+        self._console_mutex.lock()
+        try:
+            config = motion_interface.console.read_config()
+            if config is None:
+                logger.error("Failed to read user config for TEC_TRIP query")
+                return
+            value = int(round(float(config.get("TEC_TRIP") or 0)))
+            logger.info(f"TEC_TRIP read from device: {value} °C")
+            self.set_tec_trip_value(value)
+        except Exception as e:
+            logger.error(f"Error querying TEC trip temperature: {e}")
+        finally:
+            self._console_mutex.unlock()
 
     @pyqtSlot(int, result=bool)
     def setTecTrip(self, res: int) -> bool:
-        """Set TEC trip point.
+        """Set the TEC trip temperature (°C).
 
-        Calls the underlying SDK method `set_ta_gain_resistor` (TA resistor
-        setting used for TEC trip) and returns True on success.
+        Reads the console's user config, updates only the ``TEC_TRIP`` key
+        (preserving every other key), and writes it back. Returns True on
+        success; emits ``tecTripSetFailed(msg)`` on failure.
         """
         self._console_mutex.lock()
         try:
-            # Delegate to console module
-            result = motion_interface.console.set_ta_gain_resistor(res)
-            if result:
-                logger.info(f"TA gain resistor set to {res} ohms")
-                return True
-            else:
-                msg = f"Failed to set TA gain resistor to {res} ohms"
+            config = motion_interface.console.read_config()
+            if config is None:
+                msg = "Failed to read user config before setting TEC_TRIP"
                 logger.error(msg)
-                self.taGainSetFailed.emit(msg)
+                self.tecTripSetFailed.emit(msg)
                 return False
-        except ValueError as ve:
-            msg = f"Invalid TA gain value or console not connected: {ve}"
-            logger.error(msg)
-            self.taGainSetFailed.emit(msg)
-            return False
+
+            # Read-modify-write: only touch TEC_TRIP, leave OPT_*/EE_* intact.
+            config.set("TEC_TRIP", res)
+
+            updated = motion_interface.console.write_config(config)
+            if updated is None:
+                msg = f"Failed to write TEC_TRIP={res} °C to device"
+                logger.error(msg)
+                self.tecTripSetFailed.emit(msg)
+                return False
+
+            logger.info(f"TEC trip temperature set to {res} °C")
+            self.set_tec_trip_value(res)
+            return True
         except Exception as e:
-            msg = f"Error setting TA gain resistor: {e}"
+            msg = f"Error setting TEC trip temperature: {e}"
             logger.error(msg)
-            self.taGainSetFailed.emit(msg)
+            self.tecTripSetFailed.emit(msg)
             return False
         finally:
             self._console_mutex.unlock()

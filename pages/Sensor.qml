@@ -76,6 +76,7 @@ Rectangle {
         // console.log("Sensor Updating all states for", sensor_tag);
         
         MOTIONInterface.querySensorInfo(sensor_tag)
+        MOTIONInterface.readSensorSerialNumber(sensor_tag)
         MOTIONInterface.querySensorTemperature(sensor_tag)
         MOTIONInterface.querySensorAccelerometer(sensor_tag)
         MOTIONInterface.queryCameraPowerStatus(sensor_tag)
@@ -171,6 +172,22 @@ Rectangle {
         function onSensorDeviceInfoReceived(fwVersion, devId) {
             firmwareVersion = fwVersion
             deviceId = devId
+        }
+
+        function onSensorSerialNumberReceived(target, serial) {
+            var tgt = (sensorSelector.currentIndex === 0) ? "left" : "right"
+            if (target !== tgt) return
+            sensorSerialValue.programmed = (serial.length > 0)
+            sensorSerialValue.text = serial.length > 0 ? serial : "not programmed"
+        }
+        function onSensorSerialNumberWritten(target, ok, message) {
+            var tgt = (sensorSelector.currentIndex === 0) ? "left" : "right"
+            if (target !== tgt) return
+            if (ok) {
+                sensorSerialEditDialog.close()
+            } else {
+                sensorSerialEditStatus.text = message
+            }
         }
 
         // Handle temperature updates
@@ -1801,6 +1818,10 @@ Rectangle {
                                     // Clear fan control status
                                     fanControlOn = false;
 
+                                    // Clear serial value so stale value doesn't linger
+                                    sensorSerialValue.text = "not programmed"
+                                    sensorSerialValue.programmed = false
+
                                     // Fetch new sensor states
                                     updateStates()
                                 }
@@ -1888,13 +1909,48 @@ Rectangle {
                             Text { text: deviceId; color: "#3498DB"; font.pixelSize: 14 }
                         }
 
+                        // Serial Number — matches the Device ID row; pencil opens an edit modal
+                        RowLayout {
+                            spacing: 8
+
+                            Text { text: "Serial Number:"; color: "#BDC3C7"; font.pixelSize: 14 }
+                            Text {
+                                id: sensorSerialValue
+                                property bool programmed: false
+                                text: "not programmed"
+                                color: "#3498DB"
+                                font.pixelSize: 14
+                            }
+
+                            // Pencil opens the edit modal
+                            Text {
+                                id: sensorSerialEditIcon
+                                text: "✎"  // pencil
+                                font.pixelSize: 16
+                                font.family: iconFont.name
+                                color: sensorSerialPencilMouse.containsMouse ? "#FFFFFF" : "#BDC3C7"
+                                visible: (sensorSelector.currentIndex === 0) ? MOTIONInterface.leftSensorConnected
+                                                                             : MOTIONInterface.rightSensorConnected
+
+                                MouseArea {
+                                    id: sensorSerialPencilMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: sensorSerialEditDialog.open()
+                                }
+                                ToolTip.visible: sensorSerialPencilMouse.containsMouse
+                                ToolTip.text: "Edit serial number"
+                                ToolTip.delay: 400
+                            }
+                        }
+
                         // Display Firmware Version (Smaller Text)
                         RowLayout {
                             spacing: 8
                             Text { text: "Firmware Version:"; color: "#BDC3C7"; font.pixelSize: 14 }
                             Text { text: firmwareVersion; color: "#2ECC71"; font.pixelSize: 14 }
                         }
-
 
                         ColumnLayout {
                             Layout.alignment: Qt.AlignHCenter 
@@ -1966,6 +2022,91 @@ Rectangle {
                                 ColorAnimation { duration: 200 }
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    // Edit modal: enter a new sensor serial number (opened by the pencil)
+    Dialog {
+        id: sensorSerialEditDialog
+        title: "Change Serial Number"
+        width: 440
+        height: 240
+        modal: true
+        x: (parent.width - width) / 2
+        y: (parent.height - height) / 2
+
+        onOpened: {
+            sensorSerialInput.text = ""
+            sensorSerialEditStatus.text = ""
+            sensorSerialInput.forceActiveFocus()
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 14
+
+            Text {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: "#E67E22"
+                font.pixelSize: 14
+                font.bold: true
+                text: "Are you sure you want to change the " +
+                      ((sensorSelector.currentIndex === 0) ? "left" : "right") +
+                      " sensor's serial number? Enter the new value:"
+            }
+
+            RegularExpressionValidator {
+                id: sensorSerialValidator
+                regularExpression: /^[A-Z0-9]{0,24}$/
+            }
+
+            TextField {
+                id: sensorSerialInput
+                Layout.fillWidth: true
+                Layout.preferredHeight: 32
+                placeholderText: "e.g. QWW04Q10003"
+                maximumLength: 24
+                validator: sensorSerialValidator
+                inputMethodHints: Qt.ImhUppercaseOnly
+                onAccepted: if (sensorSerialSaveButton.enabled) sensorSerialSaveButton.clicked()
+            }
+
+            Text {
+                id: sensorSerialEditStatus
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                visible: text.length > 0
+                color: "#E74C3C"
+                font.pixelSize: 12
+            }
+
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                spacing: 10
+
+                Button {
+                    text: "Cancel"
+                    Layout.preferredWidth: 100
+                    Layout.preferredHeight: 32
+                    background: Rectangle { color: parent.hovered ? "#4A90E2" : "#3A3F4B"; radius: 4; border.color: "#BDC3C7" }
+                    contentItem: Text { text: parent.text; color: "#BDC3C7"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    onClicked: sensorSerialEditDialog.close()
+                }
+                Button {
+                    id: sensorSerialSaveButton
+                    text: "Save"
+                    Layout.preferredWidth: 120
+                    Layout.preferredHeight: 32
+                    enabled: sensorSerialInput.acceptableInput && sensorSerialInput.text.length > 0
+                    background: Rectangle { color: parent.enabled ? (parent.hovered ? "#E67E22" : "#3A3F4B") : "#2C2F36"; radius: 4; border.color: parent.enabled ? "#E67E22" : "#555" }
+                    contentItem: Text { text: parent.text; color: parent.enabled ? "#E67E22" : "#7F8C8D"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.bold: true }
+                    onClicked: {
+                        var tgt = (sensorSelector.currentIndex === 0) ? "left" : "right"
+                        MOTIONInterface.writeSensorSerialNumber(tgt, sensorSerialInput.text, true)
                     }
                 }
             }

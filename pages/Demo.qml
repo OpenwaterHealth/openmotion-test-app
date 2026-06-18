@@ -1156,6 +1156,12 @@ Rectangle {
                             Component.onCompleted: {
                                 try{
                                     MOTIONInterface.tec_status();
+                                    // Only meaningful once connected; the real
+                                    // read happens on connect (consoleUpdateTimer)
+                                    // and on TEC CTRL tab selection.
+                                    if (MOTIONInterface.consoleConnected) {
+                                        MOTIONInterface.queryTecTripValue();
+                                    }
                                 }catch(e){
                                     console.error(e);
                                 }
@@ -1365,7 +1371,111 @@ Rectangle {
                                                 }
 
 
-                                            }                                        
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // ----- TEC Trip temperature (°C) -----
+                                // Writes the TEC_TRIP key in the console user config;
+                                // firmware converts °C -> thermistor R -> comparator trip V.
+                                Text {
+                                    text: "TEC Trip:"
+                                    color: "white"
+                                    Layout.row: 2
+                                    Layout.column: 0
+                                    Layout.preferredWidth: 100
+                                    Layout.topMargin: 15
+                                    Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
+                                }
+
+                                ColumnLayout {
+                                    Layout.row: 2
+                                    Layout.column: 1
+                                    Layout.columnSpan: 3
+                                    Layout.fillWidth: true
+                                    spacing: 4
+
+                                    Text {
+                                        text: "Trip Temp (°C)"
+                                        color: "#BDC3C7"
+                                        font.pixelSize: 12
+                                    }
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 8
+
+                                        TextField {
+                                            id: tecTripField
+                                            Layout.preferredWidth: 80
+                                            Layout.minimumWidth: 80
+                                            Layout.maximumWidth: 80
+                                            Layout.preferredHeight: 30
+                                            enabled: MOTIONInterface.consoleConnected
+                                            font.pixelSize: 12
+                                            placeholderText: "1-125"
+                                            text: MOTIONInterface.tecTripValue.toString()
+                                            inputMethodHints: Qt.ImhDigitsOnly
+                                            // Min is 1, not 0: firmware treats a 0 V trip
+                                            // threshold as "trip disabled", so 0 would
+                                            // silently turn off the over-temp safety.
+                                            validator: IntValidator { bottom: 1; top: 125 }
+
+                                            property string tripError: ""
+                                            background: Rectangle {
+                                                radius: 6
+                                                color: "#2B2B2E"
+                                                border.color: tecTripField.tripError ? "#E74C3C" : "#555"
+                                                border.width: tecTripField.tripError ? 2 : 1
+                                            }
+
+                                            function applyTrip() {
+                                                var v = parseInt(text)
+                                                if (isNaN(v)) {
+                                                    tripError = "enter 1-125"
+                                                    tripErrorTimer.restart()
+                                                    return
+                                                }
+                                                // Clamp to 1 (not 0): 0 disables the trip.
+                                                if (v < 1) v = 1
+                                                if (v > 125) v = 125
+                                                text = v.toString()
+                                                tripError = ""
+                                                if (!MOTIONInterface.setTecTrip(v)) {
+                                                    console.error("Failed to set TEC trip temperature")
+                                                }
+                                            }
+
+                                            onAccepted: applyTrip()
+                                        }
+
+                                        // inline error feedback
+                                        Text {
+                                            text: tecTripField.tripError
+                                            visible: tecTripField.tripError.length > 0
+                                            color: "#E74C3C"
+                                            font.pixelSize: 11
+                                            Layout.alignment: Qt.AlignVCenter
+                                        }
+
+                                        Timer {
+                                            id: tripErrorTimer
+                                            interval: 2500
+                                            onTriggered: tecTripField.tripError = ""
+                                        }
+
+                                        // spacer pushes the button to the far right
+                                        Item { Layout.fillWidth: true }
+
+                                        ActionButton {
+                                            id: btnTecTrip
+                                            text: "Set Trip"
+                                            Layout.alignment: Qt.AlignRight
+                                            Layout.rightMargin: 30
+                                            Layout.preferredWidth: 100
+                                            enabled: MOTIONInterface.consoleConnected
+                                            onTriggered: tecTripField.applyTrip()
                                         }
                                     }
                                 }
@@ -2109,6 +2219,10 @@ Rectangle {
                 }
                 
                 updateLaserUI();
+
+                // Refresh the TEC trip temperature now that the console is
+                // connected (the page loads before USB enumeration completes).
+                MOTIONInterface.queryTecTripValue();
             }
             demoLoading = false
         }
@@ -2181,6 +2295,16 @@ Rectangle {
             // console.log("DAC Changed")
         }
 
+        function onTecTripValueChanged() {
+            // Refresh the field after an async read or a successful write
+            tecTripField.text = MOTIONInterface.tecTripValue.toString()
+        }
+
+        function onTecTripSetFailed(msg) {
+            tecTripField.tripError = msg
+            tripErrorTimer.restart()
+        }
+
         // Apply FPGA scale overrides whenever user config is (re)loaded from device
         function onUserConfigLoaded(tecTrip, optGain, optThresh, eeGain, eeThresh) {
             if (eeGain  > 0) MOTIONInterface.setScaleOverride("Safety EE",  "DRIVE CL", eeGain)
@@ -2210,7 +2334,12 @@ Rectangle {
             switch (safetyStack.currentIndex) {
             case 0: break;
             case 1: break;
-            case 2: break;
+            case 2:
+                // TEC CTRL tab: refresh the trip temperature when viewed
+                if (MOTIONInterface.consoleConnected) {
+                    MOTIONInterface.queryTecTripValue();
+                }
+                break;
             }
         }
     }

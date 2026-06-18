@@ -97,6 +97,7 @@ Rectangle {
     function updateStates() {
         // console.log("Console Updating all states...")
         MOTIONInterface.queryConsoleInfo()
+        MOTIONInterface.readConsoleSerialNumber()
         MOTIONInterface.queryRGBState() // Query Indicator state
         MOTIONInterface.readFanFeedback() // One-shot fan PWM feedback read
         MOTIONInterface.queryConsoleTemperature()
@@ -184,6 +185,18 @@ Rectangle {
             temperature1 = temp1
             temperature2 = temp2
             temperature3 = temp3
+        }
+
+        function onConsoleSerialNumberReceived(serial) {
+            consoleSerialValue.programmed = (serial.length > 0)
+            consoleSerialValue.text = serial.length > 0 ? serial : "not programmed"
+        }
+        function onConsoleSerialNumberWritten(ok, message) {
+            if (ok) {
+                consoleSerialEditDialog.close()
+            } else {
+                consoleSerialEditStatus.text = message
+            }
         }
     }
 
@@ -1336,6 +1349,7 @@ Rectangle {
                             }
                         }
                     }
+
                 }
 
                 // Large Third Column
@@ -1424,6 +1438,41 @@ Rectangle {
                             Text { text: deviceId; color: "#3498DB"; font.pixelSize: 14 }
                         }
 
+                        // Serial Number — matches the Device ID row; pencil opens an edit modal
+                        RowLayout {
+                            spacing: 8
+
+                            Text { text: "Serial Number:"; color: "#BDC3C7"; font.pixelSize: 14 }
+                            Text {
+                                id: consoleSerialValue
+                                property bool programmed: false
+                                text: "not programmed"
+                                color: "#3498DB"
+                                font.pixelSize: 14
+                            }
+
+                            // Pencil opens the edit modal
+                            Text {
+                                id: consoleSerialEditIcon
+                                text: "✎"  // pencil
+                                font.pixelSize: 16
+                                font.family: iconFont.name
+                                color: consoleSerialPencilMouse.containsMouse ? "#FFFFFF" : "#BDC3C7"
+                                visible: MOTIONInterface.consoleConnected
+
+                                MouseArea {
+                                    id: consoleSerialPencilMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: consoleSerialEditDialog.open()
+                                }
+                                ToolTip.visible: consoleSerialPencilMouse.containsMouse
+                                ToolTip.text: "Edit serial number"
+                                ToolTip.delay: 400
+                            }
+                        }
+
                         // Board Rev ID (Smaller Text)
                         RowLayout {
                             spacing: 8
@@ -1440,9 +1489,11 @@ Rectangle {
 
 
 
-                        ColumnLayout {
-                            Layout.alignment: Qt.AlignHCenter 
-                            spacing: 25  
+                        GridLayout {
+                            Layout.alignment: Qt.AlignHCenter
+                            columns: 2
+                            columnSpacing: 20
+                            rowSpacing: 20
 
                             // TEMP #1 Widget
                             MiniTemperatureWidget {
@@ -1650,6 +1701,86 @@ Rectangle {
                         verticalAlignment: Text.AlignVCenter
                     }
                     onClicked: odometerResetResultDialog.close()
+                }
+            }
+        }
+    }
+
+    // Edit modal: enter a new console serial number (opened by the pencil)
+    Dialog {
+        id: consoleSerialEditDialog
+        title: "Change Serial Number"
+        width: 440
+        height: 240
+        modal: true
+        x: (parent.width - width) / 2
+        y: (parent.height - height) / 2
+
+        onOpened: {
+            consoleSerialInput.text = ""
+            consoleSerialEditStatus.text = ""
+            consoleSerialInput.forceActiveFocus()
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 14
+
+            Text {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: "#E67E22"
+                font.pixelSize: 14
+                font.bold: true
+                text: "Are you sure you want to change this console's serial number? Enter the new value:"
+            }
+
+            RegularExpressionValidator {
+                id: consoleSerialValidator
+                regularExpression: /^[A-Z0-9]{0,24}$/
+            }
+
+            TextField {
+                id: consoleSerialInput
+                Layout.fillWidth: true
+                Layout.preferredHeight: 32
+                placeholderText: "e.g. QWW04Q10003"
+                maximumLength: 24
+                validator: consoleSerialValidator
+                inputMethodHints: Qt.ImhUppercaseOnly
+                onAccepted: if (consoleSerialSaveButton.enabled) consoleSerialSaveButton.clicked()
+            }
+
+            Text {
+                id: consoleSerialEditStatus
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                visible: text.length > 0
+                color: "#E74C3C"
+                font.pixelSize: 12
+            }
+
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                spacing: 10
+
+                Button {
+                    text: "Cancel"
+                    Layout.preferredWidth: 100
+                    Layout.preferredHeight: 32
+                    background: Rectangle { color: parent.hovered ? "#4A90E2" : "#3A3F4B"; radius: 4; border.color: "#BDC3C7" }
+                    contentItem: Text { text: parent.text; color: "#BDC3C7"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    onClicked: consoleSerialEditDialog.close()
+                }
+                Button {
+                    id: consoleSerialSaveButton
+                    text: "Save"
+                    Layout.preferredWidth: 120
+                    Layout.preferredHeight: 32
+                    enabled: consoleSerialInput.acceptableInput && consoleSerialInput.text.length > 0
+                    background: Rectangle { color: parent.enabled ? (parent.hovered ? "#E67E22" : "#3A3F4B") : "#2C2F36"; radius: 4; border.color: parent.enabled ? "#E67E22" : "#555" }
+                    contentItem: Text { text: parent.text; color: parent.enabled ? "#E67E22" : "#7F8C8D"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.bold: true }
+                    onClicked: MOTIONInterface.writeConsoleSerialNumber(consoleSerialInput.text, true)
                 }
             }
         }

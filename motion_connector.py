@@ -924,9 +924,13 @@ class MOTIONConnector(QObject):
     signalDataReceived = pyqtSignal(str, str)  # (descriptor, data)
 
     consoleDeviceInfoReceived = pyqtSignal(str, str, str)
+    consoleSerialNumberReceived = pyqtSignal(str)        # current serial ("" if unprogrammed)
+    consoleSerialNumberWritten = pyqtSignal(bool, str)   # (ok, message)
     sensorDeviceInfoReceived = pyqtSignal(str, str)
     # Target-aware variant for pages that need both left/right info simultaneously
     sensorDeviceInfoReceivedEx = pyqtSignal(str, str, str)
+    sensorSerialNumberReceived = pyqtSignal(str, str)        # (target, serial) serial "" if unprogrammed
+    sensorSerialNumberWritten = pyqtSignal(str, bool, str)   # (target, ok, message)
     temperatureSensorUpdated = pyqtSignal(float)  # (imu_temp)
     accelerometerSensorUpdated = pyqtSignal(int, int, int)  # (imu_accel)
     gyroscopeSensorUpdated = pyqtSignal(int, int, int)  # (imu_accel)
@@ -1012,6 +1016,7 @@ class MOTIONConnector(QObject):
 
     tecTripValueChanged = pyqtSignal()
     taGainSetFailed = pyqtSignal(str)
+    tecTripSetFailed = pyqtSignal(str)  # error message when reading/writing TEC_TRIP fails
 
     userConfigLoaded = pyqtSignal(
         float, float, float, float, float
@@ -2189,6 +2194,8 @@ class MOTIONConnector(QObject):
                     # Emit signal for async UI update
                     self.sensorDeviceInfoReceived.emit(fw_version, device_id)
                     self.sensorDeviceInfoReceivedEx.emit(target, fw_version, device_id)
+                    serial = getattr(motion_interface, sensor_tag).read_serial_number() or ""
+                    self.sensorSerialNumberReceived.emit(target, serial)
                     logger.info(
                         f"Sensor Device Info - Firmware: {fw_version}, Device ID: {device_id}"
                     )
@@ -2200,6 +2207,54 @@ class MOTIONConnector(QObject):
         except Exception as e:
             logger.error(f"Error querying device info: {e}")
 
+    @pyqtSlot(str, result=str)
+    def readSensorSerialNumber(self, target: str) -> str:
+        """Read the selected sensor's serial; emit (target, serial); return "" if unprogrammed."""
+        if target not in ("left", "right"):
+            logger.error(f"Invalid target for sensor serial read: {target}")
+            return ""
+        mutex = self._get_sensor_mutex(target)
+        mutex.lock()
+        try:
+            serial = getattr(motion_interface, target).read_serial_number() or ""
+            self.sensorSerialNumberReceived.emit(target, serial)
+            return serial
+        except Exception as e:
+            logger.error(f"Error reading sensor serial number: {e}")
+            self.sensorSerialNumberReceived.emit(target, "")
+            return ""
+        finally:
+            mutex.unlock()
+
+    @pyqtSlot(str, str, bool, result=bool)
+    def writeSensorSerialNumber(self, target: str, serial: str, force: bool) -> bool:
+        """Write the selected sensor's serial; emit (target, ok, message)."""
+        if target not in ("left", "right"):
+            logger.error(f"Invalid target for sensor serial write: {target}")
+            self.sensorSerialNumberWritten.emit(target, False, "Invalid sensor target")
+            return False
+        mutex = self._get_sensor_mutex(target)
+        mutex.lock()
+        try:
+            ok = getattr(motion_interface, target).write_serial_number(serial, force=force)
+            if ok:
+                msg = f"Serial '{serial}' written"
+                logger.info(msg)
+                self.sensorSerialNumberWritten.emit(target, True, msg)
+                self.sensorSerialNumberReceived.emit(target, serial)
+                return True
+            msg = "Write failed (already programmed? use overwrite, or check input)"
+            logger.error(msg)
+            self.sensorSerialNumberWritten.emit(target, False, msg)
+            return False
+        except Exception as e:
+            msg = f"Error writing serial: {e}"
+            logger.error(msg)
+            self.sensorSerialNumberWritten.emit(target, False, msg)
+            return False
+        finally:
+            mutex.unlock()
+
     @pyqtSlot()
     def queryConsoleInfo(self):
         """Fetch and emit device information."""
@@ -2210,12 +2265,54 @@ class MOTIONConnector(QObject):
             hw_id = motion_interface.console.get_hardware_id()
             device_id = base58.b58encode(bytes.fromhex(hw_id)).decode()
             board_id = motion_interface.console.read_board_id()
+            serial = motion_interface.console.read_serial_number() or ""
             self.consoleDeviceInfoReceived.emit(fw_version, device_id, str(board_id))
+            self.consoleSerialNumberReceived.emit(serial)
             logger.info(
                 f"Console Device Info - Firmware: {fw_version}, Device ID: {device_id}, Board ID: {board_id}"
             )
         except Exception as e:
             logger.error(f"Error querying device info: {e}")
+        finally:
+            self._console_mutex.unlock()
+
+    @pyqtSlot(result=str)
+    def readConsoleSerialNumber(self) -> str:
+        """Read the console serial; emit it and return it ("" if unprogrammed)."""
+        self._console_mutex.lock()
+        try:
+            serial = motion_interface.console.read_serial_number()
+            serial = serial or ""
+            self.consoleSerialNumberReceived.emit(serial)
+            return serial
+        except Exception as e:
+            logger.error(f"Error reading console serial number: {e}")
+            self.consoleSerialNumberReceived.emit("")
+            return ""
+        finally:
+            self._console_mutex.unlock()
+
+    @pyqtSlot(str, bool, result=bool)
+    def writeConsoleSerialNumber(self, serial: str, force: bool) -> bool:
+        """Write the console serial; emit (ok, message)."""
+        self._console_mutex.lock()
+        try:
+            ok = motion_interface.console.write_serial_number(serial, force=force)
+            if ok:
+                msg = f"Serial '{serial}' written"
+                logger.info(msg)
+                self.consoleSerialNumberWritten.emit(True, msg)
+                self.consoleSerialNumberReceived.emit(serial)
+                return True
+            msg = "Write failed (already programmed? use overwrite, or check input)"
+            logger.error(msg)
+            self.consoleSerialNumberWritten.emit(False, msg)
+            return False
+        except Exception as e:
+            msg = f"Error writing serial: {e}"
+            logger.error(msg)
+            self.consoleSerialNumberWritten.emit(False, msg)
+            return False
         finally:
             self._console_mutex.unlock()
 
@@ -3229,41 +3326,62 @@ class MOTIONConnector(QObject):
 
     @pyqtSlot()
     def queryTecTripValue(self):
-        """
-        Query current TEC trip value from the console module.
-        Currently stubbed; prefer implementing actual SDK call.
-        """
-        # TODO: replace stub with actual SDK query when available
-        self.set_tec_trip_value(0)
+        """Read the current TEC trip temperature (°C) from the console's user
+        config and publish it via tecTripValue. Runs on a worker thread so the
+        UI stays responsive."""
+        import threading
+
+        threading.Thread(target=self._do_query_tec_trip, daemon=True).start()
+
+    def _do_query_tec_trip(self):
+        self._console_mutex.lock()
+        try:
+            config = motion_interface.console.read_config()
+            if config is None:
+                logger.error("Failed to read user config for TEC_TRIP query")
+                return
+            value = int(round(float(config.get("TEC_TRIP") or 0)))
+            logger.info(f"TEC_TRIP read from device: {value} °C")
+            self.set_tec_trip_value(value)
+        except Exception as e:
+            logger.error(f"Error querying TEC trip temperature: {e}")
+        finally:
+            self._console_mutex.unlock()
 
     @pyqtSlot(int, result=bool)
     def setTecTrip(self, res: int) -> bool:
-        """Set TEC trip point.
+        """Set the TEC trip temperature (°C).
 
-        Calls the underlying SDK method `set_ta_gain_resistor` (TA resistor
-        setting used for TEC trip) and returns True on success.
+        Reads the console's user config, updates only the ``TEC_TRIP`` key
+        (preserving every other key), and writes it back. Returns True on
+        success; emits ``tecTripSetFailed(msg)`` on failure.
         """
         self._console_mutex.lock()
         try:
-            # Delegate to console module
-            result = motion_interface.console.set_ta_gain_resistor(res)
-            if result:
-                logger.info(f"TA gain resistor set to {res} ohms")
-                return True
-            else:
-                msg = f"Failed to set TA gain resistor to {res} ohms"
+            config = motion_interface.console.read_config()
+            if config is None:
+                msg = "Failed to read user config before setting TEC_TRIP"
                 logger.error(msg)
-                self.taGainSetFailed.emit(msg)
+                self.tecTripSetFailed.emit(msg)
                 return False
-        except ValueError as ve:
-            msg = f"Invalid TA gain value or console not connected: {ve}"
-            logger.error(msg)
-            self.taGainSetFailed.emit(msg)
-            return False
+
+            # Read-modify-write: only touch TEC_TRIP, leave OPT_*/EE_* intact.
+            config.set("TEC_TRIP", res)
+
+            updated = motion_interface.console.write_config(config)
+            if updated is None:
+                msg = f"Failed to write TEC_TRIP={res} °C to device"
+                logger.error(msg)
+                self.tecTripSetFailed.emit(msg)
+                return False
+
+            logger.info(f"TEC trip temperature set to {res} °C")
+            self.set_tec_trip_value(res)
+            return True
         except Exception as e:
-            msg = f"Error setting TA gain resistor: {e}"
+            msg = f"Error setting TEC trip temperature: {e}"
             logger.error(msg)
-            self.taGainSetFailed.emit(msg)
+            self.tecTripSetFailed.emit(msg)
             return False
         finally:
             self._console_mutex.unlock()

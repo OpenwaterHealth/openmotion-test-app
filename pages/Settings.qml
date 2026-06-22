@@ -122,29 +122,44 @@ Rectangle {
         return Math.round(w)
     }
 
+    // Local device-info queries (UART/USB). Cheap and safe to run on every
+    // connection change and on the post-connect stabilization tick.
     function refreshConsoleInfo() {
-        if (MOTIONInterface.consoleConnected) {
+        if (MOTIONInterface.consoleConnected)
             MOTIONInterface.queryConsoleInfo()
-            MOTIONInterface.queryConsoleLatestVersionInfo()
-        }
     }
 
     function refreshFpgaInfo() {
-        if (MOTIONInterface.consoleConnected) {
+        if (MOTIONInterface.consoleConnected)
             MOTIONInterface.queryFpgaVersions()
-            MOTIONInterface.queryConsoleLatestFpgaVersionInfo()
-        }
     }
 
     function refreshSensorInfo(target) {
-        if (target === "left" && MOTIONInterface.leftSensorConnected) {
+        if (target === "left" && MOTIONInterface.leftSensorConnected)
             MOTIONInterface.querySensorInfo(target)
-            MOTIONInterface.querySensorLatestVersionInfo(target)
-        }
-        if (target === "right" && MOTIONInterface.rightSensorConnected) {
+        if (target === "right" && MOTIONInterface.rightSensorConnected)
             MOTIONInterface.querySensorInfo(target)
+    }
+
+    // GitHub "latest release" lookups. Each hits the unauthenticated GitHub API
+    // (rate-limited to ~60 req/hr), so these run ONLY when the page is opened
+    // and when the user clicks a Refresh button — never on connection
+    // changes or status polling.
+    function refreshConsoleLatest() {
+        if (MOTIONInterface.consoleConnected)
+            MOTIONInterface.queryConsoleLatestVersionInfo()
+    }
+
+    function refreshFpgaLatest() {
+        if (MOTIONInterface.consoleConnected)
+            MOTIONInterface.queryConsoleLatestFpgaVersionInfo()
+    }
+
+    function refreshSensorLatest(target) {
+        if (target === "left" && MOTIONInterface.leftSensorConnected)
             MOTIONInterface.querySensorLatestVersionInfo(target)
-        }
+        if (target === "right" && MOTIONInterface.rightSensorConnected)
+            MOTIONInterface.querySensorLatestVersionInfo(target)
     }
 
     Connections {
@@ -188,6 +203,8 @@ Rectangle {
             if (MOTIONInterface.consoleConnected || MOTIONInterface.leftSensorConnected || MOTIONInterface.rightSensorConnected) {
                 if (MOTIONInterface.consoleConnected)
                     userConfigLoading = true
+                // Device-info refresh only — leave queryLatestOnTick false so
+                // connection changes/reconnects don't re-hit the GitHub API.
                 settingsInfoTimer.restart()
             } else {
                 settingsInfoTimer.stop()
@@ -397,11 +414,22 @@ Rectangle {
         id: settingsInfoTimer
         interval: 1500
         repeat: false
+        // Set true only when the page is first shown, so the post-settle tick
+        // also pulls the GitHub latest-release info once. Connection-change
+        // restarts leave it false, so reconnects don't re-hit GitHub.
+        property bool queryLatestOnTick: false
         onTriggered: {
             refreshConsoleInfo()
             refreshFpgaInfo()
             refreshSensorInfo("left")
             refreshSensorInfo("right")
+            if (queryLatestOnTick) {
+                refreshConsoleLatest()
+                refreshFpgaLatest()
+                refreshSensorLatest("left")
+                refreshSensorLatest("right")
+                queryLatestOnTick = false
+            }
             if (MOTIONInterface.consoleConnected)
                 MOTIONInterface.readUserConfig()
         }
@@ -412,6 +440,8 @@ Rectangle {
         if (MOTIONInterface.consoleConnected || MOTIONInterface.leftSensorConnected || MOTIONInterface.rightSensorConnected) {
             if (MOTIONInterface.consoleConnected)
                 userConfigLoading = true
+            // One-time GitHub pull when the firmware page opens.
+            settingsInfoTimer.queryLatestOnTick = true
             settingsInfoTimer.start()
         }
     }
@@ -1249,7 +1279,7 @@ Rectangle {
                                     anchors.fill: parent
                                     enabled: parent.enabled
                                     hoverEnabled: true
-                                    onClicked: refreshFpgaInfo()
+                                    onClicked: { refreshFpgaInfo(); refreshFpgaLatest() }
                                     onEntered: if (parent.enabled) parent.color = "#34495E"
                                     onExited: parent.color = parent.enabled ? "#2C3E50" : "#7F8C8D"
                                 }
@@ -1582,7 +1612,7 @@ Rectangle {
                                         anchors.fill: parent
                                         enabled: parent.enabled
                                         hoverEnabled: true
-                                        onClicked: refreshConsoleInfo()
+                                        onClicked: { refreshConsoleInfo(); refreshConsoleLatest() }
                                         onEntered: if (parent.enabled) parent.color = "#34495E"
                                         onExited: parent.color = parent.enabled ? "#2C3E50" : "#7F8C8D"
                                     }
@@ -1727,7 +1757,7 @@ Rectangle {
                                         anchors.fill: parent
                                         enabled: parent.enabled
                                         hoverEnabled: true
-                                        onClicked: refreshSensorInfo("left")
+                                        onClicked: { refreshSensorInfo("left"); refreshSensorLatest("left") }
                                         onEntered: if (parent.enabled) parent.color = "#34495E"
                                         onExited: parent.color = parent.enabled ? "#2C3E50" : "#7F8C8D"
                                     }
@@ -1867,7 +1897,7 @@ Rectangle {
                                         anchors.fill: parent
                                         enabled: parent.enabled
                                         hoverEnabled: true
-                                        onClicked: refreshSensorInfo("right")
+                                        onClicked: { refreshSensorInfo("right"); refreshSensorLatest("right") }
                                         onEntered: if (parent.enabled) parent.color = "#34495E"
                                         onExited: parent.color = parent.enabled ? "#2C3E50" : "#7F8C8D"
                                     }

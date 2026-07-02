@@ -10,11 +10,11 @@ Python example UI for OPEN Motion used for Hardware Testing and Basic Usage
 - **Python 3.9 or later**: Make sure you have Python 3.9 or later installed on your system. You can download it from the [official Python website](https://www.python.org/downloads/).
 
 ### Steps to Set Up the Project
-1. **Install OpenLIFU Python**
+1. **Install the OpenMOTION SDK (`omotion` Python library)**
    ```bash
-   https://github.com/OpenwaterHealth/OpenMOTION-Pylib
-   cd OpenMOTION-Pylib
-   pip install -r requirements.txt
+   git clone https://github.com/OpenwaterHealth/openmotion-sdk.git
+   cd openmotion-sdk
+   pip install .
    ```
 
 2. **Clone the repository and Install Required Packages**:
@@ -32,7 +32,7 @@ Python example UI for OPEN Motion used for Hardware Testing and Basic Usage
    ```
 
 3. **Run application**
-   requires OpenMOTION-Pylib to be installed or referenced prior to running main.py
+   requires the OpenMOTION SDK (`omotion`) to be installed or referenced prior to running main.py
 
    ```bash
    cd OpenMOTION-TestAPP

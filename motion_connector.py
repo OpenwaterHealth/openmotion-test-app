@@ -27,6 +27,7 @@ from pathlib import Path
 from omotion.GitHubReleases import GitHubReleases
 from motion_singleton import motion_interface
 from histogram_classifier import classify_histogram
+from utils.nvcm_verdict import interpret_nvcm_blob
 from fpga_laser_config import (
     FpgaModel,
     apply_laser_power_from_config,
@@ -548,33 +549,6 @@ class _NvcmFlashThread(QThread):
         self.finishedAll.emit(all_ok, summary)
 
 
-def _interpret_nvcm_blob(blob: bytes) -> tuple[str, str]:
-    """Reduce an OW_FACTORY_NVCM_CHECK response to a verdict + detail string.
-
-    Ported from openmotion-sdk scripts/nvcm_probe.py. The behaviorally-
-    definitive signal is the auto-boot test: with a valid IDCODE, the config
-    port at 0x40 *disappearing* after CRESETB is released (without the
-    activation key) means the FPGA booted a user design from NVCM.
-
-    Returns (verdict, detail) where verdict is one of:
-        PROGRAMMED, BLANK, INCONCLUSIVE, NO RESPONSE.
-    """
-    if not blob:
-        return "NO RESPONSE", "firmware returned no data (camera absent/unpowered?)"
-    if len(blob) < 27:
-        return "NO RESPONSE", f"short response ({len(blob)} bytes)"
-    idcode_ok = blob[4]
-    boot_probe_done = blob[24]
-    boot_0x40_responds = blob[25]
-    if idcode_ok != 1:
-        return "INCONCLUSIVE", "IDCODE mismatch — check power / mux / CRESETB"
-    if not boot_probe_done:
-        return "INCONCLUSIVE", "boot test did not run"
-    if boot_0x40_responds == 0:
-        return "PROGRAMMED", "0x40 disappeared after auto-boot"
-    return "BLANK", "0x40 still ACKs — nothing auto-booted"
-
-
 class _NvcmCheckThread(QThread):
     """Read-only sweep that probes NVCM programmed-state on all 8 cameras.
 
@@ -611,8 +585,12 @@ class _NvcmCheckThread(QThread):
                     time.sleep(0.3)
                     sensor.switch_camera(idx)
                     time.sleep(0.1)
-                    blob = sensor.nvcm_check()
-                    verdict, detail = _interpret_nvcm_blob(blob)
+                    # boot_test=False: the auto-boot 0x40 probe carries no
+                    # information (0x40 needs the activation key to respond
+                    # at all — issue #44); the verdict comes from the STATUS
+                    # Done bit, which the probe reads regardless.
+                    blob = sensor.nvcm_check(boot_test=False)
+                    verdict, detail = interpret_nvcm_blob(blob)
                 except Exception as exc:  # never let the thread die silently
                     logger.exception("NVCM check raised for camera %d", cam)
                     verdict, detail = "NO RESPONSE", str(exc)

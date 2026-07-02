@@ -6,7 +6,10 @@ The old interpreter derived PROGRAMMED from the auto-boot "0x40 stopped
 ACKing" signal, which is unconditionally true on this part (the CrossLink
 config port needs the activation key to respond at all), so every camera
 with a valid IDCODE read as PROGRAMMED. The verdict must instead come from
-the STATUS register Done bit (blob[8] bit 0).
+STATUS bit 19 (blob[7] bit 3) — the bit that empirically discriminates
+programmed (00 08 02 08) from blank (00 00 02 08) parts in the probe's
+ISC flow (16-camera hardware sweep, 2026-07-02). The SRAM Done bit
+(blob[8] bit 0) reads 0 on every camera in this flow and cannot be used.
 """
 import pytest
 
@@ -72,19 +75,20 @@ def test_blank_part_regression_issue_44():
     assert "00 00 02 08" in detail
 
 
-def test_programmed_part_done_bit_set():
-    # Done = STATUS bit 8 = blob[8] bit 0 (big-endian status bytes).
-    blob = make_blob(status=b"\x00\x00\x03\x08")
+def test_programmed_part_bit19_set():
+    """Real programmed-camera blob (16-camera bench sweep 2026-07-02:
+    all 15 programmed cameras read STATUS 00 08 02 08)."""
+    blob = make_blob(status=b"\x00\x08\x02\x08")
     verdict, detail = interpret_nvcm_blob(blob)
     assert verdict == "PROGRAMMED"
-    assert "00 00 03 08" in detail
+    assert "00 08 02 08" in detail
 
 
 def test_boot_test_bytes_are_ignored():
     """The auto-boot bytes carry no information; the verdict must not
     change with them (old code flipped PROGRAMMED/BLANK on blob[25])."""
-    for done_byte, expected in ((0x02, "BLANK"), (0x03, "PROGRAMMED")):
-        status = bytes([0x00, 0x00, done_byte, 0x08])
+    for b1, expected in ((0x00, "BLANK"), (0x08, "PROGRAMMED")):
+        status = bytes([0x00, b1, 0x02, 0x08])
         verdicts = {
             interpret_nvcm_blob(make_blob(status=status,
                                           boot_probe_done=probe,

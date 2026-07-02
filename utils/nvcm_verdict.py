@@ -8,11 +8,17 @@ Blob layout (sensor-fw ``if_factory_prog.c``, command 0x6C)::
     [24]    boot_probe_done   [25] boot_0x40_responds
     [26]    num_rows_read     [27:] NVCM rows (16 B each)
 
-The programmed/blank verdict comes from the STATUS register **Done bit**
-(bit 8 -> byte ``blob[8]`` bit 0). Done is the last fuse burned during NVCM
-programming and is what gates auto-boot, so Done=1 means a complete,
-bootable NVCM image; Done=0 means blank (or an incomplete burn that will
-not boot). Verified on hardware in openmotion-sensor-fw commit c40a6b4.
+The programmed/blank verdict comes from STATUS **bit 19** (byte
+``blob[7]`` bit 3 — big-endian word bit 0x00080000). Empirically verified
+on hardware 2026-07-02 with a 16-camera blind sweep: all 15
+NVCM-programmed cameras read STATUS ``00 08 02 08`` (bit 19 set) and the
+one known-blank camera read ``00 00 02 08`` (bit 19 clear), matching the
+known-blank blob in the openmotion-sensor-fw notebook. The SRAM
+configuration Done bit (bit 8 -> ``blob[8]`` bit 0) is NOT usable here:
+the probe's ISC sequence holds the part unconfigured, so Done reads 0 on
+every camera regardless of NVCM state. The feature-row / feabits /
+NVCM-row reads return all-0xFF for programmed and blank parts alike in
+this mode, so they cannot discriminate either.
 
 The auto-boot bytes ([24]/[25]) are deliberately IGNORED: the CrossLink
 I2C slave config port at 0x40 only becomes active after receiving the
@@ -49,6 +55,6 @@ def interpret_nvcm_blob(blob: bytes) -> tuple[str, str]:
     if not (blob[5] & STEP_STATUS):
         return "INCONCLUSIVE", "STATUS register read failed"
     status_hex = " ".join(f"{b:02X}" for b in blob[6:10])
-    if blob[8] & 0x01:  # STATUS Done bit (bit 8)
-        return "PROGRAMMED", f"STATUS Done bit set (status {status_hex})"
-    return "BLANK", f"STATUS Done bit clear (status {status_hex})"
+    if blob[7] & 0x08:  # STATUS bit 19 — NVCM-programmed discriminator
+        return "PROGRAMMED", f"STATUS bit 19 set (status {status_hex})"
+    return "BLANK", f"STATUS bit 19 clear (status {status_hex})"

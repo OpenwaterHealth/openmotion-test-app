@@ -1998,6 +1998,25 @@ Rectangle {
                                 cursorShape: Qt.PointingHandCursor
                             }
                         }
+                        // Laser-safety (EE/OPT) interlock: fault-type mnemonic in
+                        // red when tripped, else OK (test-app #56).
+                        Text {
+                            text: "Safety: " + (MOTIONInterface.safetyFailure
+                                                ? (MOTIONInterface.safetyFaultText || "TRIPPED")
+                                                : "OK")
+                            font.pixelSize: 14
+                            color: MOTIONInterface.safetyFailure ? "#E74C3C" : "#BDC3C7"
+                            ToolTip.text: "Laser-safety (EE/OPT) interlock fault type"
+                            ToolTip.visible: maSafety.containsMouse
+                            ToolTip.delay: 500
+
+                            MouseArea {
+                                id: maSafety
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                            }
+                        }
                     }
 
 
@@ -2180,19 +2199,6 @@ Rectangle {
                                     color: MOTIONInterface.safetyFailure ? "red" : "grey"
                                     border.color: "black"; border.width: 1
                                     Layout.alignment: Qt.AlignHCenter
-                                }
-
-                                // Decoded fault reason, shown only while tripped (test-app #56)
-                                Text {
-                                    text: MOTIONInterface.safetyFaultText
-                                    visible: MOTIONInterface.safetyFailure
-                                             && MOTIONInterface.safetyFaultText !== ""
-                                    font.pixelSize: 11
-                                    color: "#E74C3C"
-                                    horizontalAlignment: Text.AlignHCenter
-                                    Layout.alignment: Qt.AlignHCenter
-                                    Layout.maximumWidth: 100
-                                    wrapMode: Text.WordWrap
                                 }
                             }
                         }

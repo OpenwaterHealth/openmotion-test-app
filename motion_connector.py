@@ -3561,11 +3561,11 @@ class MOTIONConnector(QObject):
     # ------------------------------------------------------------------
     # Laser-safety (EE/OPT) interlock state — single source of truth (#56)
     # ------------------------------------------------------------------
-    # Map the SDK's raw fault labels to short GUI text.
+    # Map the SDK's raw fault labels to the short EE/OPT fault-type mnemonic.
     _SAFETY_FAULT_LABELS = {
-        "POWER_PEAK_CURRENT_LIMIT_FAIL": "Peak current",
-        "PULSE_UPPER_LIMIT_FAIL_OR_PULSE_LOWER_LIMIT_FAIL": "Pulse width",
-        "RATE_LOWER_LIMIT_FAIL": "Rate",
+        "POWER_PEAK_CURRENT_LIMIT_FAIL": "PEAK_CURRENT",
+        "PULSE_UPPER_LIMIT_FAIL_OR_PULSE_LOWER_LIMIT_FAIL": "PULSE_LIMIT",
+        "RATE_LOWER_LIMIT_FAIL": "RATE_LIMIT",
     }
 
     def _read_safety_snapshot(self):
@@ -3590,8 +3590,8 @@ class MOTIONConnector(QObject):
         text = ", ".join(self._SAFETY_FAULT_LABELS.get(f, f) for f in faults)
         return True, bool(snap.safety_ok), text
 
-    # Bit -> friendly label for a direct status read (mirrors _SAFETY_FAULT_LABELS).
-    _SAFETY_BIT_LABELS = {0x01: "Peak current", 0x02: "Pulse width", 0x04: "Rate"}
+    # Bit -> fault-type mnemonic for a direct status read (mirrors _SAFETY_FAULT_LABELS).
+    _SAFETY_BIT_LABELS = {0x01: "PEAK_CURRENT", 0x02: "PULSE_LIMIT", 0x04: "RATE_LIMIT"}
 
     def _read_safety_direct(self):
         """Read the EE/OPT interlock status straight from I2C (reg 0x24), bypassing

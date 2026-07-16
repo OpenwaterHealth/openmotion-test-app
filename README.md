@@ -7,7 +7,7 @@ Python example UI for OPEN Motion used for Hardware Testing and Basic Usage
 ## Installation
 
 ### Prerequisites
-- **Python 3.9 or later**: Make sure you have Python 3.9 or later installed on your system. You can download it from the [official Python website](https://www.python.org/downloads/).
+- **Python 3.12 or later**: Make sure you have Python 3.12 or later installed on your system (the Open-Motion SDK requires 3.12+). You can download it from the [official Python website](https://www.python.org/downloads/).
 
 ### Steps to Set Up the Project
 1. **Install the Open-Motion SDK (`omotion` Python library)**
@@ -19,8 +19,8 @@ Python example UI for OPEN Motion used for Hardware Testing and Basic Usage
 
 2. **Clone the repository and Install Required Packages**:
    ```bash
-   git clone https://github.com/OpenwaterHealth/OpenMOTION-TestAPP.git
-   cd OpenMOTION-TestAPP
+   git clone https://github.com/OpenwaterHealth/openmotion-test-app.git
+   cd openmotion-test-app
    pip install -r requirements.txt
    ```
 
@@ -31,11 +31,10 @@ Python example UI for OPEN Motion used for Hardware Testing and Basic Usage
    https://github.com/libusb/libusb/releases
    ```
 
-3. **Run application**
+4. **Run application**
    requires the Open-Motion SDK (`omotion`) to be installed or referenced prior to running main.py
 
    ```bash
-   cd OpenMOTION-TestAPP
    python main.py
    ```
 

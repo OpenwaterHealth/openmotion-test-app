@@ -60,6 +60,12 @@ def main():
         action="store_true",
         help="Disable all GitHub release queries (firmware dropdowns will be empty; use file upload to flash)",
     )
+    parser.add_argument(
+        "--force-laser-fail",
+        action="store_true",
+        help="TEST: shortly after connect, fire the trigger and force a peak-current "
+        "laser-safety trip so the failure indicators can be exercised. Not for normal use.",
+    )
     args = parser.parse_args()
 
     # Configure logging: console + a timestamped file under <root>/app-logs/.
@@ -103,6 +109,13 @@ def main():
     # devices have completed their CONNECTING transition (or wait_timeout).
     logger.info("Starting MOTION monitoring...")
     motion_interface.start(wait=True, wait_timeout=2.0)
+
+    if args.force_laser_fail:
+        # TEST hook: once the console is up + laser powered, force a safety trip.
+        from PyQt6.QtCore import QTimer
+
+        logger.warning("--force-laser-fail: will force a laser-safety trip after connect")
+        QTimer.singleShot(4000, connector.forceLaserFailAtStartup)
 
     def handle_exit():
         """Stop the monitor cleanly before Qt tears down."""

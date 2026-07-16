@@ -1029,6 +1029,7 @@ class MOTIONConnector(QObject):
         self._consoleConnected = console_connected
         self._safetyFailure = False
         self._safetyFaultText = ""
+        self._force_fail_attempts = 0
         self._running = False
         self._trigger_state = "OFF"
         self._state = DISCONNECTED
@@ -3589,6 +3590,33 @@ class MOTIONConnector(QObject):
         text = ", ".join(self._SAFETY_FAULT_LABELS.get(f, f) for f in faults)
         return True, bool(snap.safety_ok), text
 
+    # Bit -> friendly label for a direct status read (mirrors _SAFETY_FAULT_LABELS).
+    _SAFETY_BIT_LABELS = {0x01: "Peak current", 0x02: "Pulse width", 0x04: "Rate"}
+
+    def _read_safety_direct(self):
+        """Read the EE/OPT interlock status straight from I2C (reg 0x24), bypassing
+        the ~1 Hz cached SDK snapshot. Used right after clearing a fault so the
+        indicators reflect the true post-clear state immediately. Returns
+        ``(known, ok, fault_text)``.
+        """
+        console = self._interface.console if self._interface else None
+        if console is None:
+            return False, True, self._safetyFaultText
+        self._console_mutex.lock()
+        try:
+            se, _ = console.read_i2c_packet(mux_index=1, channel=6, device_addr=0x41, reg_addr=0x24, read_len=1)
+            so, _ = console.read_i2c_packet(mux_index=1, channel=7, device_addr=0x41, reg_addr=0x24, read_len=1)
+        except Exception as e:
+            logging.debug(f"direct safety read failed: {e}")
+            return False, True, self._safetyFaultText
+        finally:
+            self._console_mutex.unlock()
+        if not se or not so:
+            return False, True, self._safetyFaultText
+        mask = (se[0] | so[0]) & 0x07
+        text = ", ".join(t for b, t in self._SAFETY_BIT_LABELS.items() if mask & b)
+        return True, (mask == 0), text
+
     def _apply_safety_state(self, known: bool, ok: bool, fault_text: str):
         """Reconcile the safety-failure, fault-text, and laser/trigger
         indicators from ONE place, so the 1 Hz poll and the manual slot can't
@@ -3658,7 +3686,82 @@ class MOTIONConnector(QObject):
             finally:
                 self._console_mutex.unlock()
 
-        self.readSafetyStatus()
+        # Read the interlock state FRESH (direct I2C), not the ~1 Hz cached SDK
+        # snapshot which is stale right after we cleared the latch (and nothing
+        # else re-reads once the trigger/poll thread is torn down).
+        known, ok, text = self._read_safety_direct()
+        self._apply_safety_state(known, ok, text)
+
+    @pyqtSlot()
+    def forceLaserFailAtStartup(self):
+        """TEST/QA (enabled by --force-laser-fail): force a laser-safety trip so
+        the failure indicators can be exercised. Once the console is connected,
+        start the trigger (laser firing) and drop the EE/OPT DRIVE CL below the
+        running drive current to force a PEAK_CURRENT fault. Retries until the
+        console is up. Not for normal operation.
+        """
+        from PyQt6.QtCore import QTimer
+
+        console = self._interface.console if self._interface else None
+        if console is None or not console.is_connected():
+            self._force_fail_attempts += 1
+            if self._force_fail_attempts <= 15:
+                QTimer.singleShot(1000, self.forceLaserFailAtStartup)
+            else:
+                logging.warning("forceLaserFail: console never connected; giving up")
+            return
+
+        try:
+            from omotion.config import DEFAULT_TRIGGER_CONFIG
+
+            # Configure + start the trigger so the laser is actually firing.
+            console.set_trigger_json(dict(DEFAULT_TRIGGER_CONFIG))
+            self.startTrigger()
+
+            # Save the real EE/OPT DRIVE CL, then drop it to 1 so the running
+            # drive current exceeds the limit -> PEAK_CURRENT trip. We restore it
+            # shortly after (below) so the fault stays LATCHED but the condition
+            # clears — mirroring a real trip, so Clear Failure can actually reset.
+            self._ff_orig_cl = {}
+            self._console_mutex.lock()
+            try:
+                for ch in (7, 6):  # OPT then EE
+                    d, _ = console.read_i2c_packet(
+                        mux_index=1, channel=ch, device_addr=0x41,
+                        reg_addr=0x10, read_len=2,
+                    )
+                    self._ff_orig_cl[ch] = bytes(d) if d else None
+                    console.write_i2c_packet(
+                        mux_index=1, channel=ch, device_addr=0x41,
+                        reg_addr=0x10, data=bytes([1, 0]),
+                    )
+            finally:
+                self._console_mutex.unlock()
+            logging.warning(
+                "forceLaserFail: trigger started + EE/OPT DRIVE CL dropped -> "
+                "expecting PEAK_CURRENT trip; restoring DRIVE CL in 2.5s"
+            )
+            QTimer.singleShot(2500, self._ff_restore_drive_cl)
+        except Exception as e:
+            logging.error(f"forceLaserFail failed: {e}")
+
+    def _ff_restore_drive_cl(self):
+        """Restore the DRIVE CL saved by forceLaserFailAtStartup (test helper)."""
+        console = self._interface.console if self._interface else None
+        orig = getattr(self, "_ff_orig_cl", {}) or {}
+        if console is None or not orig:
+            return
+        self._console_mutex.lock()
+        try:
+            for ch, data in orig.items():
+                if data:
+                    console.write_i2c_packet(
+                        mux_index=1, channel=ch, device_addr=0x41,
+                        reg_addr=0x10, data=data,
+                    )
+        finally:
+            self._console_mutex.unlock()
+        logging.warning("forceLaserFail: DRIVE CL restored (fault stays latched until Clear Failure)")
 
     @pyqtSlot(str)
     def queryCameraPowerStatus(self, target: str):

@@ -810,11 +810,9 @@ Rectangle {
                                     }
 
                                     onClicked: {
-                                        // console.log("Clear Safety Error Flag");
-
-                                        writeFpgaRegister("Safety OPT", "DYNAMIC CTRL", "1");
-                                        writeFpgaRegister("Safety EE", "DYNAMIC CTRL", "1");
-                                        MOTIONInterface.readSafetyStatus();
+                                        // Reset a laser-safety trip: stop the trigger, clear the
+                                        // EE/OPT fault latch, then refresh indicators (test-app #56).
+                                        MOTIONInterface.resetSafety();
                                     }
                                 }
 
@@ -1067,11 +1065,9 @@ Rectangle {
                                     }
 
                                     onClicked: {
-                                        // console.log("Clear Safety Error Flag");
-
-                                        writeFpgaRegister("Safety OPT", "DYNAMIC CTRL", "1");
-                                        writeFpgaRegister("Safety EE", "DYNAMIC CTRL", "1");
-                                        MOTIONInterface.readSafetyStatus();
+                                        // Reset a laser-safety trip: stop the trigger, clear the
+                                        // EE/OPT fault latch, then refresh indicators (test-app #56).
+                                        MOTIONInterface.resetSafety();
                                     }
                                 }
                                 
@@ -2184,6 +2180,19 @@ Rectangle {
                                     color: MOTIONInterface.safetyFailure ? "red" : "grey"
                                     border.color: "black"; border.width: 1
                                     Layout.alignment: Qt.AlignHCenter
+                                }
+
+                                // Decoded fault reason, shown only while tripped (test-app #56)
+                                Text {
+                                    text: MOTIONInterface.safetyFaultText
+                                    visible: MOTIONInterface.safetyFailure
+                                             && MOTIONInterface.safetyFaultText !== ""
+                                    font.pixelSize: 11
+                                    color: "#E74C3C"
+                                    horizontalAlignment: Text.AlignHCenter
+                                    Layout.alignment: Qt.AlignHCenter
+                                    Layout.maximumWidth: 100
+                                    wrapMode: Text.WordWrap
                                 }
                             }
                         }

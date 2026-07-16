@@ -925,10 +925,12 @@ class MOTIONConnector(QObject):
     connectionStatusChanged = pyqtSignal()  # 🔹 New signal for connection updates
     consoleTemperatureUpdated = pyqtSignal(float, float, float)  # (temp1, temp2, temp3)
 
-    laserStateChanged = pyqtSignal(bool)  # 🔹 New signal for laser state change
     safetyFailureStateChanged = pyqtSignal(
         bool
-    )  # 🔹 New signal for safety failure state chang
+    )  # 🔹 New signal for safety failure state change
+    safetyFaultTextChanged = pyqtSignal(
+        str
+    )  # decoded laser-safety fault reason for the GUI (test-app #56)
 
     isStreamingChanged = pyqtSignal()
 
@@ -1025,8 +1027,9 @@ class MOTIONConnector(QObject):
         self._leftSensorConnected = left_sensor_connected
         self._rightSensorConnected = right_sensor_connected
         self._consoleConnected = console_connected
-        self._laserOn = False
         self._safetyFailure = False
+        self._safetyFaultText = ""
+        self._force_fail_attempts = 0
         self._running = False
         self._trigger_state = "OFF"
         self._state = DISCONNECTED
@@ -1738,15 +1741,15 @@ class MOTIONConnector(QObject):
         """Expose Console connection status to QML."""
         return self._consoleConnected
 
-    @pyqtProperty(bool, notify=laserStateChanged)
-    def laserOn(self):
-        """Expose Console connection status to QML."""
-        return self._laserOn
-
     @pyqtProperty(bool, notify=safetyFailureStateChanged)
     def safetyFailure(self):
-        """Expose Console connection status to QML."""
+        """True while a laser-safety (EE/OPT) interlock trip is latched."""
         return self._safetyFailure
+
+    @pyqtProperty(str, notify=safetyFaultTextChanged)
+    def safetyFaultText(self):
+        """Human-readable laser-safety fault reason (empty when clear)."""
+        return self._safetyFaultText
 
     @pyqtProperty(int, notify=stateChanged)
     def state(self):
@@ -3555,50 +3558,214 @@ class MOTIONConnector(QObject):
             logger.error("Failed to retrieve histogram.")
             self.histogramReady.emit([])  # Emit empty to clear
 
-    @pyqtSlot()
-    def readSafetyStatus(self):
-        # Replace this with your actual console status check
+    # ------------------------------------------------------------------
+    # Laser-safety (EE/OPT) interlock state — single source of truth (#56)
+    # ------------------------------------------------------------------
+    # Bit -> fault-type mnemonic, decoded per channel (EE and OPT).
+    _SAFETY_BIT_LABELS = {0x01: "PEAK_CURRENT", 0x02: "PULSE_LIMIT", 0x04: "RATE_LIMIT"}
+
+    def _format_safety_faults(self, se_byte: int, so_byte: int) -> str:
+        """List every individual EE/OPT interlock trip, e.g.
+        ``EE:PEAK_CURRENT, OPT:PEAK_CURRENT`` — one entry per (channel, type)
+        that is active. Empty string when clear.
+        """
+        parts = []
+        for name, raw in (("EE", se_byte or 0), ("OPT", so_byte or 0)):
+            for bit, mnem in self._SAFETY_BIT_LABELS.items():
+                if raw & bit:
+                    parts.append(f"{name}:{mnem}")
+        return ", ".join(parts)
+
+    def _read_safety_snapshot(self):
+        """Read laser-safety state from the SDK telemetry snapshot.
+
+        The SDK's ConsoleTelemetryPoller reads the EE/OPT interlock at ~1 Hz
+        (independent of the trigger), so this is one authoritative source for
+        both the failure state and the per-channel fault list — replacing the
+        app's own ad-hoc raw-I2C poll. Returns ``(known, ok, fault_text)``;
+        ``known`` is False when the interlock hasn't answered (keep the last
+        indicator state).
+        """
+        try:
+            console = self._interface.console if self._interface else None
+            snap = console.telemetry.get_snapshot() if console else None
+        except Exception as e:
+            logging.debug(f"safety snapshot unavailable: {e}")
+            snap = None
+        if snap is None or not getattr(snap, "safety_known", False):
+            return False, True, self._safetyFaultText
+        se = getattr(snap, "safety_se", 0) or 0
+        so = getattr(snap, "safety_so", 0) or 0
+        return True, bool(snap.safety_ok), self._format_safety_faults(se, so)
+
+    def _read_safety_direct(self):
+        """Read the EE/OPT interlock status straight from I2C (reg 0x24), bypassing
+        the ~1 Hz cached SDK snapshot. Used right after clearing a fault so the
+        indicators reflect the true post-clear state immediately. Returns
+        ``(known, ok, fault_text)``.
+        """
+        console = self._interface.console if self._interface else None
+        if console is None:
+            return False, True, self._safetyFaultText
         self._console_mutex.lock()
         try:
-            muxIdx = 1
-            i2cAddr = 0x41
-            offset = 0x24
-            data_len = 1  # Number of bytes to read
-
-            channels = {"SE": 6, "SO": 7}
-            statuses = {}
-
-            for label, channel in channels.items():
-                status = self.i2cReadBytes(
-                    "console", muxIdx, channel, i2cAddr, offset, data_len
-                )
-                if status:
-                    statuses[label] = status[0]
-                else:
-                    raise Exception("I2C read error")
-
-            status_text = f"SE: 0x{statuses['SE']:02X}, SO: 0x{statuses['SO']:02X}"
-
-            if (statuses["SE"] & 0x0F) == 0 and (statuses["SO"] & 0x0F) == 0:
-                if self._safetyFailure:
-                    self._safetyFailure = False
-                    self.safetyFailureStateChanged.emit(False)
-            else:
-                if not self._safetyFailure:
-                    self._safetyFailure = True
-                    self.stopTrigger()
-                    self.laserStateChanged.emit(False)
-                    self.safetyFailureStateChanged.emit(True)
-                    logging.error(f"Failure Detected: {status_text}")
-
-            # Emit combined status if needed
-
-            logging.info(f"Status QUERY: {status_text}")
-
+            se, _ = console.read_i2c_packet(mux_index=1, channel=6, device_addr=0x41, reg_addr=0x24, read_len=1)
+            so, _ = console.read_i2c_packet(mux_index=1, channel=7, device_addr=0x41, reg_addr=0x24, read_len=1)
         except Exception as e:
-            logging.error(f"Console status query failed: {e}")
+            logging.debug(f"direct safety read failed: {e}")
+            return False, True, self._safetyFaultText
         finally:
             self._console_mutex.unlock()
+        if not se or not so:
+            return False, True, self._safetyFaultText
+        mask = (se[0] | so[0]) & 0x07
+        return True, (mask == 0), self._format_safety_faults(se[0], so[0])
+
+    def _apply_safety_state(self, known: bool, ok: bool, fault_text: str):
+        """Reconcile the safety-failure, fault-text, and laser/trigger
+        indicators from ONE place, so the 1 Hz poll and the manual slot can't
+        diverge. On a new trip it also forces the trigger indicator OFF (the
+        firmware already stopped the trigger) so the Laser and Failure dots
+        never land in opposite states — the core of #56.
+        """
+        if not known:
+            return  # no fresh data — don't disturb the current indicators
+
+        if fault_text != self._safetyFaultText:
+            self._safetyFaultText = fault_text
+            self.safetyFaultTextChanged.emit(fault_text)
+
+        tripped = not ok
+        if tripped and not self._safetyFailure:
+            self._safetyFailure = True
+            # Tear down the trigger source (belt-and-suspenders with the
+            # firmware interlock) so clearing the fault can't refire the laser.
+            try:
+                self.stopTrigger()
+            except Exception as e:
+                logging.error(f"safety trip: stopTrigger failed: {e}")
+            # Guarantee the Laser indicator reflects the stop even if
+            # stopTrigger threw before it could emit.
+            if self._trigger_state != "OFF":
+                self._trigger_state = "OFF"
+                self.triggerStateChanged.emit("OFF")
+            self.safetyFailureStateChanged.emit(True)
+            logging.error(f"Laser safety trip: {fault_text or 'tripped'}")
+        elif not tripped and self._safetyFailure:
+            self._safetyFailure = False
+            self.safetyFailureStateChanged.emit(False)
+
+    @pyqtSlot()
+    def readSafetyStatus(self):
+        """Refresh the laser-safety indicators from the SDK telemetry snapshot."""
+        known, ok, text = self._read_safety_snapshot()
+        self._apply_safety_state(known, ok, text)
+
+    @pyqtSlot()
+    def resetSafety(self):
+        """Reset a laser-safety trip from the GUI.
+
+        Order matters: stop the trigger *first*, then clear the EE/OPT fault
+        latch (DYNAMIC CTRL reg 0x22 = clear_fail), then re-read. Stopping
+        first means the clear can't refire the laser (the firmware interlock
+        enforces this too); the operator restarts the trigger explicitly.
+        """
+        try:
+            self.stopTrigger()
+        except Exception as e:
+            logging.error(f"resetSafety: stopTrigger failed: {e}")
+
+        console = self._interface.console if self._interface else None
+        if console is not None:
+            self._console_mutex.lock()
+            try:
+                for ch in (7, 6):  # OPT then EE
+                    try:
+                        console.write_i2c_packet(
+                            mux_index=1, channel=ch, device_addr=0x41,
+                            reg_addr=0x22, data=bytes([1]),
+                        )
+                    except Exception as e:
+                        logging.error(f"resetSafety: clear ch{ch} failed: {e}")
+            finally:
+                self._console_mutex.unlock()
+
+        # Read the interlock state FRESH (direct I2C), not the ~1 Hz cached SDK
+        # snapshot which is stale right after we cleared the latch (and nothing
+        # else re-reads once the trigger/poll thread is torn down).
+        known, ok, text = self._read_safety_direct()
+        self._apply_safety_state(known, ok, text)
+
+    @pyqtSlot()
+    def forceLaserFailAtStartup(self):
+        """TEST/QA (enabled by --force-laser-fail): force a laser-safety trip so
+        the failure indicators can be exercised. Once the console is connected,
+        start the trigger (laser firing) and drop the EE/OPT DRIVE CL below the
+        running drive current to force a PEAK_CURRENT fault. Retries until the
+        console is up. Not for normal operation.
+        """
+        from PyQt6.QtCore import QTimer
+
+        console = self._interface.console if self._interface else None
+        if console is None or not console.is_connected():
+            self._force_fail_attempts += 1
+            if self._force_fail_attempts <= 15:
+                QTimer.singleShot(1000, self.forceLaserFailAtStartup)
+            else:
+                logging.warning("forceLaserFail: console never connected; giving up")
+            return
+
+        try:
+            from omotion.config import DEFAULT_TRIGGER_CONFIG
+
+            # Configure + start the trigger so the laser is actually firing.
+            console.set_trigger_json(dict(DEFAULT_TRIGGER_CONFIG))
+            self.startTrigger()
+
+            # Save the real EE/OPT DRIVE CL, then drop it to 1 so the running
+            # drive current exceeds the limit -> PEAK_CURRENT trip. We restore it
+            # shortly after (below) so the fault stays LATCHED but the condition
+            # clears — mirroring a real trip, so Clear Failure can actually reset.
+            self._ff_orig_cl = {}
+            self._console_mutex.lock()
+            try:
+                for ch in (7, 6):  # OPT then EE
+                    d, _ = console.read_i2c_packet(
+                        mux_index=1, channel=ch, device_addr=0x41,
+                        reg_addr=0x10, read_len=2,
+                    )
+                    self._ff_orig_cl[ch] = bytes(d) if d else None
+                    console.write_i2c_packet(
+                        mux_index=1, channel=ch, device_addr=0x41,
+                        reg_addr=0x10, data=bytes([1, 0]),
+                    )
+            finally:
+                self._console_mutex.unlock()
+            logging.warning(
+                "forceLaserFail: trigger started + EE/OPT DRIVE CL dropped -> "
+                "expecting PEAK_CURRENT trip; restoring DRIVE CL in 2.5s"
+            )
+            QTimer.singleShot(2500, self._ff_restore_drive_cl)
+        except Exception as e:
+            logging.error(f"forceLaserFail failed: {e}")
+
+    def _ff_restore_drive_cl(self):
+        """Restore the DRIVE CL saved by forceLaserFailAtStartup (test helper)."""
+        console = self._interface.console if self._interface else None
+        orig = getattr(self, "_ff_orig_cl", {}) or {}
+        if console is None or not orig:
+            return
+        self._console_mutex.lock()
+        try:
+            for ch, data in orig.items():
+                if data:
+                    console.write_i2c_packet(
+                        mux_index=1, channel=ch, device_addr=0x41,
+                        reg_addr=0x10, data=data,
+                    )
+        finally:
+            self._console_mutex.unlock()
+        logging.warning("forceLaserFail: DRIVE CL restored (fault stays latched until Clear Failure)")
 
     @pyqtSlot(str)
     def queryCameraPowerStatus(self, target: str):
@@ -3903,52 +4070,18 @@ class ConsoleStatusThread(QThread):
                     self.connector.pdu_mon()
 
                     #
-                    # 3. Safety / interlock state
+                    # 3. Safety / interlock state (single source: SDK telemetry snapshot)
+                    #    Consumes the SDK ConsoleTelemetry snapshot instead of an
+                    #    ad-hoc raw-I2C read, so the failure indicator + fault text
+                    #    come from one authoritative, decoupled source (#56).
                     #
-                    muxIdx = 1
+                    muxIdx = 1      # still needed by the analog reads below
                     i2cAddr = 0x41
-                    offset = 0x24
-                    data_len = 1
-
-                    channels = {"SE": 6, "SO": 7}
-                    statuses = {}
-
-                    for label, channel in channels.items():
-                        status = self.connector.i2cReadBytes(
-                            "console", muxIdx, channel, i2cAddr, offset, data_len
-                        )
-                        if status:
-                            statuses[label] = status[0]
-                        else:
-                            self.statusUpdate.emit(f"{label} Disconnected")
-                            raise Exception("I2C read error")
-
-                    status_text = (
-                        f"SE: 0x{statuses['SE']:02X}, SO: 0x{statuses['SO']:02X}"
-                    )
-                    run_logger.info(
-                        f"Safety Status - SE: 0x{statuses['SE']:02X}, SO: 0x{statuses['SO']:02X}"
-                    )
-
-                    ok_se = (statuses["SE"] & 0x0F) == 0
-                    ok_so = (statuses["SO"] & 0x0F) == 0
+                    known, ok, fault_text = self.connector._read_safety_snapshot()
+                    self.connector._apply_safety_state(known, ok, fault_text)
                     
-                    if ok_se and ok_so and ok_tec:
-                        if self.connector._safetyFailure:
-                            self.connector._safetyFailure = False
-                            self.connector.safetyFailureStateChanged.emit(False)
-                    else:
-                        if not self.connector._safetyFailure:
-                            # First time we see a failure
-                            self.connector._safetyFailure = True
-                            # Request trigger stop (safe version won't deadlock)
-                            self.connector.stopTrigger()
-                            self.connector.laserStateChanged.emit(False)
-                            self.connector.safetyFailureStateChanged.emit(True)
-                            logging.error(f"Failure Detected: {status_text}")
-
                     #
-                    # 3. Analog telemetry (tcm/tcl/pdc)
+                    # 4. Analog telemetry (tcm/tcl/pdc)
                     #
                     tcm_raw = self.connector.getLsyncCount()
                     tcl_raw = self.connector.i2cReadBytes(

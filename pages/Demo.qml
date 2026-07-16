@@ -810,11 +810,9 @@ Rectangle {
                                     }
 
                                     onClicked: {
-                                        // console.log("Clear Safety Error Flag");
-
-                                        writeFpgaRegister("Safety OPT", "DYNAMIC CTRL", "1");
-                                        writeFpgaRegister("Safety EE", "DYNAMIC CTRL", "1");
-                                        MOTIONInterface.readSafetyStatus();
+                                        // Reset a laser-safety trip: stop the trigger, clear the
+                                        // EE/OPT fault latch, then refresh indicators (test-app #56).
+                                        MOTIONInterface.resetSafety();
                                     }
                                 }
 
@@ -1067,11 +1065,9 @@ Rectangle {
                                     }
 
                                     onClicked: {
-                                        // console.log("Clear Safety Error Flag");
-
-                                        writeFpgaRegister("Safety OPT", "DYNAMIC CTRL", "1");
-                                        writeFpgaRegister("Safety EE", "DYNAMIC CTRL", "1");
-                                        MOTIONInterface.readSafetyStatus();
+                                        // Reset a laser-safety trip: stop the trigger, clear the
+                                        // EE/OPT fault latch, then refresh indicators (test-app #56).
+                                        MOTIONInterface.resetSafety();
                                     }
                                 }
                                 
@@ -1945,114 +1941,94 @@ Rectangle {
                     anchors.margins: 10
                     spacing: 20
 
-                    // Left Column: TCM, TCL, PDC
+                    // Metrics: TCM/LT, TCL/LST, PDC in a 2-col grid; Safety spans below (#56).
                     ColumnLayout {
-                        id: leftMetrics
+                        id: metricsArea
                         spacing: 6
-                        Layout.preferredWidth: statusPanel.width * 1 / 3
+                        Layout.fillWidth: true
                         Layout.fillHeight: true
-                        Layout.alignment: Qt.AlignVCenter | Qt.AlignLeft
+                        Layout.alignment: Qt.AlignTop | Qt.AlignLeft
 
-                        Text {
-                            text: "TCM: " + MOTIONInterface.tcm + " "
-                            font.pixelSize: 14
-                            color: "#BDC3C7"
-                            ToolTip.text: "TCM (Trigger Count MCU) - Laser Pulse"
-                            ToolTip.visible: maTcm.containsMouse
-                            ToolTip.delay: 500
-                            
-                            MouseArea {
-                                id: maTcm
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
+                        GridLayout {
+                            columns: 2
+                            columnSpacing: 24
+                            rowSpacing: 6
+                            Layout.fillWidth: true
+
+                            Text {
+                                text: "TCM: " + MOTIONInterface.tcm + " "
+                                font.pixelSize: 14
+                                color: "#BDC3C7"
+                                ToolTip.text: "TCM (Trigger Count MCU) - Laser Pulse"
+                                ToolTip.visible: maTcm.containsMouse
+                                ToolTip.delay: 500
+                                MouseArea { id: maTcm; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor }
                             }
-                                        
-                        }
-                        Text {
-                            text: "TCL: " + MOTIONInterface.tcl + " "
-                            font.pixelSize: 14
-                            color: "#BDC3C7"
-                            ToolTip.text: "TCL (Trigger Count FPGA) - Laser Pulse"
-                            ToolTip.visible: maTcl.containsMouse
-                            ToolTip.delay: 500
-                            
-                            MouseArea {
-                                id: maTcl
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
+                            Text {
+                                text: "LT: " + Number(MOTIONInterface.tecVoltage || 0).toFixed(2) + " °C"
+                                font.pixelSize: 14
+                                color: "#BDC3C7"
+                                ToolTip.text: "Laser Temp"
+                                ToolTip.visible: maLt.containsMouse
+                                ToolTip.delay: 500
+                                MouseArea { id: maLt; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor }
                             }
-                        }
-                        Text {
-                            text: "PDC: " + (isNaN(MOTIONInterface.pdc) ? "--" : Math.round(MOTIONInterface.pdc)) + " mA"
-                            font.pixelSize: 14
-                            color: "#BDC3C7"
-                            ToolTip.text: "PDC (Power Draw Current)\n" +
-                                          "Min: " + (isNaN(page1.pdcMin) ? "--" : (Math.round(page1.pdcMin) + " mA (" + ("0x" + Math.round(page1.pdcMin).toString(16).toUpperCase()) + ")")) + "\n" +
-                                          "Cur: " + (isNaN(MOTIONInterface.pdc) ? "--" : (Math.round(MOTIONInterface.pdc) + " mA (" + ("0x" + Math.round(MOTIONInterface.pdc).toString(16).toUpperCase()) + ")")) + "\n" +
-                                          "Max: " + (isNaN(page1.pdcMax) ? "--" : (Math.round(page1.pdcMax) + " mA (" + ("0x" + Math.round(page1.pdcMax).toString(16).toUpperCase()) + ")"))
-                            ToolTip.visible: maPdc.containsMouse
-                            ToolTip.delay: 500
-
-                            MouseArea {
-                                id: maPdc
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
+                            Text {
+                                text: "TCL: " + MOTIONInterface.tcl + " "
+                                font.pixelSize: 14
+                                color: "#BDC3C7"
+                                ToolTip.text: "TCL (Trigger Count FPGA) - Laser Pulse"
+                                ToolTip.visible: maTcl.containsMouse
+                                ToolTip.delay: 500
+                                MouseArea { id: maTcl; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor }
                             }
-                        }
-                    }
-
-
-
-                    // Right Column: Laser metrics (LT, LST)
-                    ColumnLayout {
-                        id: rightLaserMetrics
-                        spacing: 6
-                        Layout.preferredWidth: statusPanel.width * 1/3
-                        Layout.fillHeight: true
-                        Layout.alignment: Qt.AlignVCenter | Qt.AlignLeft
-                        
-                        // Laser Temp (LT) - shows measured TEC voltage
-                        Text {
-                            text: "LT: " + Number(MOTIONInterface.tecVoltage || 0).toFixed(2) + " °C"
-                            font.pixelSize: 14
-                            color: "#BDC3C7"
-                            ToolTip.text: "Laser Temp"
-                            ToolTip.visible: maLt.containsMouse
-                            ToolTip.delay: 500
-
-                            MouseArea {
-                                id: maLt
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
+                            Text {
+                                text: "LST: " + Number(MOTIONInterface.tecTemp || 0).toFixed(2) + " °C"
+                                font.pixelSize: 14
+                                color: "#BDC3C7"
+                                ToolTip.text: "Laser Set Temp"
+                                ToolTip.visible: maLst.containsMouse
+                                ToolTip.delay: 500
+                                MouseArea { id: maLst; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor }
                             }
+                            Text {
+                                text: "PDC: " + (isNaN(MOTIONInterface.pdc) ? "--" : Math.round(MOTIONInterface.pdc)) + " mA"
+                                font.pixelSize: 14
+                                color: "#BDC3C7"
+                                ToolTip.text: "PDC (Power Draw Current)
+" +
+                                              "Min: " + (isNaN(page1.pdcMin) ? "--" : (Math.round(page1.pdcMin) + " mA (" + ("0x" + Math.round(page1.pdcMin).toString(16).toUpperCase()) + ")")) + "
+" +
+                                              "Cur: " + (isNaN(MOTIONInterface.pdc) ? "--" : (Math.round(MOTIONInterface.pdc) + " mA (" + ("0x" + Math.round(MOTIONInterface.pdc).toString(16).toUpperCase()) + ")")) + "
+" +
+                                              "Max: " + (isNaN(page1.pdcMax) ? "--" : (Math.round(page1.pdcMax) + " mA (" + ("0x" + Math.round(page1.pdcMax).toString(16).toUpperCase()) + ")"))
+                                ToolTip.visible: maPdc.containsMouse
+                                ToolTip.delay: 500
+                                MouseArea { id: maPdc; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor }
+                            }
+                            Item { Layout.fillWidth: true }
                         }
 
-                        // Laser Set Temp (LST) - shows TEC setpoint temperature/value
+                        // Safety: every EE/OPT channel:type that tripped, red when tripped, else OK.
                         Text {
-                            text: "LST: " + Number(MOTIONInterface.tecTemp || 0).toFixed(2) + " °C"
+                            text: "Safety: " + (MOTIONInterface.safetyFailure
+                                                ? (MOTIONInterface.safetyFaultText || "TRIPPED")
+                                                : "OK")
                             font.pixelSize: 14
-                            color: "#BDC3C7"
-                            ToolTip.text: "Laser Set Temp"
-                            ToolTip.visible: maLst.containsMouse
+                            color: MOTIONInterface.safetyFailure ? "#E74C3C" : "#BDC3C7"
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                            ToolTip.text: "Laser-safety (EE/OPT): " + (MOTIONInterface.safetyFailure ? MOTIONInterface.safetyFaultText : "OK")
+                            ToolTip.visible: maSafety.containsMouse
                             ToolTip.delay: 500
-
-                            MouseArea {
-                                id: maLst
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                            }
+                            MouseArea { id: maSafety; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor }
                         }
                     }
 
                     // Right Column: status and indicators
                     ColumnLayout {
                         spacing: 10
-                        Layout.preferredWidth: statusPanel.width * 2 / 3
+                        Layout.preferredWidth: 200
                         Layout.fillHeight: true
                         Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
 

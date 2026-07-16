@@ -2006,7 +2006,9 @@ Rectangle {
                                                 : "OK")
                             font.pixelSize: 14
                             color: MOTIONInterface.safetyFailure ? "#E74C3C" : "#BDC3C7"
-                            ToolTip.text: "Laser-safety (EE/OPT) interlock fault type"
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            ToolTip.text: "Laser-safety (EE/OPT) interlock — every channel:type that tripped"
                             ToolTip.visible: maSafety.containsMouse
                             ToolTip.delay: 500
 

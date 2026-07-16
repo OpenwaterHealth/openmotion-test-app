@@ -3561,19 +3561,27 @@ class MOTIONConnector(QObject):
     # ------------------------------------------------------------------
     # Laser-safety (EE/OPT) interlock state — single source of truth (#56)
     # ------------------------------------------------------------------
-    # Map the SDK's raw fault labels to the short EE/OPT fault-type mnemonic.
-    _SAFETY_FAULT_LABELS = {
-        "POWER_PEAK_CURRENT_LIMIT_FAIL": "PEAK_CURRENT",
-        "PULSE_UPPER_LIMIT_FAIL_OR_PULSE_LOWER_LIMIT_FAIL": "PULSE_LIMIT",
-        "RATE_LOWER_LIMIT_FAIL": "RATE_LIMIT",
-    }
+    # Bit -> fault-type mnemonic, decoded per channel (EE and OPT).
+    _SAFETY_BIT_LABELS = {0x01: "PEAK_CURRENT", 0x02: "PULSE_LIMIT", 0x04: "RATE_LIMIT"}
+
+    def _format_safety_faults(self, se_byte: int, so_byte: int) -> str:
+        """List every individual EE/OPT interlock trip, e.g.
+        ``EE:PEAK_CURRENT, OPT:PEAK_CURRENT`` — one entry per (channel, type)
+        that is active. Empty string when clear.
+        """
+        parts = []
+        for name, raw in (("EE", se_byte or 0), ("OPT", so_byte or 0)):
+            for bit, mnem in self._SAFETY_BIT_LABELS.items():
+                if raw & bit:
+                    parts.append(f"{name}:{mnem}")
+        return ", ".join(parts)
 
     def _read_safety_snapshot(self):
         """Read laser-safety state from the SDK telemetry snapshot.
 
         The SDK's ConsoleTelemetryPoller reads the EE/OPT interlock at ~1 Hz
         (independent of the trigger), so this is one authoritative source for
-        both the failure state and the decoded fault reason — replacing the
+        both the failure state and the per-channel fault list — replacing the
         app's own ad-hoc raw-I2C poll. Returns ``(known, ok, fault_text)``;
         ``known`` is False when the interlock hasn't answered (keep the last
         indicator state).
@@ -3586,12 +3594,9 @@ class MOTIONConnector(QObject):
             snap = None
         if snap is None or not getattr(snap, "safety_known", False):
             return False, True, self._safetyFaultText
-        faults = list(getattr(snap, "safety_faults", []) or [])
-        text = ", ".join(self._SAFETY_FAULT_LABELS.get(f, f) for f in faults)
-        return True, bool(snap.safety_ok), text
-
-    # Bit -> fault-type mnemonic for a direct status read (mirrors _SAFETY_FAULT_LABELS).
-    _SAFETY_BIT_LABELS = {0x01: "PEAK_CURRENT", 0x02: "PULSE_LIMIT", 0x04: "RATE_LIMIT"}
+        se = getattr(snap, "safety_se", 0) or 0
+        so = getattr(snap, "safety_so", 0) or 0
+        return True, bool(snap.safety_ok), self._format_safety_faults(se, so)
 
     def _read_safety_direct(self):
         """Read the EE/OPT interlock status straight from I2C (reg 0x24), bypassing
@@ -3614,8 +3619,7 @@ class MOTIONConnector(QObject):
         if not se or not so:
             return False, True, self._safetyFaultText
         mask = (se[0] | so[0]) & 0x07
-        text = ", ".join(t for b, t in self._SAFETY_BIT_LABELS.items() if mask & b)
-        return True, (mask == 0), text
+        return True, (mask == 0), self._format_safety_faults(se[0], so[0])
 
     def _apply_safety_state(self, known: bool, ok: bool, fault_text: str):
         """Reconcile the safety-failure, fault-text, and laser/trigger

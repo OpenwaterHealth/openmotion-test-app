@@ -23,6 +23,20 @@ Rectangle {
     property real pdcMax: NaN
     property bool demoLoading: false
 
+    // Build the trigger-config object from the current panel fields.
+    // Shared by the Start Trigger button and the live Sync Out toggle so
+    // the two payloads can never drift apart.
+    function buildTriggerConfig() {
+        return {
+            "TriggerFrequencyHz": parseFloat(fsFrequency.text),
+            "TriggerPulseWidthUsec": parseInt(fsPulseWidth.text),
+            "LaserPulseDelayUsec": parseInt(lsDelay.text),
+            "LaserPulseWidthUsec": parseInt(lsPulseWidth.text),
+            "EnableSyncOut": enableSyncOutCheckbox.checked,
+            "EnableTaTrigger": true
+        }
+    }
+
     // Show loading overlay whenever this page becomes visible while connected
     onVisibleChanged: {
         if (visible && MOTIONInterface.consoleConnected) {
@@ -1850,15 +1864,7 @@ Rectangle {
                                     page1.pdcMin = NaN;
                                     page1.pdcMax = NaN;
 
-                                    var json_trigger_data = {
-                                        "TriggerFrequencyHz": parseFloat(fsFrequency.text),
-                                        "TriggerPulseWidthUsec": parseInt(fsPulseWidth.text),
-                                        "LaserPulseDelayUsec": parseInt(lsDelay.text),
-                                        "LaserPulseWidthUsec": parseInt(lsPulseWidth.text),
-                                        "EnableSyncOut": enableSyncOutCheckbox.checked,
-                                        "EnableTaTrigger": true
-                                    }
-                                    var jsonString = JSON.stringify(json_trigger_data);
+                                    var jsonString = JSON.stringify(page1.buildTriggerConfig());
                                     if (!MOTIONInterface.startTrigger(jsonString)) {
                                         console.error("Failed to apply and start trigger config")
                                     }
@@ -1909,6 +1915,22 @@ Rectangle {
                                     verticalAlignment: Text.AlignVCenter
                                     leftPadding: parent.indicator.width + parent.spacing
                                     font.pixelSize: 12
+                                }
+
+                                // Live re-apply: the firmware only latches the
+                                // SYNC_OUT line in Trigger_Start, so when a trigger
+                                // is already running we must re-send the config and
+                                // restart it for the change to reach the pin. When
+                                // idle the new value is picked up on the next Start
+                                // Trigger. Fires only on user interaction, not on the
+                                // programmatic reflect in consoleUpdateTimer.
+                                onToggled: {
+                                    if (MOTIONInterface.triggerState === "ON") {
+                                        var jsonString = JSON.stringify(page1.buildTriggerConfig());
+                                        if (!MOTIONInterface.startTrigger(jsonString)) {
+                                            console.error("Failed to re-apply Sync Out change")
+                                        }
+                                    }
                                 }
                             }
 
@@ -2192,6 +2214,9 @@ Rectangle {
                     fsPulseWidth.text = config.TriggerPulseWidthUsec.toString()
                     lsDelay.text = config.LaserPulseDelayUsec.toString()
                     lsPulseWidth.text = config.LaserPulseWidthUsec.toString()
+                    // Reflect the device's real Sync Out state so the checkbox
+                    // matches the hardware instead of its static default.
+                    enableSyncOutCheckbox.checked = (config.EnableSyncOut === true)
                 }
                 
                 updateLaserUI();

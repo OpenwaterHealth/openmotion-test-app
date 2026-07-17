@@ -497,13 +497,16 @@ Rectangle {
         id: nvcmCheckSummaryDialog
         title: "NVCM Programmed Check"
         width: 520
-        height: 320
+        height: 400
         modal: true
         x: (parent.width - width) / 2
         y: (parent.height - height) / 2
 
         property bool allProgrammed: false
         property string summaryText: ""
+        // Per-camera verdict strings ("" = no result yet). Reassigned whole
+        // (not mutated) so the light bindings re-evaluate.
+        property var cameraVerdicts: ["", "", "", "", "", "", "", ""]
 
         ColumnLayout {
             anchors.fill: parent
@@ -517,6 +520,41 @@ Rectangle {
                 font.pixelSize: 15
                 font.bold: true
             }
+
+            // Light table: green = programmed (NVCM boots), red = not
+            // programmed, gray = no verdict (camera absent / inconclusive).
+            Row {
+                spacing: 18
+                Layout.alignment: Qt.AlignHCenter
+                Repeater {
+                    model: 8
+                    Column {
+                        spacing: 5
+                        Rectangle {
+                            width: 32
+                            height: 32
+                            radius: 16
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            color: {
+                                var v = nvcmCheckSummaryDialog.cameraVerdicts[index] || ""
+                                if (v === "PROGRAMMED") return "#27AE60"
+                                if (v === "BLANK") return "#E74C3C"
+                                if (v === "") return "#2C313C"
+                                return "#7F8C8D"
+                            }
+                            border.color: "#BDC3C7"
+                            border.width: 1
+                        }
+                        Text {
+                            text: index + 1
+                            color: "#BDC3C7"
+                            font.pixelSize: 11
+                            anchors.horizontalCenter: parent.horizontalCenter
+                        }
+                    }
+                }
+            }
+
             ScrollView {
                 id: nvcmCheckSummaryScroll
                 Layout.fillWidth: true
@@ -1502,6 +1540,7 @@ Rectangle {
                                             onClicked: {
                                                 let tag = (sensorSelector.currentIndex === 0) ? "left" : "right";
                                                 nvcmCheckProgressText.text = "Starting NVCM check…";
+                                                nvcmCheckSummaryDialog.cameraVerdicts = ["", "", "", "", "", "", "", ""];
                                                 MOTIONInterface.checkNvcmProgrammed(tag);
                                             }
                                         }
@@ -1542,6 +1581,11 @@ Rectangle {
                                         }
                                         function onNvcmCheckProgress(percent, message) {
                                             nvcmCheckProgressText.text = message
+                                        }
+                                        function onNvcmCheckCameraResult(camera, verdict, detail) {
+                                            var lights = nvcmCheckSummaryDialog.cameraVerdicts.slice()
+                                            lights[camera - 1] = verdict
+                                            nvcmCheckSummaryDialog.cameraVerdicts = lights
                                         }
                                         function onNvcmCheckFinished(allProgrammed, summary) {
                                             nvcmCheckProgressText.text = ""

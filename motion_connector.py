@@ -27,7 +27,8 @@ from pathlib import Path
 from omotion.GitHubReleases import GitHubReleases
 from motion_singleton import motion_interface
 from histogram_classifier import classify_histogram
-from utils.nvcm_verdict import interpret_boot_probe
+from omotion.config import OW_RESP
+from utils.nvcm_verdict import interpret_boot_probe, interpret_check_blob
 from fpga_laser_config import (
     FpgaModel,
     apply_laser_power_from_config,
@@ -551,15 +552,20 @@ class _NvcmFlashThread(QThread):
 
 class _NvcmCheckThread(QThread):
     """Sweep that boot-tests NVCM on all 8 cameras via the firmware's own
-    detector (reset + timed non-forced program; see utils/nvcm_verdict.py).
+    pin-drive detector (see utils/nvcm_verdict.py).
 
-    Each camera is powered on, hard-reset (OW_FPGA_RESET — clears the
-    firmware's isProgrammed cache), then programmed without force: the
-    firmware runs its keyless-boot pin test and either skips (NVCM boots,
-    ~0.1 s) or SRAM-loads (~10-15 s). The verdict comes from which path it
-    took. Cameras whose NVCM does not boot are left SRAM-configured and
-    running (the state a scan leaves them in); camera power is left on
-    afterwards (the page's power controls own the final state).
+    Fast path (sensor-fw #91: pin-drive boot verdict appended to the
+    OW_FACTORY_NVCM_CHECK blob): a read-only ~0.1 s probe per camera — no
+    SRAM write; a non-booting part is left unconfigured until the next
+    scan programs it.
+
+    Fallback (older firmware/SDK): hard-reset (OW_FPGA_RESET — clears the
+    firmware's isProgrammed cache) + timed non-forced program; the firmware
+    either skips (NVCM boots, ~0.1 s) or SRAM-loads (~10-15 s) and the
+    verdict comes from which path it took.
+
+    Camera power is left on afterwards (the page's power controls own the
+    final state).
     """
 
     progress = pyqtSignal(int, str)          # percent (0-100), message
@@ -582,8 +588,7 @@ class _NvcmCheckThread(QThread):
                 mask = 1 << idx
                 self.progress.emit(
                     int((cam - 1) * 100 / 8),
-                    f"Camera {cam}: NVCM boot test ({cam} of 8)… "
-                    "(~1 s if programmed, ~15 s if the FPGA needs an SRAM load)")
+                    f"Camera {cam}: NVCM boot test ({cam} of 8)…")
 
                 mutex.lock()
                 try:
@@ -591,17 +596,41 @@ class _NvcmCheckThread(QThread):
                         verdict, detail = "NO RESPONSE", "camera power-on failed"
                     else:
                         time.sleep(0.3)
-                        # OW_FPGA_RESET: CRESETB reset + clears the firmware's
-                        # isProgrammed cache, so the non-forced program below
-                        # must re-run fpga_detect_nvcm (the keyless-boot pin
-                        # test) instead of trusting a stale cached answer.
-                        reset_ok = sensor.reset_camera_sensor(mask)
-                        t0 = time.perf_counter()
-                        prog_ok = (sensor.program_fpga(mask, False)
-                                   if reset_ok else False)
-                        elapsed = time.perf_counter() - t0
-                        verdict, detail = interpret_boot_probe(
-                            reset_ok, prog_ok, elapsed)
+                        # Fast read-only path: sensor-fw #91 appends the
+                        # pin-drive boot verdict to the OW_FACTORY_NVCM_CHECK
+                        # blob (~0.1 s). The probe runs on the firmware's
+                        # active camera, so the mux switch must be verified —
+                        # a silently failed switch would re-probe the previous
+                        # camera. interpret_check_blob() returns None when the
+                        # byte is absent (pre-#91 firmware) — fall back to the
+                        # slow-but-universal reset + timed non-forced program.
+                        fast = None
+                        switch_resp = sensor.switch_camera(idx)
+                        switch_pt = getattr(switch_resp, "packetType", None)
+                        if switch_pt == OW_RESP:
+                            time.sleep(0.1)
+                            fast = interpret_check_blob(
+                                sensor.nvcm_check(boot_test=False))
+                        if fast is not None:
+                            verdict, detail = fast
+                        else:
+                            self.progress.emit(
+                                int((cam - 1) * 100 / 8),
+                                f"Camera {cam}: firmware lacks the fast probe —"
+                                " reset + program ({} of 8, ~15 s if the FPGA"
+                                " needs an SRAM load)…".format(cam))
+                            # OW_FPGA_RESET: CRESETB reset + clears the
+                            # firmware's isProgrammed cache, so the non-forced
+                            # program below must re-run fpga_detect_nvcm (the
+                            # keyless-boot pin test) instead of trusting a
+                            # stale cached answer.
+                            reset_ok = sensor.reset_camera_sensor(mask)
+                            t0 = time.perf_counter()
+                            prog_ok = (sensor.program_fpga(mask, False)
+                                       if reset_ok else False)
+                            elapsed = time.perf_counter() - t0
+                            verdict, detail = interpret_boot_probe(
+                                reset_ok, prog_ok, elapsed)
                 except Exception as exc:  # never let the thread die silently
                     logger.exception("NVCM check raised for camera %d", cam)
                     verdict, detail = "NO RESPONSE", str(exc)

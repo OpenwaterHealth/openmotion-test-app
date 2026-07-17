@@ -24,8 +24,7 @@ Rectangle {
     property bool demoLoading: false
 
     // Build the trigger-config object from the current panel fields.
-    // Shared by the Start Trigger button and the live Sync Out toggle so
-    // the two payloads can never drift apart.
+    // Used by the Start Trigger button.
     function buildTriggerConfig() {
         return {
             "TriggerFrequencyHz": parseFloat(fsFrequency.text),
@@ -1906,31 +1905,21 @@ Rectangle {
                                 id: enableSyncOutCheckbox
                                 text: "Sync Out"
                                 checked: false
-                                enabled: MOTIONInterface.consoleConnected
+                                // Locked out while a trigger is running: the
+                                // firmware only latches the SYNC_OUT line in
+                                // Trigger_Start, so changing it mid-scan required
+                                // re-sending the config and restarting the trigger,
+                                // which tripped the safety circuits on some systems.
+                                // The new value is picked up on the next Start Trigger.
+                                enabled: MOTIONInterface.consoleConnected && MOTIONInterface.triggerState !== "ON"
                                 Layout.preferredHeight: 34
-                                
+
                                 contentItem: Text {
                                     text: parent.text
                                     color: parent.enabled ? "#BDC3C7" : "#7F8C8D"
                                     verticalAlignment: Text.AlignVCenter
                                     leftPadding: parent.indicator.width + parent.spacing
                                     font.pixelSize: 12
-                                }
-
-                                // Live re-apply: the firmware only latches the
-                                // SYNC_OUT line in Trigger_Start, so when a trigger
-                                // is already running we must re-send the config and
-                                // restart it for the change to reach the pin. When
-                                // idle the new value is picked up on the next Start
-                                // Trigger. Fires only on user interaction, not on the
-                                // programmatic reflect in consoleUpdateTimer.
-                                onToggled: {
-                                    if (MOTIONInterface.triggerState === "ON") {
-                                        var jsonString = JSON.stringify(page1.buildTriggerConfig());
-                                        if (!MOTIONInterface.startTrigger(jsonString)) {
-                                            console.error("Failed to re-apply Sync Out change")
-                                        }
-                                    }
                                 }
                             }
 

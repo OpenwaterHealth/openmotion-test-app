@@ -13,21 +13,77 @@ boots, and SRAM-loads for ~10-15 s when it does not.
 import pytest
 
 from utils.nvcm_verdict import (SRAM_LOAD_THRESHOLD_S, interpret_boot_probe,
-                                interpret_pin_probe)
+                                interpret_check_blob)
+
+IDCODE = bytes([0x01, 0x2C, 0x00, 0x43])
 
 
-def test_pin_probe_booted_is_programmed():
-    verdict, detail = interpret_pin_probe(True)
+def make_blob(status=b"\x00\x00\x02\x08", step_status=0x7F,
+              rows=(b"\xFF" * 16,), boot_byte=None):
+    """OW_FACTORY_NVCM_CHECK blob: 27 fixed bytes + 16 B/row, and since
+    sensor-fw #91 a trailing pin-drive boot verdict byte."""
+    blob = bytearray()
+    blob += IDCODE                    # [0:4] idcode
+    blob.append(1)                    # [4] idcode_ok
+    blob.append(step_status)          # [5] step_status
+    blob += status                    # [6:10] STATUS, big-endian
+    blob += b"\xFF" * 8               # [10:18] feature_row (floats)
+    blob += b"\xFF\xFF"               # [18:20] feabits
+    blob += b"\x00" * 4               # [20:24] usercode
+    blob += b"\x00\x00"               # [24] boot_probe_done, [25] 0x40 resp
+    blob.append(len(rows))            # [26] num_rows_read
+    for row in rows:
+        blob += row
+    if boot_byte is not None:
+        blob.append(boot_byte)
+    return bytes(blob)
+
+
+def test_check_blob_booted_is_programmed():
+    verdict, detail = interpret_check_blob(make_blob(boot_byte=1))
     assert verdict == "PROGRAMMED"
     assert "pin probe" in detail
 
 
-def test_pin_probe_no_boot_is_blank():
-    """Right cam 8 (Done fuse burned, image does not boot) must read BLANK
-    on the fast path too — the pin probe is behavioral, not fuse-based."""
-    verdict, detail = interpret_pin_probe(False)
+def test_check_blob_no_boot_blank_fuse_clear():
+    verdict, detail = interpret_check_blob(
+        make_blob(status=b"\x00\x00\x02\x08", boot_byte=0))
     assert verdict == "BLANK"
-    assert "unbootable" in detail
+    assert "NVCM blank" in detail
+
+
+def test_check_blob_no_boot_with_burned_fuse_is_flagged():
+    """Right cam 8's exact signature: STATUS bit 19 set (Done fuse burned)
+    but the design does not boot — the OTP part is dead for NVCM."""
+    verdict, detail = interpret_check_blob(
+        make_blob(status=b"\x00\x08\x02\x08", boot_byte=0))
+    assert verdict == "BLANK"
+    assert "cannot be NVCM-flashed again" in detail
+
+
+def test_check_blob_probe_refused_is_no_response():
+    verdict, detail = interpret_check_blob(make_blob(boot_byte=0xFF))
+    assert verdict == "NO RESPONSE"
+    assert "not powered" in detail
+
+
+def test_check_blob_without_verdict_byte_returns_none():
+    """Pre-#91 firmware blob (no trailing byte) -> caller must fall back."""
+    assert interpret_check_blob(make_blob(boot_byte=None)) is None
+
+
+def test_check_blob_row_bytes_not_mistaken_for_verdict():
+    """The verdict offset must skip the variable-length rows: a two-row
+    blob with no trailing byte has 0x01-looking bytes inside the rows."""
+    rows = (b"\x01" * 16, b"\x01" * 16)
+    assert interpret_check_blob(make_blob(rows=rows, boot_byte=None)) is None
+    verdict, _ = interpret_check_blob(make_blob(rows=rows, boot_byte=0))
+    assert verdict == "BLANK"
+
+
+def test_check_blob_empty_or_short_returns_none():
+    assert interpret_check_blob(b"") is None
+    assert interpret_check_blob(b"\x01\x2C\x00\x43\x01") is None
 
 
 def test_fast_program_is_programmed():

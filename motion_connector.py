@@ -27,7 +27,8 @@ from pathlib import Path
 from omotion.GitHubReleases import GitHubReleases
 from motion_singleton import motion_interface
 from histogram_classifier import classify_histogram
-from utils.nvcm_verdict import interpret_boot_probe, interpret_pin_probe
+from omotion.config import OW_RESP
+from utils.nvcm_verdict import interpret_boot_probe, interpret_check_blob
 from fpga_laser_config import (
     FpgaModel,
     apply_laser_power_from_config,
@@ -553,9 +554,10 @@ class _NvcmCheckThread(QThread):
     """Sweep that boot-tests NVCM on all 8 cameras via the firmware's own
     pin-drive detector (see utils/nvcm_verdict.py).
 
-    Fast path (firmware with OW_FACTORY_NVCM_BOOT, sensor-fw #91): a
-    read-only ~0.1 s probe per camera — no SRAM write; a non-booting part
-    is left unconfigured until the next scan programs it.
+    Fast path (sensor-fw #91: pin-drive boot verdict appended to the
+    OW_FACTORY_NVCM_CHECK blob): a read-only ~0.1 s probe per camera — no
+    SRAM write; a non-booting part is left unconfigured until the next
+    scan programs it.
 
     Fallback (older firmware/SDK): hard-reset (OW_FPGA_RESET — clears the
     firmware's isProgrammed cache) + timed non-forced program; the firmware
@@ -594,17 +596,23 @@ class _NvcmCheckThread(QThread):
                         verdict, detail = "NO RESPONSE", "camera power-on failed"
                     else:
                         time.sleep(0.3)
-                        # Fast read-only path: OW_FACTORY_NVCM_BOOT runs the
-                        # firmware's pin-drive boot test directly (~0.1 s).
-                        # None means the firmware (OW_UNKNOWN, pre-#91) or the
-                        # SDK is too old — fall back to the slow-but-universal
-                        # reset + timed non-forced program.
-                        booted = None
-                        probe = getattr(sensor, "nvcm_boot_test", None)
-                        if probe is not None:
-                            booted = probe(idx)
-                        if booted is not None:
-                            verdict, detail = interpret_pin_probe(booted)
+                        # Fast read-only path: sensor-fw #91 appends the
+                        # pin-drive boot verdict to the OW_FACTORY_NVCM_CHECK
+                        # blob (~0.1 s). The probe runs on the firmware's
+                        # active camera, so the mux switch must be verified —
+                        # a silently failed switch would re-probe the previous
+                        # camera. interpret_check_blob() returns None when the
+                        # byte is absent (pre-#91 firmware) — fall back to the
+                        # slow-but-universal reset + timed non-forced program.
+                        fast = None
+                        switch_resp = sensor.switch_camera(idx)
+                        switch_pt = getattr(switch_resp, "packetType", None)
+                        if switch_pt == OW_RESP:
+                            time.sleep(0.1)
+                            fast = interpret_check_blob(
+                                sensor.nvcm_check(boot_test=False))
+                        if fast is not None:
+                            verdict, detail = fast
                         else:
                             self.progress.emit(
                                 int((cam - 1) * 100 / 8),

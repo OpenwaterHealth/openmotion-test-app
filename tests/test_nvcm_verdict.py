@@ -1,113 +1,62 @@
-"""Unit tests for utils.nvcm_verdict.interpret_nvcm_blob (issue #44).
+"""Unit tests for utils.nvcm_verdict.interpret_boot_probe (issue #44).
 
 Run from the repo root with:  python -m pytest tests/test_nvcm_verdict.py
 
-The old interpreter derived PROGRAMMED from the auto-boot "0x40 stopped
-ACKing" signal, which is unconditionally true on this part (the CrossLink
-config port needs the activation key to respond at all), so every camera
-with a valid IDCODE read as PROGRAMMED. The verdict must instead come from
-STATUS bit 19 (blob[7] bit 3) — the bit that empirically discriminates
-programmed (00 08 02 08) from blank (00 00 02 08) parts in the probe's
-ISC flow (16-camera hardware sweep, 2026-07-02). The SRAM Done bit
-(blob[8] bit 0) reads 0 on every camera in this flow and cannot be used.
+History: the check first inferred PROGRAMMED from the keyless 0x40 probe
+(wrong — 0x40 never ACKs without the activation key), then from STATUS
+bit 19 (wrong — it tracks the NVCM Done fuse, so a part whose fuse is
+burned but whose image does not boot still reads PROGRAMMED; right sensor
+camera 8, 2026-07-17). The check now times the firmware's own non-forced
+program path: fpga_detect_nvcm() skips in ~0.1 s when the NVCM design
+boots, and SRAM-loads for ~10-15 s when it does not.
 """
 import pytest
 
-from utils.nvcm_verdict import STEP_STATUS, interpret_nvcm_blob
-
-IDCODE = bytes([0x01, 0x2C, 0x00, 0x43])
+from utils.nvcm_verdict import SRAM_LOAD_THRESHOLD_S, interpret_boot_probe
 
 
-def make_blob(idcode_ok=1, step_status=0x7F, status=b"\x00\x00\x02\x08",
-              feature_row=b"\xFF" * 8, feabits=b"\xFF\xFF",
-              usercode=b"\x00" * 4, boot_probe_done=0,
-              boot_0x40_responds=0, rows=(b"\xFF" * 16,)):
-    """Build an OW_FACTORY_NVCM_CHECK response blob (see nvcm_verdict)."""
-    blob = bytearray()
-    blob += IDCODE
-    blob.append(idcode_ok)
-    blob.append(step_status)
-    blob += status
-    blob += feature_row
-    blob += feabits
-    blob += usercode
-    blob.append(boot_probe_done)
-    blob.append(boot_0x40_responds)
-    blob.append(len(rows))
-    for row in rows:
-        blob += row
-    return bytes(blob)
-
-
-def test_empty_blob_is_no_response():
-    verdict, detail = interpret_nvcm_blob(b"")
-    assert verdict == "NO RESPONSE"
-    assert "no data" in detail
-
-
-def test_short_blob_is_no_response():
-    verdict, detail = interpret_nvcm_blob(b"\x01\x2C\x00\x43\x01")
-    assert verdict == "NO RESPONSE"
-    assert "5 bytes" in detail
-
-
-def test_idcode_mismatch_is_inconclusive():
-    verdict, _ = interpret_nvcm_blob(make_blob(idcode_ok=0))
-    assert verdict == "INCONCLUSIVE"
-
-
-def test_missing_status_read_is_inconclusive():
-    # step_status without the STATUS bit: Done can't be trusted.
-    verdict, detail = interpret_nvcm_blob(
-        make_blob(step_status=0x7F & ~STEP_STATUS))
-    assert verdict == "INCONCLUSIVE"
-    assert "STATUS" in detail
-
-
-def test_blank_part_regression_issue_44():
-    """Real blank-camera blob (sensor-fw NVCM notebook, cam8 pre-burn):
-    STATUS 00 00 02 08 -> Done=0, but the boot test reported "0x40 gone"
-    (boot_0x40_responds=0), which the old code read as PROGRAMMED."""
-    blob = make_blob(status=b"\x00\x00\x02\x08",
-                     boot_probe_done=1, boot_0x40_responds=0)
-    verdict, detail = interpret_nvcm_blob(blob)
-    assert verdict == "BLANK"
-    assert "00 00 02 08" in detail
-
-
-def test_programmed_part_bit19_set():
-    """Real programmed-camera blob (16-camera bench sweep 2026-07-02:
-    all 15 programmed cameras read STATUS 00 08 02 08)."""
-    blob = make_blob(status=b"\x00\x08\x02\x08")
-    verdict, detail = interpret_nvcm_blob(blob)
+def test_fast_program_is_programmed():
+    """Bench 2026-07-17, left cam 8 (bootable NVCM): skip took 0.11 s."""
+    verdict, detail = interpret_boot_probe(True, True, 0.11)
     assert verdict == "PROGRAMMED"
-    assert "00 08 02 08" in detail
+    assert "0.11 s" in detail
 
 
-def test_boot_test_bytes_are_ignored():
-    """The auto-boot bytes carry no information; the verdict must not
-    change with them (old code flipped PROGRAMMED/BLANK on blob[25])."""
-    for b1, expected in ((0x00, "BLANK"), (0x08, "PROGRAMMED")):
-        status = bytes([0x00, b1, 0x02, 0x08])
-        verdicts = {
-            interpret_nvcm_blob(make_blob(status=status,
-                                          boot_probe_done=probe,
-                                          boot_0x40_responds=ack))[0]
-            for probe in (0, 1) for ack in (0, 1)
-        }
-        assert verdicts == {expected}
-
-
-def test_no_rows_blob_is_still_parseable():
-    # num_rows=0 gives the 27-byte minimum layout.
-    blob = make_blob(rows=())
-    assert len(blob) == 27
-    verdict, _ = interpret_nvcm_blob(blob)
+def test_slow_program_is_blank():
+    """Bench 2026-07-17, right cam 8 (Done fuse burned, image does not
+    boot): the firmware SRAM-loaded it in 13.87 s."""
+    verdict, detail = interpret_boot_probe(True, True, 13.87)
     assert verdict == "BLANK"
+    assert "13.9 s" in detail
 
 
-@pytest.mark.parametrize("extra", [b"", b"\x00" * 16])
-def test_verdict_independent_of_row_payload(extra):
-    blob = make_blob(rows=(b"\x00" * 16,)) + extra
-    verdict, _ = interpret_nvcm_blob(blob)
-    assert verdict == "BLANK"
+@pytest.mark.parametrize("elapsed,expected", [
+    (SRAM_LOAD_THRESHOLD_S - 0.01, "PROGRAMMED"),
+    (SRAM_LOAD_THRESHOLD_S, "BLANK"),
+    (SRAM_LOAD_THRESHOLD_S + 0.01, "BLANK"),
+])
+def test_threshold_boundary(elapsed, expected):
+    verdict, _ = interpret_boot_probe(True, True, elapsed)
+    assert verdict == expected
+
+
+def test_reset_failure_is_inconclusive():
+    """Without a successful OW_FPGA_RESET the isProgrammed cache may be
+    stale, and program_fpga would return instantly without running the
+    boot test — the timing carries no signal."""
+    verdict, detail = interpret_boot_probe(False, False, 0.0)
+    assert verdict == "INCONCLUSIVE"
+    assert "reset" in detail.lower()
+
+
+def test_program_failure_is_no_response():
+    verdict, detail = interpret_boot_probe(True, False, 0.4)
+    assert verdict == "NO RESPONSE"
+    assert "failed" in detail
+
+
+def test_reset_failure_wins_over_program_result():
+    # Even if a (nonsensical) fast success were reported, a failed reset
+    # means the cache may have answered — never report PROGRAMMED.
+    verdict, _ = interpret_boot_probe(False, True, 0.05)
+    assert verdict == "INCONCLUSIVE"

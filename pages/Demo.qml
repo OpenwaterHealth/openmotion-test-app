@@ -23,19 +23,6 @@ Rectangle {
     property real pdcMax: NaN
     property bool demoLoading: false
 
-    // Build the trigger-config object from the current panel fields.
-    // Used by the Start Trigger button.
-    function buildTriggerConfig() {
-        return {
-            "TriggerFrequencyHz": parseFloat(fsFrequency.text),
-            "TriggerPulseWidthUsec": parseInt(fsPulseWidth.text),
-            "LaserPulseDelayUsec": parseInt(lsDelay.text),
-            "LaserPulseWidthUsec": parseInt(lsPulseWidth.text),
-            "EnableSyncOut": enableSyncOutCheckbox.checked,
-            "EnableTaTrigger": true
-        }
-    }
-
     // Show loading overlay whenever this page becomes visible while connected
     onVisibleChanged: {
         if (visible && MOTIONInterface.consoleConnected) {
@@ -1863,7 +1850,15 @@ Rectangle {
                                     page1.pdcMin = NaN;
                                     page1.pdcMax = NaN;
 
-                                    var jsonString = JSON.stringify(page1.buildTriggerConfig());
+                                    var json_trigger_data = {
+                                        "TriggerFrequencyHz": parseFloat(fsFrequency.text),
+                                        "TriggerPulseWidthUsec": parseInt(fsPulseWidth.text),
+                                        "LaserPulseDelayUsec": parseInt(lsDelay.text),
+                                        "LaserPulseWidthUsec": parseInt(lsPulseWidth.text),
+                                        "EnableSyncOut": enableSyncOutCheckbox.checked,
+                                        "EnableTaTrigger": true
+                                    }
+                                    var jsonString = JSON.stringify(json_trigger_data);
                                     if (!MOTIONInterface.startTrigger(jsonString)) {
                                         console.error("Failed to apply and start trigger config")
                                     }

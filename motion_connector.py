@@ -608,6 +608,7 @@ class _NvcmCheckThread(QThread):
                 finally:
                     mutex.unlock()
 
+                logger.info("NVCM check camera %d: %s — %s", cam, verdict, detail)
                 self.cameraResult.emit(cam, verdict, detail)
                 results.append((cam, verdict, detail))
 

@@ -12,7 +12,22 @@ boots, and SRAM-loads for ~10-15 s when it does not.
 """
 import pytest
 
-from utils.nvcm_verdict import SRAM_LOAD_THRESHOLD_S, interpret_boot_probe
+from utils.nvcm_verdict import (SRAM_LOAD_THRESHOLD_S, interpret_boot_probe,
+                                interpret_pin_probe)
+
+
+def test_pin_probe_booted_is_programmed():
+    verdict, detail = interpret_pin_probe(True)
+    assert verdict == "PROGRAMMED"
+    assert "pin probe" in detail
+
+
+def test_pin_probe_no_boot_is_blank():
+    """Right cam 8 (Done fuse burned, image does not boot) must read BLANK
+    on the fast path too — the pin probe is behavioral, not fuse-based."""
+    verdict, detail = interpret_pin_probe(False)
+    assert verdict == "BLANK"
+    assert "unbootable" in detail
 
 
 def test_fast_program_is_programmed():

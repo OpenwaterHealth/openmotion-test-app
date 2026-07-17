@@ -36,6 +36,17 @@ left SRAM-configured and running — the same state a scan leaves it in.
 SRAM_LOAD_THRESHOLD_S = 2.0
 
 
+def interpret_pin_probe(booted: bool) -> tuple[str, str]:
+    """Verdict for the fast read-only path — OW_FACTORY_NVCM_BOOT (sensor-fw
+    #91), which runs the same pin-drive boot test directly (~0.1 s) without
+    SRAM-loading blank parts."""
+    if booted:
+        return ("PROGRAMMED",
+                "NVCM design booted and drove the camera bus (pin probe)")
+    return ("BLANK",
+            "no NVCM boot (pin probe) — blank or unbootable image")
+
+
 def interpret_boot_probe(reset_ok: bool, program_ok: bool,
                          elapsed_s: float) -> tuple[str, str]:
     """Reduce a reset + timed non-forced program to a verdict + detail.

@@ -492,7 +492,7 @@ Rectangle {
         }
     }
 
-    // NVCM programmed-check result (read-only sweep across all 8 cameras)
+    // NVCM programmed-check result (boot-test sweep across all 8 cameras)
     Dialog {
         id: nvcmCheckSummaryDialog
         title: "NVCM Programmed Check"
@@ -1473,7 +1473,7 @@ Rectangle {
                                             }
                                         }
 
-                                        // NVCM programmed check (read-only, all 8 cameras)
+                                        // NVCM programmed check (firmware boot test, all 8 cameras)
                                         Button {
                                             id: nvcmCheckButton
                                             text: "Check NVCM (all)"

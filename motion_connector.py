@@ -27,7 +27,8 @@ from pathlib import Path
 from omotion.GitHubReleases import GitHubReleases
 from motion_singleton import motion_interface
 from histogram_classifier import classify_histogram
-from utils.nvcm_verdict import interpret_nvcm_blob
+from omotion.config import OW_RESP
+from utils.nvcm_verdict import interpret_boot_probe, interpret_check_blob
 from fpga_laser_config import (
     FpgaModel,
     apply_laser_power_from_config,
@@ -550,11 +551,21 @@ class _NvcmFlashThread(QThread):
 
 
 class _NvcmCheckThread(QThread):
-    """Read-only sweep that probes NVCM programmed-state on all 8 cameras.
+    """Sweep that boot-tests NVCM on all 8 cameras via the firmware's own
+    pin-drive detector (see utils/nvcm_verdict.py).
 
-    Each camera is powered on, the TCA mux is routed to it, and the firmware
-    OW_FACTORY_NVCM_CHECK command is run. Nothing is written; camera power is
-    left on afterwards (the page's power controls own the final state).
+    Fast path (sensor-fw #91: pin-drive boot verdict appended to the
+    OW_FACTORY_NVCM_CHECK blob): a read-only ~0.1 s probe per camera — no
+    SRAM write; a non-booting part is left unconfigured until the next
+    scan programs it.
+
+    Fallback (older firmware/SDK): hard-reset (OW_FPGA_RESET — clears the
+    firmware's isProgrammed cache) + timed non-forced program; the firmware
+    either skips (NVCM boots, ~0.1 s) or SRAM-loads (~10-15 s) and the
+    verdict comes from which path it took.
+
+    Camera power is left on afterwards (the page's power controls own the
+    final state).
     """
 
     progress = pyqtSignal(int, str)          # percent (0-100), message
@@ -577,26 +588,56 @@ class _NvcmCheckThread(QThread):
                 mask = 1 << idx
                 self.progress.emit(
                     int((cam - 1) * 100 / 8),
-                    f"Camera {cam}: probing NVCM ({cam} of 8)…")
+                    f"Camera {cam}: NVCM boot test ({cam} of 8)…")
 
                 mutex.lock()
                 try:
-                    sensor.enable_camera_power(mask)
-                    time.sleep(0.3)
-                    sensor.switch_camera(idx)
-                    time.sleep(0.1)
-                    # boot_test=False: the auto-boot 0x40 probe carries no
-                    # information (0x40 needs the activation key to respond
-                    # at all — issue #44); the verdict comes from the STATUS
-                    # Done bit, which the probe reads regardless.
-                    blob = sensor.nvcm_check(boot_test=False)
-                    verdict, detail = interpret_nvcm_blob(blob)
+                    if not sensor.enable_camera_power(mask):
+                        verdict, detail = "NO RESPONSE", "camera power-on failed"
+                    else:
+                        time.sleep(0.3)
+                        # Fast read-only path: sensor-fw #91 appends the
+                        # pin-drive boot verdict to the OW_FACTORY_NVCM_CHECK
+                        # blob (~0.1 s). The probe runs on the firmware's
+                        # active camera, so the mux switch must be verified —
+                        # a silently failed switch would re-probe the previous
+                        # camera. interpret_check_blob() returns None when the
+                        # byte is absent (pre-#91 firmware) — fall back to the
+                        # slow-but-universal reset + timed non-forced program.
+                        fast = None
+                        switch_resp = sensor.switch_camera(idx)
+                        switch_pt = getattr(switch_resp, "packetType", None)
+                        if switch_pt == OW_RESP:
+                            time.sleep(0.1)
+                            fast = interpret_check_blob(
+                                sensor.nvcm_check(boot_test=False))
+                        if fast is not None:
+                            verdict, detail = fast
+                        else:
+                            self.progress.emit(
+                                int((cam - 1) * 100 / 8),
+                                f"Camera {cam}: firmware lacks the fast probe —"
+                                " reset + program ({} of 8, ~15 s if the FPGA"
+                                " needs an SRAM load)…".format(cam))
+                            # OW_FPGA_RESET: CRESETB reset + clears the
+                            # firmware's isProgrammed cache, so the non-forced
+                            # program below must re-run fpga_detect_nvcm (the
+                            # keyless-boot pin test) instead of trusting a
+                            # stale cached answer.
+                            reset_ok = sensor.reset_camera_sensor(mask)
+                            t0 = time.perf_counter()
+                            prog_ok = (sensor.program_fpga(mask, False)
+                                       if reset_ok else False)
+                            elapsed = time.perf_counter() - t0
+                            verdict, detail = interpret_boot_probe(
+                                reset_ok, prog_ok, elapsed)
                 except Exception as exc:  # never let the thread die silently
                     logger.exception("NVCM check raised for camera %d", cam)
                     verdict, detail = "NO RESPONSE", str(exc)
                 finally:
                     mutex.unlock()
 
+                logger.info("NVCM check camera %d: %s — %s", cam, verdict, detail)
                 self.cameraResult.emit(cam, verdict, detail)
                 results.append((cam, verdict, detail))
 
@@ -978,7 +1019,7 @@ class MOTIONConnector(QObject):
     nvcmFlashFinished = pyqtSignal(bool, str)          # overall ok, summary
     nvcmFlashBusyChanged = pyqtSignal()
 
-    # NVCM programmed-check signals (read-only sweep across all 8 cameras)
+    # NVCM programmed-check signals (boot-test sweep across all 8 cameras)
     nvcmCheckProgress = pyqtSignal(int, str)           # percent, message
     nvcmCheckCameraResult = pyqtSignal(int, str, str)  # camera, verdict, detail
     nvcmCheckFinished = pyqtSignal(bool, str)          # all programmed?, summary
@@ -1249,7 +1290,7 @@ class MOTIONConnector(QObject):
 
     @pyqtSlot(str)
     def checkNvcmProgrammed(self, sensor_tag: str) -> None:
-        """Read-only NVCM programmed-state sweep across all 8 cameras."""
+        """NVCM boot-test sweep across all 8 cameras (see _NvcmCheckThread)."""
         logger.info(f"checkNvcmProgrammed sensor={sensor_tag}")
         if sensor_tag not in ("left", "right"):
             self.nvcmCheckFinished.emit(False, "Invalid sensor target.")

@@ -36,10 +36,6 @@ left SRAM-configured and running — the same state a scan leaves it in.
 SRAM_LOAD_THRESHOLD_S = 2.0
 
 
-# step_status bit set when the probe's STATUS register read succeeded
-# (sensor-fw crosslink.h FPGA_NVCM_STEP_STATUS).
-STEP_STATUS = 1 << 3
-
 # OW_FACTORY_NVCM_CHECK blob: 27 fixed bytes, then 16 B per NVCM row read,
 # then (sensor-fw #91) one pin-drive boot verdict byte.
 _FIXED_LEN = 27
@@ -54,10 +50,7 @@ def interpret_check_blob(blob: bytes) -> tuple[str, str] | None:
 
     Returns None when the byte is absent (pre-#91 firmware or no usable
     response) — the caller must fall back to interpret_boot_probe()'s
-    reset + timed-program method. When the register reads in the same blob
-    show the Done fuse burned (STATUS bit 19) on a part that does not boot,
-    the detail says so: that part is OTP-burned and can never be
-    NVCM-flashed to a bootable state.
+    reset + timed-program method.
     """
     if len(blob) < _FIXED_LEN + 1:
         return None
@@ -74,12 +67,7 @@ def interpret_check_blob(blob: bytes) -> tuple[str, str] | None:
     if booted != 0:
         return ("INCONCLUSIVE",
                 f"unexpected boot-probe byte 0x{booted:02X}")
-    fuse_burned = bool(blob[5] & STEP_STATUS) and bool(blob[7] & 0x08)
-    if fuse_burned:
-        return ("BLANK",
-                "no NVCM boot (pin probe) — Done fuse is burned but the "
-                "image does not boot; this part cannot be NVCM-flashed again")
-    return ("BLANK", "no NVCM boot (pin probe) — NVCM blank")
+    return ("BLANK", "no NVCM boot (pin probe)")
 
 
 def interpret_boot_probe(reset_ok: bool, program_ok: bool,

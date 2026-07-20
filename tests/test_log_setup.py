@@ -4,7 +4,6 @@ Run from the repo root with:  python -m pytest tests/test_log_setup.py
 (`python -m pytest` puts the repo root on sys.path so `import utils.*` works.)
 """
 import logging
-import os
 from pathlib import Path
 
 import pytest

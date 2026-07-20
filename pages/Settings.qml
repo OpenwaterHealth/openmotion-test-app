@@ -4,6 +4,8 @@ import QtQuick.Layouts 6.0
 import QtQuick.Dialogs 6.2
 import OpenMotion 1.0
 
+import "../components"
+
 Rectangle {
     id: page1
     width: parent.width
@@ -1208,10 +1210,8 @@ Rectangle {
                                 Text { anchors.centerIn: parent; text: "Save"; color: "white"; font.pixelSize: 13; font.bold: true }
                                 MouseArea {
                                     id: saveJsonMA; anchors.fill: parent; hoverEnabled: true
-                                    onClicked: {
-                                        MOTIONInterface.setUserConfigJson(userConfigJsonArea.text)
-                                        jsonStatus.text = "Saving..."
-                                    }
+                                    // Gate 2 (issue #47): confirm before writing config to the device.
+                                    onClicked: userConfigSaveConfirmDialog.open()
                                 }
                             }
 
@@ -2017,6 +2017,23 @@ Rectangle {
             text: "Reading device configuration…"
             color: "#BDC3C7"
             font.pixelSize: 14
+        }
+    }
+
+    // Gate 2 (issue #47): second confirmation before a configuration write.
+    // Fires on every Save; not suppressed by the startup warranty acceptance,
+    // which guards a different thing.
+    ConfirmDialog {
+        id: userConfigSaveConfirmDialog
+        title: "Confirm Configuration Change"
+        warningText: "Warning: Modifying your hardware configuration can cause " +
+                     "permanent damage, system instability, or render your device " +
+                     "completely unusable. If you are unsure about a configuration " +
+                     "change, please contact technical support for assistance."
+        questionText: "Are you sure you want to proceed?"
+        onConfirmed: {
+            MOTIONInterface.setUserConfigJson(userConfigJsonArea.text)
+            jsonStatus.text = "Saving..."
         }
     }
 }

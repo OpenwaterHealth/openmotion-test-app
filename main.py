@@ -21,6 +21,7 @@ from motion_connector import MOTIONConnector
 from motion_singleton import motion_interface
 from version import get_version
 from utils.log_setup import configure_app_logging
+from utils.warranty_ack import APPLICATION, ORGANIZATION, WarrantyAck
 
 # set PYTHONPATH=%cd%\..\OpenMOTION-PyLib;%PYTHONPATH%
 # python main.py
@@ -82,6 +83,11 @@ def main():
 
     app = QGuiApplication(sys.argv)
 
+    # QSettings resolves its storage location from these. Must be set before
+    # any QSettings() is constructed — WarrantyAck below depends on it.
+    app.setOrganizationName(ORGANIZATION)
+    app.setApplicationName(APPLICATION)
+
     # Set the global application icon
     app.setWindowIcon(QIcon("assets/images/favicon.png"))
     engine = QQmlApplicationEngine()
@@ -92,6 +98,13 @@ def main():
     log_level = logging.DEBUG if args.debug else logging.INFO
     connector = MOTIONConnector(log_level=log_level, github_disabled=args.no_github)
     qmlRegisterSingletonInstance("OpenMotion", 1, 0, "MOTIONInterface", connector)
+
+    # Warranty acknowledgement gate (issue #47). Held in a local so Python
+    # keeps a reference alive for the lifetime of the app — qmlRegisterSingletonInstance
+    # does not take ownership.
+    warranty_ack = WarrantyAck()
+    qmlRegisterSingletonInstance("OpenMotion", 1, 0, "WarrantyAck", warranty_ack)
+    logger.info("Warranty warning previously accepted: %s", warranty_ack.accepted)
     engine.rootContext().setContextProperty("appVersion", APP_VERSION)
     # Also expose app version on the QGuiApplication instance so Python
     # modules (not just QML) can read it via QGuiApplication.instance().property()

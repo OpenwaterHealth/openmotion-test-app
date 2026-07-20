@@ -120,13 +120,21 @@ Both dialogs follow the existing hand-styled pattern used throughout the app; se
 
 ## Error handling
 
-`utils/warranty_ack.py` **fails closed**. If `QSettings` cannot be read or written
-— a locked or unwritable registry, a corrupt value — it logs a warning via the
-module logger and reports `accepted == false`. The worst case is the dialog
-appearing on every launch, never a silently skipped warning.
+`utils/warranty_ack.py` **fails closed**. If `QSettings` cannot be read, or holds a
+value we could not have written, it logs a warning via the module logger and
+reports `accepted == false`. The worst case is the dialog appearing on every
+launch, never a silently skipped warning.
 
-`accept()` returning without successfully persisting is not surfaced to the user;
-the session proceeds normally and the dialog simply reappears next launch.
+**Do not use `QSettings.value(key, type=bool)`.** Qt's QVariant conversion turns
+the string `"garbage"` into `True`, which fails *open* — exactly the wrong
+direction for a safety gate. Verified 2026-07-20 on PyQt6 6.8. Instead read the
+raw value and accept only a real `True` or the strings `"true"` / `"1"`. Both
+forms occur in practice: the INI backend returns a Python `bool`, the Windows
+registry backend returns the string `"true"`.
+
+A failed *write* is logged but not surfaced to the user. The in-session `accepted`
+still flips to true — the user did accept, and re-prompting mid-session would be
+wrong — and the dialog simply reappears on the next launch.
 
 ## Testing
 
@@ -136,9 +144,13 @@ instance (default: the org/app-scoped one described above), and the tests pass a
 `QSettings(path, QSettings.Format.IniFormat)` backed by a `tmp_path` file:
 
 - `accepted` is `false` on a fresh store.
-- `accept()` persists; a newly constructed instance reads `true`.
-- A corrupt/non-bool stored value reads as `false`.
-- An unwritable backend does not raise, and leaves `accepted == false`.
+- `accept()` persists (the INI file on disk contains `accepted=true`) and a newly
+  constructed instance reads `true`.
+- `accept()` emits `acceptedChanged` once, and is idempotent on a second call.
+- A corrupt stored value (e.g. the string `garbage`) reads as `false`.
+- An unwritable backend does not raise. The in-session `accepted` still becomes
+  `true` — the user did accept, and re-prompting mid-session would be wrong — but
+  nothing is persisted, so the next launch prompts again.
 
 **Manual verification** — the repo has no QML test harness, so the dialogs are
 checked by running the app:
@@ -155,9 +167,13 @@ checked by running the app:
 
 ## Risks
 
-- **Frameless window.** `main.qml` uses `Qt.FramelessWindowHint`. The gate must be
-  parented such that it centers on and covers the window; verify positioning, since
-  the existing dialogs live inside pages rather than at the `ApplicationWindow` root.
+- ~~**Frameless window.**~~ **Resolved 2026-07-20.** `main.qml` uses
+  `Qt.FramelessWindowHint`, so dialog centring needed checking. Setting
+  `parent: Overlay.overlay` with `anchors.centerIn: parent` centres correctly on
+  the full window — verified offscreen both at the window root and from a dialog
+  declared inside a nested, inset page (the `pages/Settings.qml` case): the dialog
+  landed at exactly the computed centre of the 1200×800 overlay. Note the overlay
+  reads 0×0 during `Component.onCompleted`; measure after layout.
 - **Startup ordering.** `motion_interface.start()` runs in `main.py` after
   `engine.load()`, so hardware monitoring begins regardless of the gate. A decline
   calls `Qt.quit()` and the existing `aboutToQuit` handler stops the monitor

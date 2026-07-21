@@ -62,6 +62,14 @@ Rectangle {
     property string fwUpdateTarget: "console"
     // Target used when opening the upload dialog
     property string fwUploadTarget: "console"
+    // Pending bootloader install, set by the Install Bootloader buttons
+    // and consumed by bootloaderWarningDialog.
+    property string blInstallTarget: ""
+    property string blInstallTag: ""
+    // Bumped whenever a boot mode is observed, so the Install Bootloader
+    // visibility bindings re-evaluate (the backing call is a slot, not a
+    // notifying property).
+    property int bootModeRevision: 0
 
     // User configuration values (editable by user)
     property real userTecTrip: 0.00
@@ -359,6 +367,21 @@ Rectangle {
             fwResultDialog.open()
         }
 
+        function onBootloaderInstallFinished(target, success, message) {
+            fwUpdateTarget = target
+            fwProgressDialog.close()
+            fwResultDialog.title = success ? "Bootloader Installed" : "Bootloader Install Failed"
+            var prefix = (target === "console") ? "Console: " : (target === "left") ? "Left sensor: " : "Right sensor: "
+            fwResultDialog.message = prefix + message
+            fwResultDialog.open()
+        }
+
+        function onDeviceBootModeChanged(target, label) {
+            // Refresh the Install Bootloader buttons: bootloaderInstallSupported()
+            // is a plain slot, so its bindings need a nudge to re-evaluate.
+            bootModeRevision += 1
+        }
+
         function onConsoleFirmwareUpdateError(target, message) {
             fwUpdateTarget = target
             fwProgressDialog.close()
@@ -585,17 +608,6 @@ Rectangle {
             var idx = file.lastIndexOf("/")
             if (idx < 0) idx = file.lastIndexOf("\\\\")
             var fname = idx >= 0 ? file.substring(idx + 1) : file
-
-            if (fwUploadTarget === "console" && fname !== "motion-console-fw.bin") {
-                fwErrorDialog.message = "Filename must be motion-console-fw.bin"
-                fwErrorDialog.open()
-                return
-            }
-            if ((fwUploadTarget === "left" || fwUploadTarget === "right") && fname !== "motion-sensor-fw.bin") {
-                fwErrorDialog.message = "Filename must be motion-sensor-fw.bin"
-                fwErrorDialog.open()
-                return
-            }
 
             // Pass the local path to the connector (QML provides native path in selectedFiles/fileUrls)
             // No download step for local files — beginDeviceFirmwareFromLocal emits
@@ -1703,6 +1715,52 @@ Rectangle {
 
                                 Behavior on color { ColorAnimation { duration: 200 } }
                             }
+
+                            // Convert this device to run the secure bootloader.
+                            // Hidden once we have positively observed that it
+                            // already has one; until then it stays available,
+                            // because boot mode cannot be known without
+                            // entering DFU. The SDK aborts without writing if a
+                            // bootloader turns out to be present.
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.topMargin: 8
+                                height: 34
+                                radius: 10
+                                visible: bootModeRevision >= 0 && MOTIONInterface.bootloaderInstallSupported("console")
+                                color: enabled ? "#8E44AD" : "#7F8C8D"
+                                enabled: !MOTIONInterface.consoleFirmwareUpdateBusy
+
+                                Text {
+                                    text: "Install Bootloader"
+                                    anchors.centerIn: parent
+                                    color: parent.enabled ? "white" : "#BDC3C7"
+                                    font.pixelSize: 15
+                                    font.weight: Font.Bold
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: parent.enabled
+                                    onClicked: {
+                                        var tag = consoleLatestCombo.currentText
+                                        if (!tag || tag === "")
+                                            tag = consoleLatestFirmware
+                                        if (tag === "Upload File...") {
+                                            fwErrorDialog.message = "Select a release to install the bootloader from; a local file cannot be used for this."
+                                            fwErrorDialog.open()
+                                            return
+                                        }
+                                        blInstallTarget = "console"
+                                        blInstallTag = tag
+                                        bootloaderWarningDialog.open()
+                                    }
+                                    onEntered: if (parent.enabled) parent.color = "#7D3C98"
+                                    onExited: if (parent.enabled) parent.color = "#8E44AD"
+                                }
+
+                                Behavior on color { ColorAnimation { duration: 200 } }
+                            }
                         }
                     }
 
@@ -1839,6 +1897,52 @@ Rectangle {
                                     }
                                     onEntered: if (parent.enabled) parent.color = "#C0392B"
                                     onExited: if (parent.enabled) parent.color = "#E74C3C"
+                                }
+
+                                Behavior on color { ColorAnimation { duration: 200 } }
+                            }
+
+                            // Convert this device to run the secure bootloader.
+                            // Hidden once we have positively observed that it
+                            // already has one; until then it stays available,
+                            // because boot mode cannot be known without
+                            // entering DFU. The SDK aborts without writing if a
+                            // bootloader turns out to be present.
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.topMargin: 8
+                                height: 34
+                                radius: 10
+                                visible: bootModeRevision >= 0 && MOTIONInterface.bootloaderInstallSupported("left")
+                                color: enabled ? "#8E44AD" : "#7F8C8D"
+                                enabled: !MOTIONInterface.consoleFirmwareUpdateBusy
+
+                                Text {
+                                    text: "Install Bootloader"
+                                    anchors.centerIn: parent
+                                    color: parent.enabled ? "white" : "#BDC3C7"
+                                    font.pixelSize: 15
+                                    font.weight: Font.Bold
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: parent.enabled
+                                    onClicked: {
+                                        var tag = leftLatestCombo.currentText
+                                        if (!tag || tag === "")
+                                            tag = leftLatestFirmware
+                                        if (tag === "Upload File...") {
+                                            fwErrorDialog.message = "Select a release to install the bootloader from; a local file cannot be used for this."
+                                            fwErrorDialog.open()
+                                            return
+                                        }
+                                        blInstallTarget = "left"
+                                        blInstallTag = tag
+                                        bootloaderWarningDialog.open()
+                                    }
+                                    onEntered: if (parent.enabled) parent.color = "#7D3C98"
+                                    onExited: if (parent.enabled) parent.color = "#8E44AD"
                                 }
 
                                 Behavior on color { ColorAnimation { duration: 200 } }
@@ -1983,6 +2087,52 @@ Rectangle {
 
                                 Behavior on color { ColorAnimation { duration: 200 } }
                             }
+
+                            // Convert this device to run the secure bootloader.
+                            // Hidden once we have positively observed that it
+                            // already has one; until then it stays available,
+                            // because boot mode cannot be known without
+                            // entering DFU. The SDK aborts without writing if a
+                            // bootloader turns out to be present.
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.topMargin: 8
+                                height: 34
+                                radius: 10
+                                visible: bootModeRevision >= 0 && MOTIONInterface.bootloaderInstallSupported("right")
+                                color: enabled ? "#8E44AD" : "#7F8C8D"
+                                enabled: !MOTIONInterface.consoleFirmwareUpdateBusy
+
+                                Text {
+                                    text: "Install Bootloader"
+                                    anchors.centerIn: parent
+                                    color: parent.enabled ? "white" : "#BDC3C7"
+                                    font.pixelSize: 15
+                                    font.weight: Font.Bold
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: parent.enabled
+                                    onClicked: {
+                                        var tag = rightLatestCombo.currentText
+                                        if (!tag || tag === "")
+                                            tag = rightLatestFirmware
+                                        if (tag === "Upload File...") {
+                                            fwErrorDialog.message = "Select a release to install the bootloader from; a local file cannot be used for this."
+                                            fwErrorDialog.open()
+                                            return
+                                        }
+                                        blInstallTarget = "right"
+                                        blInstallTag = tag
+                                        bootloaderWarningDialog.open()
+                                    }
+                                    onEntered: if (parent.enabled) parent.color = "#7D3C98"
+                                    onExited: if (parent.enabled) parent.color = "#8E44AD"
+                                }
+
+                                Behavior on color { ColorAnimation { duration: 200 } }
+                            }
                         }
                     }
                 }
@@ -2036,4 +2186,27 @@ Rectangle {
             jsonStatus.text = "Saving..."
         }
     }
+
+    // Bootloader installation. Deliberately blunt: this is one of the few
+    // things in the app that a user cannot undo from the app.
+    ConfirmDialog {
+        id: bootloaderWarningDialog
+        title: "Install Bootloader — Irreversible"
+        warningText: "This permanently converts the " + blInstallTarget +
+                     " to run the secure bootloader. It CANNOT be undone over USB: " +
+                     "afterwards the device only accepts signed firmware, and returning " +
+                     "it to a normal image requires an ST-LINK/SWD debugger. The device " +
+                     "will also refuse any firmware older than the newest it has run."
+        questionText: "Install the bootloader from " + blInstallTag + "?"
+        confirmText: "Install Bootloader"
+        declineText: "Cancel"
+        onConfirmed: {
+            consoleFwPercent = -1
+            consoleFwMessage = ""
+            consoleFwStageText = "Starting…"
+            MOTIONInterface.installBootloader(blInstallTarget, blInstallTag)
+            fwProgressDialog.open()
+        }
+    }
+
 }

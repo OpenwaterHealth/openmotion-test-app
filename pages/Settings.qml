@@ -1604,6 +1604,52 @@ Rectangle {
 
                                 Item { Layout.fillWidth: true }
 
+                                // Install the secure bootloader on this device. Hidden once we have
+                                // positively observed that it already has one; until then it stays
+                                // available, because boot mode cannot be known without entering DFU.
+                                // The SDK aborts without writing if a bootloader is already present.
+                                Rectangle {
+                                    width: 30
+                                    height: 30
+                                    radius: 15
+                                    visible: bootModeRevision >= 0 && MOTIONInterface.bootloaderInstallSupported("console")
+                                    color: enabled ? "#6C3483" : "#7F8C8D"
+                                    enabled: MOTIONInterface.consoleConnected && !MOTIONInterface.consoleFirmwareUpdateBusy
+
+                                    Text {
+                                        text: "🔒"
+                                        anchors.centerIn: parent
+                                        font.pixelSize: 14
+                                        color: parent.enabled ? "white" : "#BDC3C7"
+                                    }
+
+                                    MouseArea {
+                                        id: installBlConsoleMouseArea
+                                        anchors.fill: parent
+                                        enabled: parent.enabled
+                                        hoverEnabled: true
+                                        onClicked: {
+                                            var tag = consoleLatestCombo.currentText
+                                            if (!tag || tag === "")
+                                                tag = consoleLatestFirmware
+                                            if (!tag || tag === "N/A" || tag === "Upload File...") {
+                                                fwErrorDialog.message = "Select a release to install the bootloader from; a local file cannot be used for this."
+                                                fwErrorDialog.open()
+                                                return
+                                            }
+                                            blInstallTarget = "console"
+                                            blInstallTag = tag
+                                            bootloaderWarningDialog.open()
+                                        }
+                                        onEntered: if (parent.enabled) parent.color = "#7D3C98"
+                                        onExited: parent.color = parent.enabled ? "#6C3483" : "#7F8C8D"
+                                    }
+
+                                    ToolTip.visible: installBlConsoleMouseArea.containsMouse
+                                    ToolTip.text: "Install bootloader (irreversible)"
+                                    ToolTip.delay: 400
+                                }
+
                                 Rectangle {
                                     width: 30
                                     height: 30
@@ -1716,51 +1762,6 @@ Rectangle {
                                 Behavior on color { ColorAnimation { duration: 200 } }
                             }
 
-                            // Convert this device to run the secure bootloader.
-                            // Hidden once we have positively observed that it
-                            // already has one; until then it stays available,
-                            // because boot mode cannot be known without
-                            // entering DFU. The SDK aborts without writing if a
-                            // bootloader turns out to be present.
-                            Rectangle {
-                                Layout.fillWidth: true
-                                Layout.topMargin: 8
-                                height: 34
-                                radius: 10
-                                visible: bootModeRevision >= 0 && MOTIONInterface.bootloaderInstallSupported("console")
-                                color: enabled ? "#8E44AD" : "#7F8C8D"
-                                enabled: !MOTIONInterface.consoleFirmwareUpdateBusy
-
-                                Text {
-                                    text: "Install Bootloader"
-                                    anchors.centerIn: parent
-                                    color: parent.enabled ? "white" : "#BDC3C7"
-                                    font.pixelSize: 15
-                                    font.weight: Font.Bold
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    enabled: parent.enabled
-                                    onClicked: {
-                                        var tag = consoleLatestCombo.currentText
-                                        if (!tag || tag === "")
-                                            tag = consoleLatestFirmware
-                                        if (tag === "Upload File...") {
-                                            fwErrorDialog.message = "Select a release to install the bootloader from; a local file cannot be used for this."
-                                            fwErrorDialog.open()
-                                            return
-                                        }
-                                        blInstallTarget = "console"
-                                        blInstallTag = tag
-                                        bootloaderWarningDialog.open()
-                                    }
-                                    onEntered: if (parent.enabled) parent.color = "#7D3C98"
-                                    onExited: if (parent.enabled) parent.color = "#8E44AD"
-                                }
-
-                                Behavior on color { ColorAnimation { duration: 200 } }
-                            }
                         }
                     }
 
@@ -1794,6 +1795,52 @@ Rectangle {
                                 }
 
                                 Item { Layout.fillWidth: true }
+
+                                // Install the secure bootloader on this device. Hidden once we have
+                                // positively observed that it already has one; until then it stays
+                                // available, because boot mode cannot be known without entering DFU.
+                                // The SDK aborts without writing if a bootloader is already present.
+                                Rectangle {
+                                    width: 30
+                                    height: 30
+                                    radius: 15
+                                    visible: bootModeRevision >= 0 && MOTIONInterface.bootloaderInstallSupported("left")
+                                    color: enabled ? "#6C3483" : "#7F8C8D"
+                                    enabled: MOTIONInterface.leftSensorConnected && !MOTIONInterface.consoleFirmwareUpdateBusy
+
+                                    Text {
+                                        text: "🔒"
+                                        anchors.centerIn: parent
+                                        font.pixelSize: 14
+                                        color: parent.enabled ? "white" : "#BDC3C7"
+                                    }
+
+                                    MouseArea {
+                                        id: installBlLeftMouseArea
+                                        anchors.fill: parent
+                                        enabled: parent.enabled
+                                        hoverEnabled: true
+                                        onClicked: {
+                                            var tag = leftLatestCombo.currentText
+                                            if (!tag || tag === "")
+                                                tag = leftLatestFirmware
+                                            if (!tag || tag === "N/A" || tag === "Upload File...") {
+                                                fwErrorDialog.message = "Select a release to install the bootloader from; a local file cannot be used for this."
+                                                fwErrorDialog.open()
+                                                return
+                                            }
+                                            blInstallTarget = "left"
+                                            blInstallTag = tag
+                                            bootloaderWarningDialog.open()
+                                        }
+                                        onEntered: if (parent.enabled) parent.color = "#7D3C98"
+                                        onExited: parent.color = parent.enabled ? "#6C3483" : "#7F8C8D"
+                                    }
+
+                                    ToolTip.visible: installBlLeftMouseArea.containsMouse
+                                    ToolTip.text: "Install bootloader (irreversible)"
+                                    ToolTip.delay: 400
+                                }
 
                                 Rectangle {
                                     width: 30
@@ -1902,51 +1949,6 @@ Rectangle {
                                 Behavior on color { ColorAnimation { duration: 200 } }
                             }
 
-                            // Convert this device to run the secure bootloader.
-                            // Hidden once we have positively observed that it
-                            // already has one; until then it stays available,
-                            // because boot mode cannot be known without
-                            // entering DFU. The SDK aborts without writing if a
-                            // bootloader turns out to be present.
-                            Rectangle {
-                                Layout.fillWidth: true
-                                Layout.topMargin: 8
-                                height: 34
-                                radius: 10
-                                visible: bootModeRevision >= 0 && MOTIONInterface.bootloaderInstallSupported("left")
-                                color: enabled ? "#8E44AD" : "#7F8C8D"
-                                enabled: !MOTIONInterface.consoleFirmwareUpdateBusy
-
-                                Text {
-                                    text: "Install Bootloader"
-                                    anchors.centerIn: parent
-                                    color: parent.enabled ? "white" : "#BDC3C7"
-                                    font.pixelSize: 15
-                                    font.weight: Font.Bold
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    enabled: parent.enabled
-                                    onClicked: {
-                                        var tag = leftLatestCombo.currentText
-                                        if (!tag || tag === "")
-                                            tag = leftLatestFirmware
-                                        if (tag === "Upload File...") {
-                                            fwErrorDialog.message = "Select a release to install the bootloader from; a local file cannot be used for this."
-                                            fwErrorDialog.open()
-                                            return
-                                        }
-                                        blInstallTarget = "left"
-                                        blInstallTag = tag
-                                        bootloaderWarningDialog.open()
-                                    }
-                                    onEntered: if (parent.enabled) parent.color = "#7D3C98"
-                                    onExited: if (parent.enabled) parent.color = "#8E44AD"
-                                }
-
-                                Behavior on color { ColorAnimation { duration: 200 } }
-                            }
                         }
                     }
 
@@ -1980,6 +1982,52 @@ Rectangle {
                                 }
 
                                 Item { Layout.fillWidth: true }
+
+                                // Install the secure bootloader on this device. Hidden once we have
+                                // positively observed that it already has one; until then it stays
+                                // available, because boot mode cannot be known without entering DFU.
+                                // The SDK aborts without writing if a bootloader is already present.
+                                Rectangle {
+                                    width: 30
+                                    height: 30
+                                    radius: 15
+                                    visible: bootModeRevision >= 0 && MOTIONInterface.bootloaderInstallSupported("right")
+                                    color: enabled ? "#6C3483" : "#7F8C8D"
+                                    enabled: MOTIONInterface.rightSensorConnected && !MOTIONInterface.consoleFirmwareUpdateBusy
+
+                                    Text {
+                                        text: "🔒"
+                                        anchors.centerIn: parent
+                                        font.pixelSize: 14
+                                        color: parent.enabled ? "white" : "#BDC3C7"
+                                    }
+
+                                    MouseArea {
+                                        id: installBlRightMouseArea
+                                        anchors.fill: parent
+                                        enabled: parent.enabled
+                                        hoverEnabled: true
+                                        onClicked: {
+                                            var tag = rightLatestCombo.currentText
+                                            if (!tag || tag === "")
+                                                tag = rightLatestFirmware
+                                            if (!tag || tag === "N/A" || tag === "Upload File...") {
+                                                fwErrorDialog.message = "Select a release to install the bootloader from; a local file cannot be used for this."
+                                                fwErrorDialog.open()
+                                                return
+                                            }
+                                            blInstallTarget = "right"
+                                            blInstallTag = tag
+                                            bootloaderWarningDialog.open()
+                                        }
+                                        onEntered: if (parent.enabled) parent.color = "#7D3C98"
+                                        onExited: parent.color = parent.enabled ? "#6C3483" : "#7F8C8D"
+                                    }
+
+                                    ToolTip.visible: installBlRightMouseArea.containsMouse
+                                    ToolTip.text: "Install bootloader (irreversible)"
+                                    ToolTip.delay: 400
+                                }
 
                                 Rectangle {
                                     width: 30
@@ -2088,51 +2136,6 @@ Rectangle {
                                 Behavior on color { ColorAnimation { duration: 200 } }
                             }
 
-                            // Convert this device to run the secure bootloader.
-                            // Hidden once we have positively observed that it
-                            // already has one; until then it stays available,
-                            // because boot mode cannot be known without
-                            // entering DFU. The SDK aborts without writing if a
-                            // bootloader turns out to be present.
-                            Rectangle {
-                                Layout.fillWidth: true
-                                Layout.topMargin: 8
-                                height: 34
-                                radius: 10
-                                visible: bootModeRevision >= 0 && MOTIONInterface.bootloaderInstallSupported("right")
-                                color: enabled ? "#8E44AD" : "#7F8C8D"
-                                enabled: !MOTIONInterface.consoleFirmwareUpdateBusy
-
-                                Text {
-                                    text: "Install Bootloader"
-                                    anchors.centerIn: parent
-                                    color: parent.enabled ? "white" : "#BDC3C7"
-                                    font.pixelSize: 15
-                                    font.weight: Font.Bold
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    enabled: parent.enabled
-                                    onClicked: {
-                                        var tag = rightLatestCombo.currentText
-                                        if (!tag || tag === "")
-                                            tag = rightLatestFirmware
-                                        if (tag === "Upload File...") {
-                                            fwErrorDialog.message = "Select a release to install the bootloader from; a local file cannot be used for this."
-                                            fwErrorDialog.open()
-                                            return
-                                        }
-                                        blInstallTarget = "right"
-                                        blInstallTag = tag
-                                        bootloaderWarningDialog.open()
-                                    }
-                                    onEntered: if (parent.enabled) parent.color = "#7D3C98"
-                                    onExited: if (parent.enabled) parent.color = "#8E44AD"
-                                }
-
-                                Behavior on color { ColorAnimation { duration: 200 } }
-                            }
                         }
                     }
                 }

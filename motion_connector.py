@@ -2494,6 +2494,7 @@ class MOTIONConnector(QObject):
                     if BootMode is not None:
                         try:
                             mode = getattr(motion_interface, sensor_tag).get_boot_mode()
+                            logger.info(f"{target} boot mode: {getattr(mode, 'value', mode)}")
                             if mode in (BootMode.BARE_METAL, BootMode.BOOTLOADER):
                                 self._note_boot_mode(target, mode)
                         except Exception:

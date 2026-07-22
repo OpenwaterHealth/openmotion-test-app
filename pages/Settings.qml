@@ -1619,7 +1619,7 @@ Rectangle {
                                     property bool locked: bootModeRevision >= 0 && MOTIONInterface.deviceBootMode("console") === "Bootloader"
                                     property bool busy: MOTIONInterface.consoleFirmwareUpdateBusy
                                     property bool actionable: !locked && !busy
-                                    color: "transparent"
+                                    color: busy ? "#7F8C8D" : "#2C3E50"
 
                                     Text {
                                         text: blConsoleLockBtn.locked ? "🔒" : "🔓"
@@ -1649,7 +1649,7 @@ Rectangle {
                                             bootloaderWarningDialog.open()
                                         }
                                         onEntered: if (blConsoleLockBtn.actionable) blConsoleLockBtn.color = "#34495E"
-                                        onExited: blConsoleLockBtn.color = "transparent"
+                                        onExited: blConsoleLockBtn.color = blConsoleLockBtn.busy ? "#7F8C8D" : "#2C3E50"
                                     }
 
                                     ToolTip.visible: installBlConsoleMouseArea.containsMouse
@@ -1820,7 +1820,7 @@ Rectangle {
                                     property bool locked: bootModeRevision >= 0 && MOTIONInterface.deviceBootMode("left") === "Bootloader"
                                     property bool busy: MOTIONInterface.consoleFirmwareUpdateBusy
                                     property bool actionable: !locked && !busy
-                                    color: "transparent"
+                                    color: busy ? "#7F8C8D" : "#2C3E50"
 
                                     Text {
                                         text: blLeftLockBtn.locked ? "🔒" : "🔓"
@@ -1850,7 +1850,7 @@ Rectangle {
                                             bootloaderWarningDialog.open()
                                         }
                                         onEntered: if (blLeftLockBtn.actionable) blLeftLockBtn.color = "#34495E"
-                                        onExited: blLeftLockBtn.color = "transparent"
+                                        onExited: blLeftLockBtn.color = blLeftLockBtn.busy ? "#7F8C8D" : "#2C3E50"
                                     }
 
                                     ToolTip.visible: installBlLeftMouseArea.containsMouse
@@ -2016,7 +2016,7 @@ Rectangle {
                                     property bool locked: bootModeRevision >= 0 && MOTIONInterface.deviceBootMode("right") === "Bootloader"
                                     property bool busy: MOTIONInterface.consoleFirmwareUpdateBusy
                                     property bool actionable: !locked && !busy
-                                    color: "transparent"
+                                    color: busy ? "#7F8C8D" : "#2C3E50"
 
                                     Text {
                                         text: blRightLockBtn.locked ? "🔒" : "🔓"
@@ -2046,7 +2046,7 @@ Rectangle {
                                             bootloaderWarningDialog.open()
                                         }
                                         onEntered: if (blRightLockBtn.actionable) blRightLockBtn.color = "#34495E"
-                                        onExited: blRightLockBtn.color = "transparent"
+                                        onExited: blRightLockBtn.color = blRightLockBtn.busy ? "#7F8C8D" : "#2C3E50"
                                     }
 
                                     ToolTip.visible: installBlRightMouseArea.containsMouse

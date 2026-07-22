@@ -1604,31 +1604,38 @@ Rectangle {
 
                                 Item { Layout.fillWidth: true }
 
-                                // Install the secure bootloader on this device. Hidden once we have
-                                // positively observed that it already has one; until then it stays
-                                // available, because boot mode cannot be known without entering DFU.
-                                // The SDK aborts without writing if a bootloader is already present.
+                                // Lock-state control: 🔓 green = bare-metal (unlocked, click to install the
+                                // bootloader) · 🔒 amber = bootloader installed (locked indicator). Boot mode
+                                // is only known after a DFU op this session (or would need OW_CMD_BOOT_INFO),
+                                // so this defaults to unlocked until a bootloader is positively observed.
+                                // Installing is irreversible over USB; the SDK still aborts without writing if
+                                // a bootloader is already present.
                                 Rectangle {
+                                    id: blConsoleLockBtn
                                     width: 30
                                     height: 30
                                     radius: 15
-                                    visible: bootModeRevision >= 0 && MOTIONInterface.bootloaderInstallSupported("console")
-                                    color: enabled ? "#6C3483" : "#7F8C8D"
-                                    enabled: MOTIONInterface.consoleConnected && !MOTIONInterface.consoleFirmwareUpdateBusy
+                                    visible: MOTIONInterface.consoleConnected
+                                    property bool locked: bootModeRevision >= 0 && MOTIONInterface.deviceBootMode("console") === "Bootloader"
+                                    property bool busy: MOTIONInterface.consoleFirmwareUpdateBusy
+                                    property bool actionable: !locked && !busy
+                                    color: locked ? "#F39C12" : (actionable ? "#27AE60" : "#7F8C8D")
 
                                     Text {
-                                        text: "🔒"
+                                        text: blConsoleLockBtn.locked ? "🔒" : "🔓"
                                         anchors.centerIn: parent
                                         font.pixelSize: 14
-                                        color: parent.enabled ? "white" : "#BDC3C7"
+                                        color: "white"
                                     }
 
                                     MouseArea {
                                         id: installBlConsoleMouseArea
                                         anchors.fill: parent
-                                        enabled: parent.enabled
                                         hoverEnabled: true
+                                        cursorShape: blConsoleLockBtn.actionable ? Qt.PointingHandCursor : Qt.ArrowCursor
                                         onClicked: {
+                                            if (!blConsoleLockBtn.actionable)
+                                                return
                                             var tag = consoleLatestCombo.currentText
                                             if (!tag || tag === "")
                                                 tag = consoleLatestFirmware
@@ -1641,12 +1648,14 @@ Rectangle {
                                             blInstallTag = tag
                                             bootloaderWarningDialog.open()
                                         }
-                                        onEntered: if (parent.enabled) parent.color = "#7D3C98"
-                                        onExited: parent.color = parent.enabled ? "#6C3483" : "#7F8C8D"
+                                        onEntered: if (blConsoleLockBtn.actionable) blConsoleLockBtn.color = "#2ECC71"
+                                        onExited: blConsoleLockBtn.color = blConsoleLockBtn.locked ? "#F39C12" : (blConsoleLockBtn.actionable ? "#27AE60" : "#7F8C8D")
                                     }
 
                                     ToolTip.visible: installBlConsoleMouseArea.containsMouse
-                                    ToolTip.text: "Install bootloader (irreversible)"
+                                    ToolTip.text: blConsoleLockBtn.locked
+                                        ? "Bootloader installed — device is locked (irreversible over USB)"
+                                        : "Install bootloader — locks this device (irreversible)"
                                     ToolTip.delay: 400
                                 }
 
@@ -1796,31 +1805,38 @@ Rectangle {
 
                                 Item { Layout.fillWidth: true }
 
-                                // Install the secure bootloader on this device. Hidden once we have
-                                // positively observed that it already has one; until then it stays
-                                // available, because boot mode cannot be known without entering DFU.
-                                // The SDK aborts without writing if a bootloader is already present.
+                                // Lock-state control: 🔓 green = bare-metal (unlocked, click to install the
+                                // bootloader) · 🔒 amber = bootloader installed (locked indicator). Boot mode
+                                // is only known after a DFU op this session (or would need OW_CMD_BOOT_INFO),
+                                // so this defaults to unlocked until a bootloader is positively observed.
+                                // Installing is irreversible over USB; the SDK still aborts without writing if
+                                // a bootloader is already present.
                                 Rectangle {
+                                    id: blLeftLockBtn
                                     width: 30
                                     height: 30
                                     radius: 15
-                                    visible: bootModeRevision >= 0 && MOTIONInterface.bootloaderInstallSupported("left")
-                                    color: enabled ? "#6C3483" : "#7F8C8D"
-                                    enabled: MOTIONInterface.leftSensorConnected && !MOTIONInterface.consoleFirmwareUpdateBusy
+                                    visible: MOTIONInterface.leftSensorConnected
+                                    property bool locked: bootModeRevision >= 0 && MOTIONInterface.deviceBootMode("left") === "Bootloader"
+                                    property bool busy: MOTIONInterface.consoleFirmwareUpdateBusy
+                                    property bool actionable: !locked && !busy
+                                    color: locked ? "#F39C12" : (actionable ? "#27AE60" : "#7F8C8D")
 
                                     Text {
-                                        text: "🔒"
+                                        text: blLeftLockBtn.locked ? "🔒" : "🔓"
                                         anchors.centerIn: parent
                                         font.pixelSize: 14
-                                        color: parent.enabled ? "white" : "#BDC3C7"
+                                        color: "white"
                                     }
 
                                     MouseArea {
                                         id: installBlLeftMouseArea
                                         anchors.fill: parent
-                                        enabled: parent.enabled
                                         hoverEnabled: true
+                                        cursorShape: blLeftLockBtn.actionable ? Qt.PointingHandCursor : Qt.ArrowCursor
                                         onClicked: {
+                                            if (!blLeftLockBtn.actionable)
+                                                return
                                             var tag = leftLatestCombo.currentText
                                             if (!tag || tag === "")
                                                 tag = leftLatestFirmware
@@ -1833,12 +1849,14 @@ Rectangle {
                                             blInstallTag = tag
                                             bootloaderWarningDialog.open()
                                         }
-                                        onEntered: if (parent.enabled) parent.color = "#7D3C98"
-                                        onExited: parent.color = parent.enabled ? "#6C3483" : "#7F8C8D"
+                                        onEntered: if (blLeftLockBtn.actionable) blLeftLockBtn.color = "#2ECC71"
+                                        onExited: blLeftLockBtn.color = blLeftLockBtn.locked ? "#F39C12" : (blLeftLockBtn.actionable ? "#27AE60" : "#7F8C8D")
                                     }
 
                                     ToolTip.visible: installBlLeftMouseArea.containsMouse
-                                    ToolTip.text: "Install bootloader (irreversible)"
+                                    ToolTip.text: blLeftLockBtn.locked
+                                        ? "Bootloader installed — device is locked (irreversible over USB)"
+                                        : "Install bootloader — locks this device (irreversible)"
                                     ToolTip.delay: 400
                                 }
 
@@ -1983,31 +2001,38 @@ Rectangle {
 
                                 Item { Layout.fillWidth: true }
 
-                                // Install the secure bootloader on this device. Hidden once we have
-                                // positively observed that it already has one; until then it stays
-                                // available, because boot mode cannot be known without entering DFU.
-                                // The SDK aborts without writing if a bootloader is already present.
+                                // Lock-state control: 🔓 green = bare-metal (unlocked, click to install the
+                                // bootloader) · 🔒 amber = bootloader installed (locked indicator). Boot mode
+                                // is only known after a DFU op this session (or would need OW_CMD_BOOT_INFO),
+                                // so this defaults to unlocked until a bootloader is positively observed.
+                                // Installing is irreversible over USB; the SDK still aborts without writing if
+                                // a bootloader is already present.
                                 Rectangle {
+                                    id: blRightLockBtn
                                     width: 30
                                     height: 30
                                     radius: 15
-                                    visible: bootModeRevision >= 0 && MOTIONInterface.bootloaderInstallSupported("right")
-                                    color: enabled ? "#6C3483" : "#7F8C8D"
-                                    enabled: MOTIONInterface.rightSensorConnected && !MOTIONInterface.consoleFirmwareUpdateBusy
+                                    visible: MOTIONInterface.rightSensorConnected
+                                    property bool locked: bootModeRevision >= 0 && MOTIONInterface.deviceBootMode("right") === "Bootloader"
+                                    property bool busy: MOTIONInterface.consoleFirmwareUpdateBusy
+                                    property bool actionable: !locked && !busy
+                                    color: locked ? "#F39C12" : (actionable ? "#27AE60" : "#7F8C8D")
 
                                     Text {
-                                        text: "🔒"
+                                        text: blRightLockBtn.locked ? "🔒" : "🔓"
                                         anchors.centerIn: parent
                                         font.pixelSize: 14
-                                        color: parent.enabled ? "white" : "#BDC3C7"
+                                        color: "white"
                                     }
 
                                     MouseArea {
                                         id: installBlRightMouseArea
                                         anchors.fill: parent
-                                        enabled: parent.enabled
                                         hoverEnabled: true
+                                        cursorShape: blRightLockBtn.actionable ? Qt.PointingHandCursor : Qt.ArrowCursor
                                         onClicked: {
+                                            if (!blRightLockBtn.actionable)
+                                                return
                                             var tag = rightLatestCombo.currentText
                                             if (!tag || tag === "")
                                                 tag = rightLatestFirmware
@@ -2020,12 +2045,14 @@ Rectangle {
                                             blInstallTag = tag
                                             bootloaderWarningDialog.open()
                                         }
-                                        onEntered: if (parent.enabled) parent.color = "#7D3C98"
-                                        onExited: parent.color = parent.enabled ? "#6C3483" : "#7F8C8D"
+                                        onEntered: if (blRightLockBtn.actionable) blRightLockBtn.color = "#2ECC71"
+                                        onExited: blRightLockBtn.color = blRightLockBtn.locked ? "#F39C12" : (blRightLockBtn.actionable ? "#27AE60" : "#7F8C8D")
                                     }
 
                                     ToolTip.visible: installBlRightMouseArea.containsMouse
-                                    ToolTip.text: "Install bootloader (irreversible)"
+                                    ToolTip.text: blRightLockBtn.locked
+                                        ? "Bootloader installed — device is locked (irreversible over USB)"
+                                        : "Install bootloader — locks this device (irreversible)"
                                     ToolTip.delay: 400
                                 }
 

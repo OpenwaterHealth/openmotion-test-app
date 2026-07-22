@@ -1416,6 +1416,19 @@ class MOTIONConnector(QObject):
         self._boot_modes[target] = label
         self.deviceBootModeChanged.emit(target, label)
 
+    def _clear_boot_mode(self, target: str) -> None:
+        """Forget a slot's cached boot mode (device unplugged / swapped).
+
+        _boot_modes is keyed by slot, not device identity, so a value learned
+        from one physical device would otherwise be shown for whatever is
+        plugged into that slot next. Cleared on disconnect and re-learned when
+        the (possibly different) device reconnects and is queried; old firmware
+        that can't report its mode then correctly reads as unlocked rather than
+        inheriting the previous device's state.
+        """
+        if self._boot_modes.pop(target, None) is not None:
+            self.deviceBootModeChanged.emit(target, "")
+
     @pyqtSlot(str, result=str)
     def deviceBootMode(self, target: str) -> str:
         """Last observed boot mode for a target, or "" if never seen in DFU.
@@ -2456,6 +2469,9 @@ class MOTIONConnector(QObject):
         if is_now_connected:
             self.signalConnected.emit(name, "")
         elif is_now_lost:
+            # Drop the cached boot mode so a device swapped onto this slot does
+            # not inherit the previous device's lock state.
+            self._clear_boot_mode(name)
             self.signalDisconnected.emit(name, "")
         # CONNECTING/DISCONNECTING are intermediate; UI doesn't need a
         # legacy connect/disconnect emission for them.

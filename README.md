@@ -1,4 +1,4 @@
-# OpenMOTION Test Application
+# Open-Motion Test Application
 
 Python example UI for OPEN Motion used for Hardware Testing and Basic Usage
 

@@ -107,5 +107,5 @@ def test_banner_and_log_lines_reach_the_file(tmp_path, monkeypatch, clean_root_l
         h.flush()
     contents = Path(path).read_text(encoding="utf-8")
 
-    assert "OpenMOTION Test App 9.9.9 starting" in contents
+    assert "Open-Motion Test App 9.9.9 starting" in contents
     assert "hello from a module logger" in contents

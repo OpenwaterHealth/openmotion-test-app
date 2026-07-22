@@ -23,7 +23,7 @@ from version import get_version
 from utils.log_setup import configure_app_logging
 from utils.warranty_ack import APPLICATION, ORGANIZATION, WarrantyAck
 
-# set PYTHONPATH=%cd%\..\OpenMOTION-PyLib;%PYTHONPATH%
+# set PYTHONPATH=%cd%\..\Open-Motion-PyLib;%PYTHONPATH%
 # python main.py
 
 APP_VERSION = get_version()
@@ -52,7 +52,7 @@ def resource_path(rel: str) -> str:
 
 def main():
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description="OpenMOTION Test Application")
+    parser = argparse.ArgumentParser(description="Open-Motion Test Application")
     parser.add_argument(
         "--debug", action="store_true", help="Enable debug logging and console output"
     )

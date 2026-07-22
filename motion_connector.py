@@ -2571,6 +2571,18 @@ class MOTIONConnector(QObject):
             logger.info(
                 f"Console Device Info - Firmware: {fw_version}, Device ID: {device_id}, Board ID: {board_id}"
             )
+
+            # Boot mode over normal comms (OW_CMD_BOOT_INFO) — see the matching
+            # sensor query in querySensorInfo. Best-effort: skipped on an older
+            # SDK/firmware, and only a definite answer is recorded.
+            if BootMode is not None and hasattr(motion_interface.console, "get_boot_mode"):
+                try:
+                    mode = motion_interface.console.get_boot_mode()
+                    logger.info(f"console boot mode: {getattr(mode, 'value', mode)}")
+                    if mode in (BootMode.BARE_METAL, BootMode.BOOTLOADER):
+                        self._note_boot_mode("console", mode)
+                except Exception:
+                    pass
         except Exception as e:
             logger.error(f"Error querying device info: {e}")
         finally:

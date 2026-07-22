@@ -2485,6 +2485,19 @@ class MOTIONConnector(QObject):
                     logger.info(
                         f"Sensor Device Info - Firmware: {fw_version}, Device ID: {device_id}"
                     )
+
+                    # Boot mode over normal comms (OW_CMD_BOOT_INFO) — no DFU
+                    # cycle. Lets the lock icon reflect real state on connect.
+                    # Best-effort: skipped on an older SDK, and only a *definite*
+                    # answer is recorded so old firmware's UNKNOWN never
+                    # downgrades a state we already learned (e.g. from an install).
+                    if BootMode is not None:
+                        try:
+                            mode = getattr(motion_interface, sensor_tag).get_boot_mode()
+                            if mode in (BootMode.BARE_METAL, BootMode.BOOTLOADER):
+                                self._note_boot_mode(target, mode)
+                        except Exception:
+                            pass
                 finally:
                     mutex.unlock()
             else:

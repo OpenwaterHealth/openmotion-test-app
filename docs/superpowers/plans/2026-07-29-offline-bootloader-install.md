@@ -559,14 +559,19 @@ MSG
 ### Task 3: Connector slots for QML
 
 **Files:**
-- Modify: `motion_connector.py` — add both slots next to `installBootloader` (ends line 1409)
+- Modify: `motion_connector.py` — replace the tail of `installBootloader` (lines 1385-1409) with a call to a new shared helper, then add the helper and both slots
 - Test: `tests/test_bootloader_install_slots.py` (create)
 
 **Interfaces:**
 - Consumes: `_validate_production_image` (Task 1), `_BootloaderInstallThread(..., local_path=...)` (Task 2)
-- Produces, both called from QML in Task 4:
-  - `validateProductionImage(target: str, local_path: str) -> str` — `""` when usable
-  - `installBootloaderFromLocal(target: str, local_path: str) -> None`
+- Produces:
+  - `MOTIONConnector._start_bootloader_thread(target, tag, local_path=None) -> None` — internal
+  - `validateProductionImage(target: str, local_path: str) -> str` — `""` when usable, called from QML in Task 4
+  - `installBootloaderFromLocal(target: str, local_path: str) -> None` — called from QML in Task 4
+
+> **Decision (pre-flight, confirmed with the repo owner):** the thread wiring is shared
+> between the two slots rather than copied. The plan originally specified a copy; sharing
+> it won. `installBootloader`'s guards are untouched — only its tail moves.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -664,9 +669,60 @@ python -m pytest tests/test_bootloader_install_slots.py -q
 
 Expected: FAIL — `AttributeError: 'MOTIONConnector' object has no attribute 'validateProductionImage'`.
 
-- [ ] **Step 3: Add both slots**
+- [ ] **Step 3a: Extract the shared thread starter**
 
-In `motion_connector.py`, immediately after `installBootloader` ends (line 1409, the `self._bl_install_thread.start()` line) and before `def _note_boot_mode`, add:
+In `installBootloader`, replace everything from `self._set_console_fw_busy(True)` (line 1385) through `self._bl_install_thread.start()` (line 1409) with a single call:
+
+```python
+        self._start_bootloader_thread(target, tag)
+```
+
+The guards above it (target whitelist, `tag`/`N/A` check, busy check) stay exactly as they are.
+
+Then add the helper immediately after `installBootloader`:
+
+```python
+    def _start_bootloader_thread(
+        self, target: str, tag: str, local_path: str | None = None
+    ) -> None:
+        """Wire up and start a bootloader install. Callers do the gating.
+
+        Shared by installBootloader (release tag) and installBootloaderFromLocal
+        (browsed file): only the image source differs, so the thread wiring and
+        the finished/failed handling live here rather than in both slots.
+        """
+        self._set_console_fw_busy(True)
+        self._bl_install_thread = _BootloaderInstallThread(
+            self, target, tag, local_path=local_path
+        )
+        self._bl_install_thread.progress.connect(
+            lambda pct, msg: self.consoleFirmwareUpdateProgress.emit(
+                target, "install", int(pct), str(msg)
+            )
+        )
+
+        def _ok() -> None:
+            self._set_console_fw_busy(False)
+            self.bootloaderInstallFinished.emit(
+                target, True,
+                "Bootloader installed. Power-cycle the device before using it.",
+            )
+
+        def _fail(msg: str) -> None:
+            self._set_console_fw_busy(False)
+            self.bootloaderInstallFinished.emit(target, False, str(msg))
+
+        self._bl_install_thread.finished_ok.connect(_ok)
+        self._bl_install_thread.failed.connect(_fail)
+        self._bl_install_thread.finished.connect(
+            lambda: setattr(self, "_bl_install_thread", None)
+        )
+        self._bl_install_thread.start()
+```
+
+- [ ] **Step 3b: Add both slots**
+
+After `_start_bootloader_thread` and before `def _note_boot_mode`, add:
 
 ```python
     @pyqtSlot(str, str, result=str)
@@ -703,33 +759,7 @@ In `motion_connector.py`, immediately after `installBootloader` ends (line 1409,
             self.bootloaderInstallFinished.emit(target, False, err)
             return
 
-        self._set_console_fw_busy(True)
-        self._bl_install_thread = _BootloaderInstallThread(
-            self, target, "local", local_path=local_path
-        )
-        self._bl_install_thread.progress.connect(
-            lambda pct, msg: self.consoleFirmwareUpdateProgress.emit(
-                target, "install", int(pct), str(msg)
-            )
-        )
-
-        def _ok() -> None:
-            self._set_console_fw_busy(False)
-            self.bootloaderInstallFinished.emit(
-                target, True,
-                "Bootloader installed. Power-cycle the device before using it.",
-            )
-
-        def _fail(msg: str) -> None:
-            self._set_console_fw_busy(False)
-            self.bootloaderInstallFinished.emit(target, False, str(msg))
-
-        self._bl_install_thread.finished_ok.connect(_ok)
-        self._bl_install_thread.failed.connect(_fail)
-        self._bl_install_thread.finished.connect(
-            lambda: setattr(self, "_bl_install_thread", None)
-        )
-        self._bl_install_thread.start()
+        self._start_bootloader_thread(target, "local", local_path)
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -794,6 +824,34 @@ In `pages/Settings.qml`, after line 68 (`property string blInstallTag: ""`), add
 After `_startFpgaFromLocal` closes (line 116), add:
 
 ```qml
+    // FileDialog reports its selection as a QUrl or a file:// string depending
+    // on the Qt version; the connector needs a native path.
+    //
+    // fwUploadDialog and fpgaJedUploadDialog each still carry their own copy of
+    // this logic. They are deliberately left alone: #83 promised no changes to
+    // the application-firmware and FPGA local paths, and those are exactly the
+    // paths those two dialogs drive.
+    function _localPathFromDialog(dialog) {
+        var file = ""
+        if (typeof dialog.selectedFiles !== 'undefined' && dialog.selectedFiles && dialog.selectedFiles.length > 0) file = dialog.selectedFiles[0]
+        else if (typeof dialog.fileUrls !== 'undefined' && dialog.fileUrls && dialog.fileUrls.length > 0) file = dialog.fileUrls[0]
+        else if (typeof dialog.fileUrl !== 'undefined' && dialog.fileUrl) file = dialog.fileUrl
+        if (!file) return ""
+
+        if (typeof file !== 'string') {
+            if (typeof file.toLocalFile === 'function') file = file.toLocalFile()
+            else if (typeof file.toString === 'function') file = file.toString()
+            else file = String(file)
+        }
+
+        if (typeof file === 'string' && file.indexOf("file://") === 0) {
+            file = file.replace(/^file:\/\//, "")
+            // Windows paths arrive as /C:/... -- drop the leading slash.
+            if (file.length > 0 && file[0] === '/' && file[2] === ':') file = file.substring(1)
+        }
+        return file
+    }
+
     // Shared by the three lock buttons. An "Upload File..." / empty / N/A tag
     // means the operator wants a local image -- on the factory floor with
     // --no-github that is the only entry the dropdown has.
@@ -820,22 +878,8 @@ After the `fpgaJedUploadDialog` block closes (line 649), add:
         title: "Select production firmware image"
         nameFilters: ["Production images (*.bin)"]
         onAccepted: {
-            var file = ""
-            if (typeof selectedFiles !== 'undefined' && selectedFiles && selectedFiles.length > 0) file = selectedFiles[0]
-            else if (typeof fileUrls !== 'undefined' && fileUrls && fileUrls.length > 0) file = fileUrls[0]
-            else if (typeof fileUrl !== 'undefined' && fileUrl) file = fileUrl
+            var file = _localPathFromDialog(blUploadDialog)
             if (!file) return
-
-            if (file && typeof file !== 'string') {
-                if (typeof file.toLocalFile === 'function') file = file.toLocalFile()
-                else if (typeof file.toString === 'function') file = file.toString()
-                else file = String(file)
-            }
-
-            if (typeof file === 'string' && file.indexOf("file://") === 0) {
-                file = file.replace(/^file:\/\//, "")
-                if (file.length > 0 && file[0] === '/' && file[2] === ':') file = file.substring(1)
-            }
 
             // Reject a wrong-device or non-production image here, before the
             // irreversible-install confirmation is shown.

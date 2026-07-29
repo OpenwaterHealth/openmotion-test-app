@@ -1586,11 +1586,15 @@ class MOTIONConnector(QObject):
 
     @pyqtSlot(str, result=str)
     def deviceBootMode(self, target: str) -> str:
-        """Last observed boot mode for a target, or "" if never seen in DFU.
+        """Last observed boot mode for a target, or "" if not yet known.
 
-        Empty is the normal state until an update or install has run: mode is
-        only observable while the device sits in DFU, and probing for it would
-        mean reboot-cycling a working device for a label.
+        Populated on connect by querySensorInfo / queryConsoleInfo, which ask
+        the device over normal comms (OW_CMD_BOOT_INFO) -- no DFU cycle -- and
+        by any DFU operation that runs. Stays "" where the firmware does not
+        answer: sensor firmware implements the command, console firmware does
+        not yet (issue #73), so a converted console reads "" and shows as
+        unlocked. Cleared on disconnect so a swapped device does not inherit
+        the previous one's state (issue #77).
         """
         return self._boot_modes.get(target, "")
 

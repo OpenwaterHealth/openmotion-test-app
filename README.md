@@ -39,6 +39,30 @@ Python example UI for OPEN Motion used for Hardware Testing and Basic Usage
    ```
 
 
+## Offline / factory use
+
+The app queries GitHub for firmware releases at startup. On a machine with no
+internet, launch with:
+
+```
+python main.py --no-github
+```
+
+This skips every release query. The firmware dropdowns then offer only
+`Upload File...`, and all three flashing paths work from a file on disk:
+
+| What | File to select |
+|---|---|
+| Console / sensor application firmware | `motion-console-fw-*.bin` / `motion-sensor-fw-*.bin` |
+| Bootloader (converts a bare-metal device) | `motion-console-production.bin` / `motion-sensor-production.bin` |
+| FPGA (TA, Seed, Safety EE, Safety OPT) | the target's `.jed` |
+
+Installing the bootloader is **irreversible over USB** — afterwards the device
+only accepts signed firmware, and returning it to a normal image needs an
+ST-LINK/SWD debugger. The app confirms before doing it, refuses an image built
+for the other device, and the SDK aborts without writing if the device already
+has a bootloader.
+
 ## Run packager
 ```
 python -m PyInstaller -y openwater.spec

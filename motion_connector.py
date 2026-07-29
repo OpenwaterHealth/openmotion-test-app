@@ -1594,11 +1594,27 @@ class MOTIONConnector(QObject):
 
         Populated on connect by querySensorInfo / queryConsoleInfo, which ask
         the device over normal comms (OW_CMD_BOOT_INFO) -- no DFU cycle -- and
-        by any DFU operation that runs. Stays "" where the firmware does not
-        answer: sensor firmware implements the command, console firmware does
-        not yet (issue #73), so a converted console reads "" and shows as
-        unlocked. Cleared on disconnect so a swapped device does not inherit
-        the previous one's state (issue #77).
+        by any DFU operation that runs. Cleared on disconnect so a swapped
+        device does not inherit the previous one's state (issue #77).
+
+        DELIBERATE: a device that does not answer is treated as NOT
+        bootloadered -- the query records only BARE_METAL/BOOTLOADER, this
+        returns "", and the lock icon reads unlocked with the install control
+        live. Do not "fix" that into a locked or greyed-out icon.
+
+        Two populations answer with UNKNOWN, and unlocked is right for both:
+        firmware predating OW_CMD_BOOT_INFO (older sensors; console until #73),
+        and a device converted using a production image whose bundled app
+        predates the command -- observed on the bench with a sensor converted
+        from a 1.8.2-rc.2 production image, which reported UNKNOWN even though
+        the conversion was byte-correct. That second case disappears once
+        release images bundle firmware that answers.
+
+        Guessing "locked" instead would hide the install control on devices
+        that may well be bare metal, and nothing is gained by guessing:
+        install_bootloader re-checks over DFU and aborts without writing if a
+        bootloader is already present. Being wrong here costs a clear error
+        message, not a device.
         """
         return self._boot_modes.get(target, "")
 

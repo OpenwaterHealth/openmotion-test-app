@@ -1689,9 +1689,14 @@ Rectangle {
                                 // Boot mode is queried over normal comms (OW_CMD_BOOT_INFO) on connect,
                                 // so this reflects real state without a DFU cycle -- but only where the
                                 // firmware answers. Sensor firmware does; console firmware does not yet
-                                // (issue #73), so a converted console still reads unlocked. Installing is
-                                // irreversible over USB; the SDK aborts without writing if a bootloader
-                                // is already present.
+                                // (issue #73), so a converted console still reads unlocked.
+                                //
+                                // A device that does not answer is DELIBERATELY shown unlocked with the
+                                // install control live -- see deviceBootMode() in motion_connector.py for
+                                // why. Do not change this to a locked or greyed-out icon. Installing is
+                                // irreversible over USB, but the SDK aborts without writing if a
+                                // bootloader is already present, so guessing wrong here costs an error
+                                // message, not a device.
                                 Rectangle {
                                     id: blConsoleLockBtn
                                     width: 30
@@ -1885,9 +1890,14 @@ Rectangle {
                                 // Boot mode is queried over normal comms (OW_CMD_BOOT_INFO) on connect,
                                 // so this reflects real state without a DFU cycle -- but only where the
                                 // firmware answers. Sensor firmware does; console firmware does not yet
-                                // (issue #73), so a converted console still reads unlocked. Installing is
-                                // irreversible over USB; the SDK aborts without writing if a bootloader
-                                // is already present.
+                                // (issue #73), so a converted console still reads unlocked.
+                                //
+                                // A device that does not answer is DELIBERATELY shown unlocked with the
+                                // install control live -- see deviceBootMode() in motion_connector.py for
+                                // why. Do not change this to a locked or greyed-out icon. Installing is
+                                // irreversible over USB, but the SDK aborts without writing if a
+                                // bootloader is already present, so guessing wrong here costs an error
+                                // message, not a device.
                                 Rectangle {
                                     id: blLeftLockBtn
                                     width: 30
@@ -2076,9 +2086,14 @@ Rectangle {
                                 // Boot mode is queried over normal comms (OW_CMD_BOOT_INFO) on connect,
                                 // so this reflects real state without a DFU cycle -- but only where the
                                 // firmware answers. Sensor firmware does; console firmware does not yet
-                                // (issue #73), so a converted console still reads unlocked. Installing is
-                                // irreversible over USB; the SDK aborts without writing if a bootloader
-                                // is already present.
+                                // (issue #73), so a converted console still reads unlocked.
+                                //
+                                // A device that does not answer is DELIBERATELY shown unlocked with the
+                                // install control live -- see deviceBootMode() in motion_connector.py for
+                                // why. Do not change this to a locked or greyed-out icon. Installing is
+                                // irreversible over USB, but the SDK aborts without writing if a
+                                // bootloader is already present, so guessing wrong here costs an error
+                                // message, not a device.
                                 Rectangle {
                                     id: blRightLockBtn
                                     width: 30

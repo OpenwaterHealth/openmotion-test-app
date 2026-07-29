@@ -79,3 +79,34 @@ def test_install_refuses_while_another_operation_is_running(
     assert ok is False
     assert "already in progress" in msg.lower()
     assert connector._bl_install_thread is None
+
+
+def test_install_from_local_starts_the_shared_helper_with_the_path(
+    connector, production_bin, monkeypatch
+):
+    """A valid local install must actually dispatch through the shared
+    helper with the browsed path. Inverting the validation guard in
+    installBootloaderFromLocal (`if not err:`) would leave every other test
+    in this file green while silently disabling offline install entirely --
+    this is the test that catches that regression.
+    """
+    monkeypatch.setattr(connector, "_start_bootloader_thread", MagicMock())
+    connector.installBootloaderFromLocal("console", production_bin)
+    connector._start_bootloader_thread.assert_called_once_with(
+        "console", "local", production_bin
+    )
+    connector.bootloaderInstallFinished.emit.assert_not_called()
+
+
+def test_install_from_release_starts_the_shared_helper_without_a_local_path(
+    connector, monkeypatch
+):
+    """installBootloader (the release-tag path) must reach the same shared
+    helper _start_bootloader_thread that installBootloaderFromLocal uses, and
+    must not pass a local path -- pinning the shared helper's contract from
+    the other side of gap 8.
+    """
+    monkeypatch.setattr(connector, "_start_bootloader_thread", MagicMock())
+    connector.installBootloader("console", "1.8.3")
+    connector._start_bootloader_thread.assert_called_once_with("console", "1.8.3")
+    connector.bootloaderInstallFinished.emit.assert_not_called()

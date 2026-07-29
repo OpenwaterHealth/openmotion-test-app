@@ -768,8 +768,12 @@ class _BootloaderInstallThread(QThread):
         except Exception as exc:
             # Includes BootloaderInstallError -- notably "already installed",
             # which is the abort that makes this safe to offer unconditionally.
-            # Everything here is downstream of enter_dfu(), so the device is
-            # very likely stranded in DFU; say so.
+            # Not everything here is downstream of enter_dfu(): install_bootloader
+            # raises before it for the acknowledge_irreversible, is_production_asset
+            # and is_file checks, and "device did not accept enter_dfu()" fires
+            # exactly when the device did NOT enter DFU. The power-cycle hint is
+            # harmless on those paths too, so it stays unconditional rather than
+            # trying to narrow it per exception.
             self.failed.emit(_with_dfu_hint(str(exc)))
 
 

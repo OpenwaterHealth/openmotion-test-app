@@ -426,8 +426,9 @@ Rectangle {
         }
 
         function onDeviceBootModeChanged(target, label) {
-            // Refresh the Install Bootloader buttons: bootloaderInstallSupported()
-            // is a plain slot, so its bindings need a nudge to re-evaluate.
+            // Refresh the Install Bootloader buttons: each button's `locked`
+            // binding calls MOTIONInterface.deviceBootMode(), a plain slot,
+            // so it needs a nudge to re-evaluate.
             bootModeRevision += 1
         }
 
@@ -2291,18 +2292,24 @@ Rectangle {
                      "afterwards the device only accepts signed firmware, and returning " +
                      "it to a normal image requires an ST-LINK/SWD debugger. The device " +
                      "will also refuse any firmware older than the newest it has run."
-        questionText: "Install the bootloader from " + blInstallTag + "?"
+        // The local-file path is the only thing that can catch a wrong pick
+        // (validation is filename-only), so show the full path rather than
+        // just the filename when the pending install came from a browsed
+        // file. The release-tag case has no path -- keep it reading as it
+        // always has.
+        questionText: "Install the bootloader from " +
+                     (blInstallLocalPath !== "" ? blInstallLocalPath : blInstallTag) + "?"
         confirmText: "Install Bootloader"
         declineText: "Cancel"
         onConfirmed: {
             consoleFwPercent = -1
             consoleFwMessage = ""
             consoleFwStageText = "Starting…"
+            fwProgressDialog.open()
             if (blInstallLocalPath !== "")
                 MOTIONInterface.installBootloaderFromLocal(blInstallTarget, blInstallLocalPath)
             else
                 MOTIONInterface.installBootloader(blInstallTarget, blInstallTag)
-            fwProgressDialog.open()
         }
     }
 

@@ -1488,8 +1488,21 @@ class MOTIONConnector(QObject):
             )
             return
 
+        self._start_bootloader_thread(target, tag)
+
+    def _start_bootloader_thread(
+        self, target: str, tag: str, local_path: str | None = None
+    ) -> None:
+        """Wire up and start a bootloader install. Callers do the gating.
+
+        Shared by installBootloader (release tag) and installBootloaderFromLocal
+        (browsed file): only the image source differs, so the thread wiring and
+        the finished/failed handling live here rather than in both slots.
+        """
         self._set_console_fw_busy(True)
-        self._bl_install_thread = _BootloaderInstallThread(self, target, tag)
+        self._bl_install_thread = _BootloaderInstallThread(
+            self, target, tag, local_path=local_path
+        )
         self._bl_install_thread.progress.connect(
             lambda pct, msg: self.consoleFirmwareUpdateProgress.emit(
                 target, "install", int(pct), str(msg)
@@ -1513,6 +1526,42 @@ class MOTIONConnector(QObject):
             lambda: setattr(self, "_bl_install_thread", None)
         )
         self._bl_install_thread.start()
+
+    @pyqtSlot(str, str, result=str)
+    def validateProductionImage(self, target: str, local_path: str) -> str:
+        """Vet a browsed production image for QML. "" means usable.
+
+        Called from the file dialog so a bad image is rejected *before* the
+        irreversible-install confirmation appears, rather than after the
+        operator has already agreed to it.
+        """
+        return _validate_production_image(target, local_path)
+
+    @pyqtSlot(str, str)
+    def installBootloaderFromLocal(self, target: str, local_path: str) -> None:
+        """Convert a device using a production image from disk. Irreversible.
+
+        The offline counterpart to installBootloader. QML gates this behind the
+        same confirmation dialog; the image is validated here as well, because
+        by the time the thread runs the operator has already confirmed.
+        """
+        logger.info(
+            f"installBootloaderFromLocal target={target} path={local_path}"
+        )
+        if target not in ("console", "left", "right"):
+            self.bootloaderInstallFinished.emit(target, False, "Invalid target.")
+            return
+        if self.consoleFirmwareUpdateBusy:
+            self.bootloaderInstallFinished.emit(
+                target, False, "A firmware operation is already in progress."
+            )
+            return
+        err = _validate_production_image(target, local_path)
+        if err:
+            self.bootloaderInstallFinished.emit(target, False, err)
+            return
+
+        self._start_bootloader_thread(target, "local", local_path)
 
     def _note_boot_mode(self, target: str, mode) -> None:
         """Record the boot mode the SDK detected while the device was in DFU."""

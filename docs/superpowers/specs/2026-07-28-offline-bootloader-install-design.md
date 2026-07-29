@@ -229,11 +229,15 @@ and reported as unverified, not as working:
 
 ## Documentation
 
-These currently imply bootloader install is unavailable offline:
-
-- `CLAUDE.md` — the `--no-github` note in "Working without hardware", and the firmware
-  row of the "Start here" table
-- `README.md` — the `--no-github` flag description
+- `README.md` — **does not mention `--no-github` at all** (verified: no match in the file).
+  Since this feature exists specifically to make the offline flow work, the flag and the
+  offline firmware workflow get documented there. This is an addition, not a correction.
+- `CLAUDE.md` — the `--no-github` note in "Working without hardware" and the firmware row
+  of the "Start here" table both imply bootloader install is unavailable offline.
+  **This file is untracked** (`git ls-files` has no match; it is not gitignored either), so
+  it lives only in the main checkout and is absent from this worktree. It must be edited
+  there, and the edit will not appear in the PR. Do it last, and call it out explicitly in
+  the handoff rather than letting it look like part of the reviewed change.
 
 Two stale comments are also corrected. Both claim boot mode is only knowable after a DFU
 op, which stopped being true when the `OW_CMD_BOOT_INFO` query landed; both actively

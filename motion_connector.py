@@ -52,6 +52,7 @@ try:
         FirmwareUpdater,
         UnsupportedReleaseError,
         candidate_assets,
+        is_production_asset,
         production_asset,
         register_download,
     )
@@ -62,6 +63,7 @@ except Exception:  # pragma: no cover
     FirmwareUpdater = None
     UnsupportedReleaseError = None
     candidate_assets = None
+    is_production_asset = None
     production_asset = None
     register_download = None
 
@@ -80,6 +82,55 @@ def _firmware_kind(target: str):
     if FirmwareKind is None:
         return None
     return FirmwareKind.CONSOLE if target == "console" else FirmwareKind.SENSOR
+
+
+# Which filename token each target's production image must carry, and which one
+# proves it belongs to the other device. Order: (expected, opposing).
+_PRODUCTION_KIND_TOKENS = {
+    "console": ("console", "sensor"),
+    "left": ("sensor", "console"),
+    "right": ("sensor", "console"),
+}
+
+
+def _validate_production_image(target: str, local_path: str) -> str:
+    """Vet a browsed production image. Returns "" if usable, else why not.
+
+    The SDK's only content gate before an irreversible write at
+    BARE_METAL_FLASH_ADDRESS is is_production_asset(), which checks for the
+    substring "production" and nothing else -- notably not console-vs-sensor.
+    The GitHub path cannot reach that failure because it fetches
+    production_asset(kind) by exact name; a browse dialog can, so the kind check
+    has to happen here.
+    """
+    tokens = _PRODUCTION_KIND_TOKENS.get(target)
+    if tokens is None:
+        return "Invalid update target."
+    expected, opposing = tokens
+
+    if is_production_asset is None:
+        return (
+            "Bootloader installation is unavailable (omotion SDK not found, "
+            "or too old to support it)."
+        )
+
+    p = Path(local_path)
+    if not p.is_file():
+        return "Selected file does not exist."
+
+    name = p.name.lower()
+    if not is_production_asset(name):
+        return (
+            f"{p.name} is not a production image. Converting a device needs the "
+            f"bootloader + signed app image, published as "
+            f"motion-{expected}-production.bin."
+        )
+    if expected not in name or opposing in name:
+        return (
+            f"{p.name} is not a {expected} production image. Flashing another "
+            f"device's image is irreversible over USB."
+        )
+    return ""
 
 
 class _MutexedDfuHandle:
@@ -563,6 +614,27 @@ class _DeviceFirmwareFlashThread(QThread):
             self.failed.emit(str(exc))
 
 
+class _BootloaderSourceError(RuntimeError):
+    """Raised when a production image can't be resolved (local file or release)."""
+
+
+# install_bootloader enters DFU before it can detect that a device is already
+# converted, and it is flash_bin that passes ":leave" to dfu-util. So every
+# abort after enter_dfu() leaves the device sitting in DFU until it is
+# power-cycled. Exiting DFU programmatically would need a new DFUProgrammer
+# detach call -- an SDK change -- so the failure message says so instead.
+_DFU_STRANDED_HINT = "Power-cycle the device to bring it out of DFU."
+
+
+def _with_dfu_hint(msg: str) -> str:
+    """Append the power-cycle hint, unless it is already there."""
+    text = str(msg).strip()
+    if _DFU_STRANDED_HINT in text:
+        return text
+    sep = " " if text.endswith(".") else ". "
+    return f"{text}{sep}{_DFU_STRANDED_HINT}"
+
+
 class _BootloaderInstallThread(QThread):
     """Download a production image and convert a device to bootloader mode.
 
@@ -576,74 +648,104 @@ class _BootloaderInstallThread(QThread):
     failed = pyqtSignal(str)
     finished_ok = pyqtSignal()
 
-    def __init__(self, connector: "MOTIONConnector", target: str, tag: str):
+    def __init__(self, connector: "MOTIONConnector", target: str, tag: str,
+                 local_path: str | None = None):
         super().__init__()
         self._connector = connector
         self._target = target
         self._tag = tag
+        self._local_path = local_path
+
+    def _resolve_image(self, kind) -> Path:
+        """Path to the production image, from disk or from a GitHub release.
+
+        The local branch must not touch the network at all -- the factory floor
+        runs offline. That is why the GitHubReleases availability check and the
+        --no-github bail live here in the download branch rather than in run():
+        as top-of-run() guards they blocked local installs too.
+        """
+        if self._local_path:
+            err = _validate_production_image(self._target, self._local_path)
+            if err:
+                raise _BootloaderSourceError(err)
+            return Path(self._local_path)
+
+        if GitHubReleases is None:
+            raise _BootloaderSourceError(
+                "GitHubReleases is unavailable (omotion SDK not found in environment)."
+            )
+        if self._connector._github_disabled:
+            raise _BootloaderSourceError(
+                "GitHub access is disabled (--no-github). Choose 'Upload File...' in "
+                "the release dropdown to install from a local image."
+            )
+
+        name = production_asset(kind)
+        dl_dir = _downloads_dir()
+        dl_dir.mkdir(parents=True, exist_ok=True)
+
+        repo_name = (
+            _CONSOLE_FW_REPO_NAME
+            if self._target == "console"
+            else _SENSOR_FW_REPO_NAME
+        )
+        gh = GitHubReleases(_CONSOLE_FW_REPO_OWNER, repo_name, timeout=30)
+
+        release = None
+        last_exc = None
+        for candidate_tag in _candidate_console_fw_tags(self._tag):
+            try:
+                self.progress.emit(-1, f"Fetching release {candidate_tag}...")
+                release = gh.get_release_by_tag(candidate_tag)
+                break
+            except Exception as exc:
+                last_exc = exc
+        if release is None:
+            raise _BootloaderSourceError(
+                f"Release '{self._tag}' not found. ({last_exc})"
+            )
+
+        names = {
+            a.get("name") for a in (gh.get_asset_list(release=release) or [])
+            if isinstance(a, dict)
+        }
+        if name not in names:
+            raise _BootloaderSourceError(
+                f"Release '{self._tag}' has no {name}. Only releases built "
+                "with bootloader support can convert a device."
+            )
+
+        self.progress.emit(-1, f"Downloading {name}...")
+        return Path(gh.download_asset(release, name, output_dir=dl_dir))
 
     def run(self):
-        if install_bootloader is None or GitHubReleases is None:
+        if install_bootloader is None:
             self.failed.emit(
                 "Bootloader installation is unavailable (omotion SDK not found, "
                 "or too old to support it)."
             )
             return
-        if self._connector._github_disabled:
-            self.failed.emit("GitHub access is disabled (--no-github).")
+
+        kind = _firmware_kind(self._target)
+        try:
+            path = self._resolve_image(kind)
+        except Exception as exc:
+            # Nothing has entered DFU yet, so no power-cycle hint here.
+            self.failed.emit(str(exc))
             return
 
-        try:
-            kind = _firmware_kind(self._target)
-            name = production_asset(kind)
-            dl_dir = _downloads_dir()
-            dl_dir.mkdir(parents=True, exist_ok=True)
+        self.progress.emit(0, "Installing bootloader...")
 
-            repo_name = (
-                _CONSOLE_FW_REPO_NAME
-                if self._target == "console"
-                else _SENSOR_FW_REPO_NAME
-            )
-            gh = GitHubReleases(_CONSOLE_FW_REPO_OWNER, repo_name, timeout=30)
-
-            release = None
-            last_exc = None
-            for candidate_tag in _candidate_console_fw_tags(self._tag):
-                try:
-                    self.progress.emit(-1, f"Fetching release {candidate_tag}...")
-                    release = gh.get_release_by_tag(candidate_tag)
-                    break
-                except Exception as exc:
-                    last_exc = exc
-            if release is None:
-                self.failed.emit(f"Release '{self._tag}' not found. ({last_exc})")
-                return
-
-            names = {
-                a.get("name") for a in (gh.get_asset_list(release=release) or [])
-                if isinstance(a, dict)
-            }
-            if name not in names:
-                self.failed.emit(
-                    f"Release '{self._tag}' has no {name}. Only releases built "
-                    "with bootloader support can convert a device."
-                )
-                return
-
-            self.progress.emit(-1, f"Downloading {name}...")
-            path = Path(gh.download_asset(release, name, output_dir=dl_dir))
-
-            self.progress.emit(0, "Installing bootloader...")
-
-            def on_progress(p):
+        def on_progress(p):
+            pct = -1
+            try:
+                if p.percent is not None:
+                    pct = int(p.percent)
+            except Exception:
                 pct = -1
-                try:
-                    if p.percent is not None:
-                        pct = int(p.percent)
-                except Exception:
-                    pct = -1
-                self.progress.emit(pct, "Installing bootloader...")
+            self.progress.emit(pct, "Installing bootloader...")
 
+        try:
             result = install_bootloader(
                 _MutexedDfuHandle(self._connector, self._target),
                 kind,
@@ -655,7 +757,9 @@ class _BootloaderInstallThread(QThread):
             )
             if not getattr(result, "success", False):
                 code = getattr(result, "returncode", "?")
-                self.failed.emit(f"Install failed (dfu-util exit code {code}).")
+                self.failed.emit(
+                    _with_dfu_hint(f"Install failed (dfu-util exit code {code}).")
+                )
                 return
 
             self._connector._note_boot_mode(self._target, BootMode.BOOTLOADER)
@@ -664,7 +768,13 @@ class _BootloaderInstallThread(QThread):
         except Exception as exc:
             # Includes BootloaderInstallError -- notably "already installed",
             # which is the abort that makes this safe to offer unconditionally.
-            self.failed.emit(str(exc))
+            # Not everything here is downstream of enter_dfu(): install_bootloader
+            # raises before it for the acknowledge_irreversible, is_production_asset
+            # and is_file checks, and "device did not accept enter_dfu()" fires
+            # exactly when the device did NOT enter DFU. The power-cycle hint is
+            # harmless on those paths too, so it stays unconditional rather than
+            # trying to narrow it per exception.
+            self.failed.emit(_with_dfu_hint(str(exc)))
 
 
 class _NvcmFlashThread(QThread):
@@ -1382,8 +1492,21 @@ class MOTIONConnector(QObject):
             )
             return
 
+        self._start_bootloader_thread(target, tag)
+
+    def _start_bootloader_thread(
+        self, target: str, tag: str, local_path: str | None = None
+    ) -> None:
+        """Wire up and start a bootloader install. Callers do the gating.
+
+        Shared by installBootloader (release tag) and installBootloaderFromLocal
+        (browsed file): only the image source differs, so the thread wiring and
+        the finished/failed handling live here rather than in both slots.
+        """
         self._set_console_fw_busy(True)
-        self._bl_install_thread = _BootloaderInstallThread(self, target, tag)
+        self._bl_install_thread = _BootloaderInstallThread(
+            self, target, tag, local_path=local_path
+        )
         self._bl_install_thread.progress.connect(
             lambda pct, msg: self.consoleFirmwareUpdateProgress.emit(
                 target, "install", int(pct), str(msg)
@@ -1408,6 +1531,42 @@ class MOTIONConnector(QObject):
         )
         self._bl_install_thread.start()
 
+    @pyqtSlot(str, str, result=str)
+    def validateProductionImage(self, target: str, local_path: str) -> str:
+        """Vet a browsed production image for QML. "" means usable.
+
+        Called from the file dialog so a bad image is rejected *before* the
+        irreversible-install confirmation appears, rather than after the
+        operator has already agreed to it.
+        """
+        return _validate_production_image(target, local_path)
+
+    @pyqtSlot(str, str)
+    def installBootloaderFromLocal(self, target: str, local_path: str) -> None:
+        """Convert a device using a production image from disk. Irreversible.
+
+        The offline counterpart to installBootloader. QML gates this behind the
+        same confirmation dialog; the image is validated here as well, because
+        by the time the thread runs the operator has already confirmed.
+        """
+        logger.info(
+            f"installBootloaderFromLocal target={target} path={local_path}"
+        )
+        if target not in ("console", "left", "right"):
+            self.bootloaderInstallFinished.emit(target, False, "Invalid target.")
+            return
+        if self.consoleFirmwareUpdateBusy:
+            self.bootloaderInstallFinished.emit(
+                target, False, "A firmware operation is already in progress."
+            )
+            return
+        err = _validate_production_image(target, local_path)
+        if err:
+            self.bootloaderInstallFinished.emit(target, False, err)
+            return
+
+        self._start_bootloader_thread(target, "local", local_path)
+
     def _note_boot_mode(self, target: str, mode) -> None:
         """Record the boot mode the SDK detected while the device was in DFU."""
         label = _boot_mode_label(mode)
@@ -1431,11 +1590,31 @@ class MOTIONConnector(QObject):
 
     @pyqtSlot(str, result=str)
     def deviceBootMode(self, target: str) -> str:
-        """Last observed boot mode for a target, or "" if never seen in DFU.
+        """Last observed boot mode for a target, or "" if not yet known.
 
-        Empty is the normal state until an update or install has run: mode is
-        only observable while the device sits in DFU, and probing for it would
-        mean reboot-cycling a working device for a label.
+        Populated on connect by querySensorInfo / queryConsoleInfo, which ask
+        the device over normal comms (OW_CMD_BOOT_INFO) -- no DFU cycle -- and
+        by any DFU operation that runs. Cleared on disconnect so a swapped
+        device does not inherit the previous one's state (issue #77).
+
+        DELIBERATE: a device that does not answer is treated as NOT
+        bootloadered -- the query records only BARE_METAL/BOOTLOADER, this
+        returns "", and the lock icon reads unlocked with the install control
+        live. Do not "fix" that into a locked or greyed-out icon.
+
+        Two populations answer with UNKNOWN, and unlocked is right for both:
+        firmware predating OW_CMD_BOOT_INFO (older sensors; console until #73),
+        and a device converted using a production image whose bundled app
+        predates the command -- observed on the bench with a sensor converted
+        from a 1.8.2-rc.2 production image, which reported UNKNOWN even though
+        the conversion was byte-correct. That second case disappears once
+        release images bundle firmware that answers.
+
+        Guessing "locked" instead would hide the install control on devices
+        that may well be bare metal, and nothing is gained by guessing:
+        install_bootloader re-checks over DFU and aborts without writing if a
+        bootloader is already present. Being wrong here costs a clear error
+        message, not a device.
         """
         return self._boot_modes.get(target, "")
 

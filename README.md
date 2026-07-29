@@ -53,15 +53,20 @@ This skips every release query. The firmware dropdowns then offer only
 
 | What | File to select |
 |---|---|
-| Console / sensor application firmware | `motion-console-fw-*.bin` / `motion-sensor-fw-*.bin` |
+| Console / sensor application firmware | `motion-console-fw.bin` / `motion-console-fw-*.bin` / `motion-sensor-fw.bin` / `motion-sensor-fw-*.bin` |
 | Bootloader (converts a bare-metal device) | `motion-console-production.bin` / `motion-sensor-production.bin` |
 | FPGA (TA, Seed, Safety EE, Safety OPT) | the target's `.jed` |
 
 Installing the bootloader is **irreversible over USB** — afterwards the device
 only accepts signed firmware, and returning it to a normal image needs an
-ST-LINK/SWD debugger. The app confirms before doing it, refuses an image built
-for the other device, and the SDK aborts without writing if the device already
-has a bootloader.
+ST-LINK/SWD debugger or a BOOT0 strap into the ROM loader. The app confirms
+before doing it, and refuses an image whose *filename* is for the other
+device — validation is filename-only, so this is the only signal available.
+Never rename or re-label production images; a renamed
+`motion-sensor-production.bin` masquerading as
+`motion-console-production.bin` will pass every gate and permanently convert
+the console with the wrong image. The SDK also aborts without writing if the
+device already has a bootloader installed.
 
 ## Run packager
 ```

@@ -614,6 +614,27 @@ class _DeviceFirmwareFlashThread(QThread):
             self.failed.emit(str(exc))
 
 
+class _BootloaderSourceError(RuntimeError):
+    """Raised when a production image can't be resolved (local file or release)."""
+
+
+# install_bootloader enters DFU before it can detect that a device is already
+# converted, and it is flash_bin that passes ":leave" to dfu-util. So every
+# abort after enter_dfu() leaves the device sitting in DFU until it is
+# power-cycled. Exiting DFU programmatically would need a new DFUProgrammer
+# detach call -- an SDK change -- so the failure message says so instead.
+_DFU_STRANDED_HINT = "Power-cycle the device to bring it out of DFU."
+
+
+def _with_dfu_hint(msg: str) -> str:
+    """Append the power-cycle hint, unless it is already there."""
+    text = str(msg).strip()
+    if _DFU_STRANDED_HINT in text:
+        return text
+    sep = " " if text.endswith(".") else ". "
+    return f"{text}{sep}{_DFU_STRANDED_HINT}"
+
+
 class _BootloaderInstallThread(QThread):
     """Download a production image and convert a device to bootloader mode.
 
@@ -627,74 +648,104 @@ class _BootloaderInstallThread(QThread):
     failed = pyqtSignal(str)
     finished_ok = pyqtSignal()
 
-    def __init__(self, connector: "MOTIONConnector", target: str, tag: str):
+    def __init__(self, connector: "MOTIONConnector", target: str, tag: str,
+                 local_path: str | None = None):
         super().__init__()
         self._connector = connector
         self._target = target
         self._tag = tag
+        self._local_path = local_path
+
+    def _resolve_image(self, kind) -> Path:
+        """Path to the production image, from disk or from a GitHub release.
+
+        The local branch must not touch the network at all -- the factory floor
+        runs offline. That is why the GitHubReleases availability check and the
+        --no-github bail live here in the download branch rather than in run():
+        as top-of-run() guards they blocked local installs too.
+        """
+        if self._local_path:
+            err = _validate_production_image(self._target, self._local_path)
+            if err:
+                raise _BootloaderSourceError(err)
+            return Path(self._local_path)
+
+        if GitHubReleases is None:
+            raise _BootloaderSourceError(
+                "GitHubReleases is unavailable (omotion SDK not found in environment)."
+            )
+        if self._connector._github_disabled:
+            raise _BootloaderSourceError(
+                "GitHub access is disabled (--no-github). Choose 'Upload File...' in "
+                "the release dropdown to install from a local image."
+            )
+
+        name = production_asset(kind)
+        dl_dir = _downloads_dir()
+        dl_dir.mkdir(parents=True, exist_ok=True)
+
+        repo_name = (
+            _CONSOLE_FW_REPO_NAME
+            if self._target == "console"
+            else _SENSOR_FW_REPO_NAME
+        )
+        gh = GitHubReleases(_CONSOLE_FW_REPO_OWNER, repo_name, timeout=30)
+
+        release = None
+        last_exc = None
+        for candidate_tag in _candidate_console_fw_tags(self._tag):
+            try:
+                self.progress.emit(-1, f"Fetching release {candidate_tag}...")
+                release = gh.get_release_by_tag(candidate_tag)
+                break
+            except Exception as exc:
+                last_exc = exc
+        if release is None:
+            raise _BootloaderSourceError(
+                f"Release '{self._tag}' not found. ({last_exc})"
+            )
+
+        names = {
+            a.get("name") for a in (gh.get_asset_list(release=release) or [])
+            if isinstance(a, dict)
+        }
+        if name not in names:
+            raise _BootloaderSourceError(
+                f"Release '{self._tag}' has no {name}. Only releases built "
+                "with bootloader support can convert a device."
+            )
+
+        self.progress.emit(-1, f"Downloading {name}...")
+        return Path(gh.download_asset(release, name, output_dir=dl_dir))
 
     def run(self):
-        if install_bootloader is None or GitHubReleases is None:
+        if install_bootloader is None:
             self.failed.emit(
                 "Bootloader installation is unavailable (omotion SDK not found, "
                 "or too old to support it)."
             )
             return
-        if self._connector._github_disabled:
-            self.failed.emit("GitHub access is disabled (--no-github).")
+
+        kind = _firmware_kind(self._target)
+        try:
+            path = self._resolve_image(kind)
+        except Exception as exc:
+            # Nothing has entered DFU yet, so no power-cycle hint here.
+            self.failed.emit(str(exc))
             return
 
-        try:
-            kind = _firmware_kind(self._target)
-            name = production_asset(kind)
-            dl_dir = _downloads_dir()
-            dl_dir.mkdir(parents=True, exist_ok=True)
+        self.progress.emit(0, "Installing bootloader...")
 
-            repo_name = (
-                _CONSOLE_FW_REPO_NAME
-                if self._target == "console"
-                else _SENSOR_FW_REPO_NAME
-            )
-            gh = GitHubReleases(_CONSOLE_FW_REPO_OWNER, repo_name, timeout=30)
-
-            release = None
-            last_exc = None
-            for candidate_tag in _candidate_console_fw_tags(self._tag):
-                try:
-                    self.progress.emit(-1, f"Fetching release {candidate_tag}...")
-                    release = gh.get_release_by_tag(candidate_tag)
-                    break
-                except Exception as exc:
-                    last_exc = exc
-            if release is None:
-                self.failed.emit(f"Release '{self._tag}' not found. ({last_exc})")
-                return
-
-            names = {
-                a.get("name") for a in (gh.get_asset_list(release=release) or [])
-                if isinstance(a, dict)
-            }
-            if name not in names:
-                self.failed.emit(
-                    f"Release '{self._tag}' has no {name}. Only releases built "
-                    "with bootloader support can convert a device."
-                )
-                return
-
-            self.progress.emit(-1, f"Downloading {name}...")
-            path = Path(gh.download_asset(release, name, output_dir=dl_dir))
-
-            self.progress.emit(0, "Installing bootloader...")
-
-            def on_progress(p):
+        def on_progress(p):
+            pct = -1
+            try:
+                if p.percent is not None:
+                    pct = int(p.percent)
+            except Exception:
                 pct = -1
-                try:
-                    if p.percent is not None:
-                        pct = int(p.percent)
-                except Exception:
-                    pct = -1
-                self.progress.emit(pct, "Installing bootloader...")
+            self.progress.emit(pct, "Installing bootloader...")
 
+        try:
             result = install_bootloader(
                 _MutexedDfuHandle(self._connector, self._target),
                 kind,
@@ -706,7 +757,9 @@ class _BootloaderInstallThread(QThread):
             )
             if not getattr(result, "success", False):
                 code = getattr(result, "returncode", "?")
-                self.failed.emit(f"Install failed (dfu-util exit code {code}).")
+                self.failed.emit(
+                    _with_dfu_hint(f"Install failed (dfu-util exit code {code}).")
+                )
                 return
 
             self._connector._note_boot_mode(self._target, BootMode.BOOTLOADER)
@@ -715,7 +768,9 @@ class _BootloaderInstallThread(QThread):
         except Exception as exc:
             # Includes BootloaderInstallError -- notably "already installed",
             # which is the abort that makes this safe to offer unconditionally.
-            self.failed.emit(str(exc))
+            # Everything here is downstream of enter_dfu(), so the device is
+            # very likely stranded in DFU; say so.
+            self.failed.emit(_with_dfu_hint(str(exc)))
 
 
 class _NvcmFlashThread(QThread):

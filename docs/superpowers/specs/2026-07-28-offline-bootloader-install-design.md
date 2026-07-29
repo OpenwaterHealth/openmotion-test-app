@@ -92,7 +92,7 @@ again inside the install thread as a backstop for any non-UI caller.
 ### 2. `_BootloaderInstallThread` — optional local path
 
 The constructor gains an optional `local_path`. `run()` splits image resolution into two
-branches, the same shape `_FpgaFirmwareThread` already uses for local vs
+branches, the same shape `_ConsoleFpgaUpdateThread` already uses for local vs
 `_download_jed_from_github()` (`motion_connector.py:876`):
 
 - **local** — validate, use the path as-is, no network

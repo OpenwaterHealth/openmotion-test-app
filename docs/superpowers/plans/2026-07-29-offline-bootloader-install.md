@@ -4,7 +4,7 @@
 
 **Goal:** Let a factory operator install the console/sensor bootloader from a `.bin` on disk, with no network, without being able to flash the wrong device's image.
 
-**Architecture:** `_BootloaderInstallThread` gains an optional local path; the GitHub fetch becomes one branch of a new `_resolve_image()` step, mirroring `_FpgaFirmwareThread`. A pure `_validate_production_image()` helper closes the cross-device brick the SDK does not catch, and is called from QML before the irreversible-warning modal as well as inside the thread. The three duplicated lock-button handlers collapse into one QML helper.
+**Architecture:** `_BootloaderInstallThread` gains an optional local path; the GitHub fetch becomes one branch of a new `_resolve_image()` step, mirroring `_ConsoleFpgaUpdateThread`. A pure `_validate_production_image()` helper closes the cross-device brick the SDK does not catch, and is called from QML before the irreversible-warning modal as well as inside the thread. The three duplicated lock-button handlers collapse into one QML helper.
 
 **Tech Stack:** Python 3.13, PyQt6 6.8.0, QML (Qt Quick Controls Material), pytest 7.4.0, `omotion` SDK (editable install from `../openmotion-sdk`).
 
@@ -538,7 +538,7 @@ git add tests/test_bootloader_install_source.py motion_connector.py && git commi
 feat: resolve the production image from a local file or a release
 
 Splits image resolution out of _BootloaderInstallThread.run() into
-_resolve_image(), mirroring the shape _FpgaFirmwareThread already uses.
+_resolve_image(), mirroring the shape _ConsoleFpgaUpdateThread already uses.
 Fixes two guards that ran before any resolution and so would have blocked
 local installs: run() required GitHubReleases to be importable even though
 a local install does not use it, and the --no-github bail fired regardless

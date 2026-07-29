@@ -38,6 +38,12 @@ Explicitly **out of scope**, decided with the issue author:
   every firmware flow.
 - Any modification to the app-firmware or FPGA local paths. They already work offline;
   they will be verified under `--no-github`, not changed.
+- Recording the boot mode on an "already installed" abort. Reachable on console only,
+  until #73 ships — see "The already-installed abort" below.
+
+Two small in-scope additions, both on code this change already touches: a power-cycle
+hint on the install-failure message, and two stale comments about when boot mode becomes
+knowable. Both are described under Documentation and Error handling.
 
 ## Safety: the cross-device brick this introduces
 
@@ -144,9 +150,51 @@ never removes or weakens it.
 |---|---|
 | Wrong kind, missing "production", or nonexistent file | `fwErrorDialog` at file-selection time, before the warning modal |
 | Same, reaching the thread from a non-UI caller | `bootloaderInstallFinished(target, false, msg)` — the existing result dialog |
-| Device already has a bootloader / not bare metal | Unchanged: `BootloaderInstallError` from the SDK, which aborts without writing |
+| Device already has a bootloader / not bare metal | Unchanged: `BootloaderInstallError` from the SDK, which aborts without writing. Failure message gains a power-cycle hint (below). |
 | `install_bootloader` unimportable (SDK too old) | Unchanged message |
 | `--no-github` | No longer blocks the local path; still blocks the download path |
+
+### The already-installed abort, and why it is left alone
+
+Re-running an install on a converted device is safe: `install_bootloader`
+(`omotion/bootloader_install.py:85`) enters DFU, reads the DFU alt-setting layout, and
+raises `BootloaderInstallError("this device already has the bootloader installed; nothing
+was written")` before `flash_bin` is ever reached. No erase, no write.
+
+Two consequences were considered. Neither root cause is fixed here; one gets a mitigation:
+
+**The device is left in DFU.** The abort happens after `enter_dfu()`, and it is
+`flash_bin` that passes `:leave` to dfu-util (`omotion/DFUProgrammer.py:237`). Nothing on
+the failure path exits DFU, so the unit stays there until power-cycled. A programmatic
+exit would need a new `DFUProgrammer` detach call — an SDK change, out of scope. Mitigated
+here by appending **"Power-cycle the device to bring it out of DFU."** to the install
+failure message. This applies to every abort, including the "could not confirm this device
+is bare metal" case, which no boot-mode query can prevent.
+
+**The app does not record the mode it just detected.** `_note_boot_mode` is only called on
+the success path (`motion_connector.py:661`), so an already-installed abort leaves the
+padlock unlocked, and the operator can click straight into the same abort again. This is a
+real bug, but it is reachable on console only and #73 is already closing that window — see
+below. Recording the mode was scoped out on that basis.
+
+### Boot-mode reporting is asymmetric today (context for the above)
+
+The lock icon does not depend on a DFU op. `querySensorInfo` (`motion_connector.py:2510`)
+and `queryConsoleInfo` (`motion_connector.py:2594`) both query `get_boot_mode()` over
+normal comms via `OW_CMD_BOOT_INFO` on connect, and record definite answers.
+
+- **Sensors:** firmware implements `OW_CMD_BOOT_INFO` (0x09,
+  `openmotion-sensor-fw/Core/Src/if_commands.c:105`). The padlock closes on connect and the
+  button goes inert. The abort path is effectively unreachable.
+- **Console:** released firmware has no 0x0B handler — the command enum in
+  `openmotion-console-fw/Core/Inc/common.h` jumps 0x0A → 0x0D. The SDK's query NAKs,
+  yields `UNKNOWN`, and the call site records nothing, so a converted console reads
+  unlocked indefinitely. This is open issue
+  [openmotion-test-app#73](https://github.com/OpenwaterHealth/openmotion-test-app/issues/73),
+  already implemented in an unmerged console-fw worktree.
+
+So the abort path is reachable **on console only, until #73 ships**. That is why the
+mode-recording fix is not worth carrying in this ticket.
 
 ## Testing
 
@@ -173,14 +221,29 @@ and reported as unverified, not as working:
 4. Select the sensor image for the console; confirm it is rejected before the warning
    modal and nothing is written.
 5. Re-run the install on an already-converted device; confirm the SDK's
-   "already installed" abort still fires.
+   "already installed" abort still fires, nothing is written, and the failure message
+   carries the power-cycle hint. On a sensor the padlock should already read 🔒 and the
+   button should be inert, making this hard to reach — try it on the console.
 6. Regression: app firmware and FPGA `.jed` still flash from a local file under
    `--no-github`.
 
 ## Documentation
 
-Both currently imply bootloader install is unavailable offline:
+These currently imply bootloader install is unavailable offline:
 
 - `CLAUDE.md` — the `--no-github` note in "Working without hardware", and the firmware
   row of the "Start here" table
 - `README.md` — the `--no-github` flag description
+
+Two stale comments are also corrected. Both claim boot mode is only knowable after a DFU
+op, which stopped being true when the `OW_CMD_BOOT_INFO` query landed; both actively
+mislead a reader about when the lock icon updates:
+
+- `motion_connector.py:1434` — `deviceBootMode` docstring: "Empty is the normal state
+  until an update or install has run"
+- `pages/Settings.qml:1609` — "Boot mode is only known after a DFU op this session (or
+  would need `OW_CMD_BOOT_INFO`)"
+
+The QML one sits in the exact block being rewritten for the lock-button helper. The
+corrected text should state what is actually true: the mode is queried over normal comms
+on connect, sensors answer today, and the console will once #73 ships.

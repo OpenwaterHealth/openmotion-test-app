@@ -52,6 +52,7 @@ try:
         FirmwareUpdater,
         UnsupportedReleaseError,
         candidate_assets,
+        is_production_asset,
         production_asset,
         register_download,
     )
@@ -62,6 +63,7 @@ except Exception:  # pragma: no cover
     FirmwareUpdater = None
     UnsupportedReleaseError = None
     candidate_assets = None
+    is_production_asset = None
     production_asset = None
     register_download = None
 
@@ -80,6 +82,55 @@ def _firmware_kind(target: str):
     if FirmwareKind is None:
         return None
     return FirmwareKind.CONSOLE if target == "console" else FirmwareKind.SENSOR
+
+
+# Which filename token each target's production image must carry, and which one
+# proves it belongs to the other device. Order: (expected, opposing).
+_PRODUCTION_KIND_TOKENS = {
+    "console": ("console", "sensor"),
+    "left": ("sensor", "console"),
+    "right": ("sensor", "console"),
+}
+
+
+def _validate_production_image(target: str, local_path: str) -> str:
+    """Vet a browsed production image. Returns "" if usable, else why not.
+
+    The SDK's only content gate before an irreversible write at
+    BARE_METAL_FLASH_ADDRESS is is_production_asset(), which checks for the
+    substring "production" and nothing else -- notably not console-vs-sensor.
+    The GitHub path cannot reach that failure because it fetches
+    production_asset(kind) by exact name; a browse dialog can, so the kind check
+    has to happen here.
+    """
+    tokens = _PRODUCTION_KIND_TOKENS.get(target)
+    if tokens is None:
+        return "Invalid update target."
+    expected, opposing = tokens
+
+    if is_production_asset is None:
+        return (
+            "Bootloader installation is unavailable (omotion SDK not found, "
+            "or too old to support it)."
+        )
+
+    p = Path(local_path)
+    if not p.is_file():
+        return "Selected file does not exist."
+
+    name = p.name.lower()
+    if not is_production_asset(name):
+        return (
+            f"{p.name} is not a production image. Converting a device needs the "
+            f"bootloader + signed app image, published as "
+            f"motion-{expected}-production.bin."
+        )
+    if expected not in name or opposing in name:
+        return (
+            f"{p.name} is not a {expected} production image. Flashing another "
+            f"device's image is irreversible over USB."
+        )
+    return ""
 
 
 class _MutexedDfuHandle:

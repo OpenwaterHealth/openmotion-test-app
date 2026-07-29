@@ -27,7 +27,8 @@ from pathlib import Path
 from omotion.GitHubReleases import GitHubReleases
 from motion_singleton import motion_interface
 from histogram_classifier import classify_histogram
-from utils.nvcm_verdict import interpret_nvcm_blob
+from omotion.config import OW_RESP
+from utils.nvcm_verdict import interpret_boot_probe, interpret_check_blob
 from fpga_laser_config import (
     FpgaModel,
     apply_laser_power_from_config,
@@ -39,6 +40,143 @@ try:
 except Exception:  # pragma: no cover
     DFUProgrammer = None
     DFUProgress = None
+
+# Bootloader-aware flashing. All of the policy — which asset suits which boot
+# mode, and what address it goes to — lives in the SDK; this app only supplies
+# buttons and shows what comes back. See openmotion-sdk#173.
+try:
+    from omotion.boot_mode import BootMode
+    from omotion.firmware_update import (
+        FirmwareKind,
+        FirmwareUpdateError,
+        FirmwareUpdater,
+        UnsupportedReleaseError,
+        candidate_assets,
+        is_production_asset,
+        production_asset,
+        register_download,
+    )
+except Exception:  # pragma: no cover
+    BootMode = None
+    FirmwareKind = None
+    FirmwareUpdateError = None
+    FirmwareUpdater = None
+    UnsupportedReleaseError = None
+    candidate_assets = None
+    is_production_asset = None
+    production_asset = None
+    register_download = None
+
+# Converting a device to bootloader mode is irreversible over USB, so the SDK
+# keeps this out of `from omotion import ...` on purpose. Reaching it is a
+# deliberate submodule import — which is exactly what this line is.
+try:
+    from omotion.bootloader_install import BootloaderInstallError, install_bootloader
+except Exception:  # pragma: no cover
+    BootloaderInstallError = None
+    install_bootloader = None
+
+
+def _firmware_kind(target: str):
+    """Map a UI target ("console" / "left" / "right") to an SDK FirmwareKind."""
+    if FirmwareKind is None:
+        return None
+    return FirmwareKind.CONSOLE if target == "console" else FirmwareKind.SENSOR
+
+
+# Which filename token each target's production image must carry, and which one
+# proves it belongs to the other device. Order: (expected, opposing).
+_PRODUCTION_KIND_TOKENS = {
+    "console": ("console", "sensor"),
+    "left": ("sensor", "console"),
+    "right": ("sensor", "console"),
+}
+
+
+def _validate_production_image(target: str, local_path: str) -> str:
+    """Vet a browsed production image. Returns "" if usable, else why not.
+
+    The SDK's only content gate before an irreversible write at
+    BARE_METAL_FLASH_ADDRESS is is_production_asset(), which checks for the
+    substring "production" and nothing else -- notably not console-vs-sensor.
+    The GitHub path cannot reach that failure because it fetches
+    production_asset(kind) by exact name; a browse dialog can, so the kind check
+    has to happen here.
+    """
+    tokens = _PRODUCTION_KIND_TOKENS.get(target)
+    if tokens is None:
+        return "Invalid update target."
+    expected, opposing = tokens
+
+    if is_production_asset is None:
+        return (
+            "Bootloader installation is unavailable (omotion SDK not found, "
+            "or too old to support it)."
+        )
+
+    p = Path(local_path)
+    if not p.is_file():
+        return "Selected file does not exist."
+
+    name = p.name.lower()
+    if not is_production_asset(name):
+        return (
+            f"{p.name} is not a production image. Converting a device needs the "
+            f"bootloader + signed app image, published as "
+            f"motion-{expected}-production.bin."
+        )
+    if expected not in name or opposing in name:
+        return (
+            f"{p.name} is not a {expected} production image. Flashing another "
+            f"device's image is irreversible over USB."
+        )
+    return ""
+
+
+class _MutexedDfuHandle:
+    """Adapts a device module to the SDK's ``enter_dfu()`` handle protocol.
+
+    The SDK owns the DFU sequence, but only this app knows about the per-device
+    mutexes guarding the transport, so the lock is taken here and the handle is
+    handed over. The post-request settle is also kept here: the device drops off
+    the bus and comes back as a DFU device, and the SDK's wait starts polling
+    immediately.
+    """
+
+    _REENUMERATE_SETTLE_S = 5.0
+
+    def __init__(self, connector: "MOTIONConnector", target: str):
+        self._connector = connector
+        self._target = target
+
+    def enter_dfu(self) -> bool:
+        if self._target == "console":
+            mutex = self._connector._console_mutex
+            device = motion_interface.console
+        else:
+            mutex = self._connector._get_sensor_mutex(self._target)
+            device = getattr(motion_interface, self._target)
+
+        mutex.lock()
+        try:
+            ok = device.enter_dfu()
+        finally:
+            mutex.unlock()
+
+        if ok:
+            time.sleep(self._REENUMERATE_SETTLE_S)
+        return ok
+
+
+def _boot_mode_label(mode) -> str:
+    """Human-readable boot mode for the UI. Empty when not yet observed."""
+    if mode is None or BootMode is None:
+        return ""
+    if mode is BootMode.BARE_METAL:
+        return "Bare metal"
+    if mode is BootMode.BOOTLOADER:
+        return "Bootloader"
+    return "Unknown"
 
 try:
     from omotion.GitHubReleases import GitHubReleases
@@ -225,7 +363,7 @@ class _ConsoleFirmwareDownloadThread(QThread):
     def run(self):
         token: str | None = None
         try:
-            self.progress.emit(-1, f"Locating {self._filename} for {self._tag}…")
+            self.progress.emit(-1, f"Locating firmware for {self._tag}…")
 
             if self._connector._github_disabled:
                 self.failed.emit(
@@ -269,26 +407,46 @@ class _ConsoleFirmwareDownloadThread(QThread):
                     release = gh.get_release_by_tag(candidate_tag)
 
                     assets = gh.get_asset_list(release=release)
-                    asset_names = {
+                    asset_names = [
                         a.get("name") for a in (assets or []) if isinstance(a, dict)
-                    }
-                    if self._filename not in asset_names:
+                    ]
+
+                    # Which assets could be flashed depends on the device's boot
+                    # mode, and that is not knowable until it is already in DFU.
+                    # So fetch every candidate the SDK names for this release and
+                    # let the flash step pick; asset naming is the SDK's business,
+                    # not this app's.
+                    kind = _firmware_kind(self._target)
+                    wanted = (
+                        candidate_assets(kind, asset_names)
+                        if candidate_assets is not None and kind is not None
+                        else []
+                    )
+                    if not wanted:
                         last_exc = RuntimeError(
-                            f"Asset '{self._filename}' not present in release '{candidate_tag}'."
+                            f"Release '{candidate_tag}' has no firmware image this "
+                            f"app knows how to flash (assets: "
+                            f"{', '.join(n for n in asset_names if n) or 'none'})."
                         )
                         continue
 
-                    self.progress.emit(-1, f"Downloading {self._filename}…")
-                    downloaded_path = gh.download_asset(
-                        release, self._filename, output_dir=dl_dir
-                    )
+                    for name in wanted:
+                        self.progress.emit(-1, f"Downloading {name}…")
+                        path = Path(gh.download_asset(release, name, output_dir=dl_dir))
+                        if register_download is not None and kind is not None:
+                            # Provenance, so the flash step can swap to a sibling
+                            # once it knows what the device actually is.
+                            register_download(path, kind, candidate_tag)
+                        if downloaded_path is None:
+                            downloaded_path = path
+                    self._filename = wanted[0]
                     break
                 except Exception as exc:
                     last_exc = exc
                     continue
 
             if downloaded_path is None:
-                msg = f"Firmware binary '{self._filename}' was not found for release '{self._tag}'."
+                msg = f"No usable firmware image was found for release '{self._tag}'."
                 if last_exc is not None:
                     msg += f" ({last_exc})"
                 self.failed.emit(msg)
@@ -402,7 +560,7 @@ class _DeviceFirmwareFlashThread(QThread):
         self._target = target
 
     def run(self):
-        if DFUProgrammer is None:
+        if DFUProgrammer is None or FirmwareUpdater is None:
             self.failed.emit(
                 "DFUProgrammer is unavailable (omotion SDK not found in environment)."
             )
@@ -410,35 +568,6 @@ class _DeviceFirmwareFlashThread(QThread):
 
         try:
             self.progress.emit(-1, "Requesting DFU mode…")
-
-            # Request DFU mode on the correct module with appropriate mutex
-            if self._target == "console":
-                self._connector._console_mutex.lock()
-                try:
-                    ok = motion_interface.console.enter_dfu()
-                finally:
-                    self._connector._console_mutex.unlock()
-            else:
-                # left or right
-                sensor_mutex = self._connector._get_sensor_mutex(self._target)
-                sensor_mutex.lock()
-                try:
-                    ok = getattr(motion_interface, self._target).enter_dfu()
-                finally:
-                    sensor_mutex.unlock()
-
-            if not ok:
-                self.failed.emit("Device refused DFU mode request.")
-                return
-
-            # Give the bootloader time to re-enumerate
-            time.sleep(5.0)
-
-            dfu = DFUProgrammer(vidpid="0483:df11")
-            self.progress.emit(-1, "Waiting for DFU device…")
-            if not dfu.wait_for_dfu_device(timeout_s=30.0):
-                self.failed.emit("DFU device did not appear (timeout).")
-                return
 
             def on_progress(p):
                 phase = "Working"
@@ -458,17 +587,19 @@ class _DeviceFirmwareFlashThread(QThread):
                     pct = -1
                 self.progress.emit(pct, f"{phase}…")
 
+            # The SDK decides which image to flash and at which address, from
+            # the boot mode it detects once the device is in DFU. Passing the
+            # bare-metal image to a converted device gets the signed sibling
+            # flashed into the slot instead, and vice versa.
             self.progress.emit(0, "Flashing…")
-            result = dfu.flash_bin(
+            updater = FirmwareUpdater(
+                programmer=DFUProgrammer(vidpid="0483:df11"),
+                dfu_wait_timeout_s=30.0,
+            )
+            result = updater.update(
+                _MutexedDfuHandle(self._connector, self._target),
                 Path(self._bin_path),
-                address=DFUProgrammer.DEFAULT_ADDRESS,
-                alt=0,
-                verbose=0,
-                normalize_dfu_suffix=True,
-                progress=on_progress,
-                line_callback=None,
-                echo_output=False,
-                echo_progress_lines=False,
+                progress_cb=on_progress,
             )
 
             if not getattr(result, "success", False):
@@ -476,10 +607,174 @@ class _DeviceFirmwareFlashThread(QThread):
                 self.failed.emit(f"Flash failed (dfu-util exit code {code}).")
                 return
 
+            self._connector._note_boot_mode(self._target, updater.last_boot_mode)
             self.progress.emit(100, "Flash complete")
             self.finished_ok.emit()
         except Exception as exc:
             self.failed.emit(str(exc))
+
+
+class _BootloaderSourceError(RuntimeError):
+    """Raised when a production image can't be resolved (local file or release)."""
+
+
+# install_bootloader enters DFU before it can detect that a device is already
+# converted, and it is flash_bin that passes ":leave" to dfu-util. So every
+# abort after enter_dfu() leaves the device sitting in DFU until it is
+# power-cycled. Exiting DFU programmatically would need a new DFUProgrammer
+# detach call -- an SDK change -- so the failure message says so instead.
+_DFU_STRANDED_HINT = "Power-cycle the device to bring it out of DFU."
+
+
+def _with_dfu_hint(msg: str) -> str:
+    """Append the power-cycle hint, unless it is already there."""
+    text = str(msg).strip()
+    if _DFU_STRANDED_HINT in text:
+        return text
+    sep = " " if text.endswith(".") else ". "
+    return f"{text}{sep}{_DFU_STRANDED_HINT}"
+
+
+class _BootloaderInstallThread(QThread):
+    """Download a production image and convert a device to bootloader mode.
+
+    Separate from the ordinary update path on purpose. This is irreversible over
+    USB: once installed, the bootloader clamps its DFU write window to the
+    application slot and refuses to erase sector 0, so getting back to bare
+    metal needs SWD or a BOOT0 strap.
+    """
+
+    progress = pyqtSignal(int, str)
+    failed = pyqtSignal(str)
+    finished_ok = pyqtSignal()
+
+    def __init__(self, connector: "MOTIONConnector", target: str, tag: str,
+                 local_path: str | None = None):
+        super().__init__()
+        self._connector = connector
+        self._target = target
+        self._tag = tag
+        self._local_path = local_path
+
+    def _resolve_image(self, kind) -> Path:
+        """Path to the production image, from disk or from a GitHub release.
+
+        The local branch must not touch the network at all -- the factory floor
+        runs offline. That is why the GitHubReleases availability check and the
+        --no-github bail live here in the download branch rather than in run():
+        as top-of-run() guards they blocked local installs too.
+        """
+        if self._local_path:
+            err = _validate_production_image(self._target, self._local_path)
+            if err:
+                raise _BootloaderSourceError(err)
+            return Path(self._local_path)
+
+        if GitHubReleases is None:
+            raise _BootloaderSourceError(
+                "GitHubReleases is unavailable (omotion SDK not found in environment)."
+            )
+        if self._connector._github_disabled:
+            raise _BootloaderSourceError(
+                "GitHub access is disabled (--no-github). Choose 'Upload File...' in "
+                "the release dropdown to install from a local image."
+            )
+
+        name = production_asset(kind)
+        dl_dir = _downloads_dir()
+        dl_dir.mkdir(parents=True, exist_ok=True)
+
+        repo_name = (
+            _CONSOLE_FW_REPO_NAME
+            if self._target == "console"
+            else _SENSOR_FW_REPO_NAME
+        )
+        gh = GitHubReleases(_CONSOLE_FW_REPO_OWNER, repo_name, timeout=30)
+
+        release = None
+        last_exc = None
+        for candidate_tag in _candidate_console_fw_tags(self._tag):
+            try:
+                self.progress.emit(-1, f"Fetching release {candidate_tag}...")
+                release = gh.get_release_by_tag(candidate_tag)
+                break
+            except Exception as exc:
+                last_exc = exc
+        if release is None:
+            raise _BootloaderSourceError(
+                f"Release '{self._tag}' not found. ({last_exc})"
+            )
+
+        names = {
+            a.get("name") for a in (gh.get_asset_list(release=release) or [])
+            if isinstance(a, dict)
+        }
+        if name not in names:
+            raise _BootloaderSourceError(
+                f"Release '{self._tag}' has no {name}. Only releases built "
+                "with bootloader support can convert a device."
+            )
+
+        self.progress.emit(-1, f"Downloading {name}...")
+        return Path(gh.download_asset(release, name, output_dir=dl_dir))
+
+    def run(self):
+        if install_bootloader is None:
+            self.failed.emit(
+                "Bootloader installation is unavailable (omotion SDK not found, "
+                "or too old to support it)."
+            )
+            return
+
+        kind = _firmware_kind(self._target)
+        try:
+            path = self._resolve_image(kind)
+        except Exception as exc:
+            # Nothing has entered DFU yet, so no power-cycle hint here.
+            self.failed.emit(str(exc))
+            return
+
+        self.progress.emit(0, "Installing bootloader...")
+
+        def on_progress(p):
+            pct = -1
+            try:
+                if p.percent is not None:
+                    pct = int(p.percent)
+            except Exception:
+                pct = -1
+            self.progress.emit(pct, "Installing bootloader...")
+
+        try:
+            result = install_bootloader(
+                _MutexedDfuHandle(self._connector, self._target),
+                kind,
+                path,
+                acknowledge_irreversible=True,
+                programmer=DFUProgrammer(vidpid="0483:df11"),
+                dfu_wait_timeout_s=30.0,
+                progress_cb=on_progress,
+            )
+            if not getattr(result, "success", False):
+                code = getattr(result, "returncode", "?")
+                self.failed.emit(
+                    _with_dfu_hint(f"Install failed (dfu-util exit code {code}).")
+                )
+                return
+
+            self._connector._note_boot_mode(self._target, BootMode.BOOTLOADER)
+            self.progress.emit(100, "Bootloader installed")
+            self.finished_ok.emit()
+        except Exception as exc:
+            # Includes BootloaderInstallError -- notably "already installed",
+            # which is the abort that makes this safe to offer unconditionally.
+            # Not everything here is downstream of enter_dfu(): install_bootloader
+            # raises before it for the acknowledge_irreversible, is_production_asset
+            # and is_file checks, and "device did not accept enter_dfu()" fires
+            # exactly when the device did NOT enter DFU. The power-cycle hint is
+            # harmless on those paths too, so it stays unconditional rather than
+            # trying to narrow it per exception.
+            self.failed.emit(_with_dfu_hint(str(exc)))
 
 
 class _NvcmFlashThread(QThread):
@@ -550,11 +845,21 @@ class _NvcmFlashThread(QThread):
 
 
 class _NvcmCheckThread(QThread):
-    """Read-only sweep that probes NVCM programmed-state on all 8 cameras.
+    """Sweep that boot-tests NVCM on all 8 cameras via the firmware's own
+    pin-drive detector (see utils/nvcm_verdict.py).
 
-    Each camera is powered on, the TCA mux is routed to it, and the firmware
-    OW_FACTORY_NVCM_CHECK command is run. Nothing is written; camera power is
-    left on afterwards (the page's power controls own the final state).
+    Fast path (sensor-fw #91: pin-drive boot verdict appended to the
+    OW_FACTORY_NVCM_CHECK blob): a read-only ~0.1 s probe per camera — no
+    SRAM write; a non-booting part is left unconfigured until the next
+    scan programs it.
+
+    Fallback (older firmware/SDK): hard-reset (OW_FPGA_RESET — clears the
+    firmware's isProgrammed cache) + timed non-forced program; the firmware
+    either skips (NVCM boots, ~0.1 s) or SRAM-loads (~10-15 s) and the
+    verdict comes from which path it took.
+
+    Camera power is left on afterwards (the page's power controls own the
+    final state).
     """
 
     progress = pyqtSignal(int, str)          # percent (0-100), message
@@ -577,26 +882,56 @@ class _NvcmCheckThread(QThread):
                 mask = 1 << idx
                 self.progress.emit(
                     int((cam - 1) * 100 / 8),
-                    f"Camera {cam}: probing NVCM ({cam} of 8)…")
+                    f"Camera {cam}: NVCM boot test ({cam} of 8)…")
 
                 mutex.lock()
                 try:
-                    sensor.enable_camera_power(mask)
-                    time.sleep(0.3)
-                    sensor.switch_camera(idx)
-                    time.sleep(0.1)
-                    # boot_test=False: the auto-boot 0x40 probe carries no
-                    # information (0x40 needs the activation key to respond
-                    # at all — issue #44); the verdict comes from the STATUS
-                    # Done bit, which the probe reads regardless.
-                    blob = sensor.nvcm_check(boot_test=False)
-                    verdict, detail = interpret_nvcm_blob(blob)
+                    if not sensor.enable_camera_power(mask):
+                        verdict, detail = "NO RESPONSE", "camera power-on failed"
+                    else:
+                        time.sleep(0.3)
+                        # Fast read-only path: sensor-fw #91 appends the
+                        # pin-drive boot verdict to the OW_FACTORY_NVCM_CHECK
+                        # blob (~0.1 s). The probe runs on the firmware's
+                        # active camera, so the mux switch must be verified —
+                        # a silently failed switch would re-probe the previous
+                        # camera. interpret_check_blob() returns None when the
+                        # byte is absent (pre-#91 firmware) — fall back to the
+                        # slow-but-universal reset + timed non-forced program.
+                        fast = None
+                        switch_resp = sensor.switch_camera(idx)
+                        switch_pt = getattr(switch_resp, "packetType", None)
+                        if switch_pt == OW_RESP:
+                            time.sleep(0.1)
+                            fast = interpret_check_blob(
+                                sensor.nvcm_check(boot_test=False))
+                        if fast is not None:
+                            verdict, detail = fast
+                        else:
+                            self.progress.emit(
+                                int((cam - 1) * 100 / 8),
+                                f"Camera {cam}: firmware lacks the fast probe —"
+                                " reset + program ({} of 8, ~15 s if the FPGA"
+                                " needs an SRAM load)…".format(cam))
+                            # OW_FPGA_RESET: CRESETB reset + clears the
+                            # firmware's isProgrammed cache, so the non-forced
+                            # program below must re-run fpga_detect_nvcm (the
+                            # keyless-boot pin test) instead of trusting a
+                            # stale cached answer.
+                            reset_ok = sensor.reset_camera_sensor(mask)
+                            t0 = time.perf_counter()
+                            prog_ok = (sensor.program_fpga(mask, False)
+                                       if reset_ok else False)
+                            elapsed = time.perf_counter() - t0
+                            verdict, detail = interpret_boot_probe(
+                                reset_ok, prog_ok, elapsed)
                 except Exception as exc:  # never let the thread die silently
                     logger.exception("NVCM check raised for camera %d", cam)
                     verdict, detail = "NO RESPONSE", str(exc)
                 finally:
                     mutex.unlock()
 
+                logger.info("NVCM check camera %d: %s — %s", cam, verdict, detail)
                 self.cameraResult.emit(cam, verdict, detail)
                 results.append((cam, verdict, detail))
 
@@ -925,10 +1260,12 @@ class MOTIONConnector(QObject):
     connectionStatusChanged = pyqtSignal()  # 🔹 New signal for connection updates
     consoleTemperatureUpdated = pyqtSignal(float, float, float)  # (temp1, temp2, temp3)
 
-    laserStateChanged = pyqtSignal(bool)  # 🔹 New signal for laser state change
     safetyFailureStateChanged = pyqtSignal(
         bool
-    )  # 🔹 New signal for safety failure state chang
+    )  # 🔹 New signal for safety failure state change
+    safetyFaultTextChanged = pyqtSignal(
+        str
+    )  # decoded laser-safety fault reason for the GUI (test-app #56)
 
     isStreamingChanged = pyqtSignal()
 
@@ -959,6 +1296,11 @@ class MOTIONConnector(QObject):
     consoleFirmwareUpdateFinished = pyqtSignal(str, bool, str)
     # Emits: target, message
     consoleFirmwareUpdateError = pyqtSignal(str, str)
+    # Boot mode observed for a device, once it has been seen in DFU.
+    # Emits: target, label ("Bare metal" / "Bootloader" / "Unknown")
+    deviceBootModeChanged = pyqtSignal(str, str)
+    # Bootloader installation (irreversible). Emits: target, success, message
+    bootloaderInstallFinished = pyqtSignal(str, bool, str)
 
     # FPGA update signals
     fpgaFirmwareUpdateBusyChanged = pyqtSignal()
@@ -976,7 +1318,7 @@ class MOTIONConnector(QObject):
     nvcmFlashFinished = pyqtSignal(bool, str)          # overall ok, summary
     nvcmFlashBusyChanged = pyqtSignal()
 
-    # NVCM programmed-check signals (read-only sweep across all 8 cameras)
+    # NVCM programmed-check signals (boot-test sweep across all 8 cameras)
     nvcmCheckProgress = pyqtSignal(int, str)           # percent, message
     nvcmCheckCameraResult = pyqtSignal(int, str, str)  # camera, verdict, detail
     nvcmCheckFinished = pyqtSignal(bool, str)          # all programmed?, summary
@@ -1025,8 +1367,9 @@ class MOTIONConnector(QObject):
         self._leftSensorConnected = left_sensor_connected
         self._rightSensorConnected = right_sensor_connected
         self._consoleConnected = console_connected
-        self._laserOn = False
         self._safetyFailure = False
+        self._safetyFaultText = ""
+        self._force_fail_attempts = 0
         self._running = False
         self._trigger_state = "OFF"
         self._state = DISCONNECTED
@@ -1066,7 +1409,11 @@ class MOTIONConnector(QObject):
         self._console_fw_busy = False
         # token -> (dir_path, bin_path, cleanup, target)
         self._fw_temp_files: dict[str, tuple[str, str, bool, str]] = {}
+        # Last boot mode seen per target. Only observable while a device is in
+        # DFU, so this stays empty until an update or install has run once.
+        self._boot_modes: dict[str, str] = {}
         self._fw_download_thread: _ConsoleFirmwareDownloadThread | None = None
+        self._bl_install_thread: _BootloaderInstallThread | None = None
         self._fw_flash_thread: _ConsoleFirmwareFlashThread | None = None
         self._fpga_fw_busy = False
         self._fpga_fw_verify = False
@@ -1123,6 +1470,167 @@ class MOTIONConnector(QObject):
         self._fpga_fw_busy = busy
         self.fpgaFirmwareUpdateBusyChanged.emit()
 
+    @pyqtSlot(str, str)
+    def installBootloader(self, target: str, tag: str) -> None:
+        """Convert a device to bootloader mode. Irreversible over USB.
+
+        QML gates this behind an explicit confirmation dialog. The control is
+        offered even when the device's boot mode is unknown, because it cannot
+        be known without entering DFU — the SDK aborts without writing anything
+        if a bootloader turns out to be already installed.
+        """
+        logger.info(f"installBootloader target={target} tag={tag}")
+        if target not in ("console", "left", "right"):
+            self.bootloaderInstallFinished.emit(target, False, "Invalid target.")
+            return
+        if not tag or tag == "N/A":
+            self.bootloaderInstallFinished.emit(target, False, "No release tag selected.")
+            return
+        if self.consoleFirmwareUpdateBusy:
+            self.bootloaderInstallFinished.emit(
+                target, False, "A firmware operation is already in progress."
+            )
+            return
+
+        self._start_bootloader_thread(target, tag)
+
+    def _start_bootloader_thread(
+        self, target: str, tag: str, local_path: str | None = None
+    ) -> None:
+        """Wire up and start a bootloader install. Callers do the gating.
+
+        Shared by installBootloader (release tag) and installBootloaderFromLocal
+        (browsed file): only the image source differs, so the thread wiring and
+        the finished/failed handling live here rather than in both slots.
+        """
+        self._set_console_fw_busy(True)
+        self._bl_install_thread = _BootloaderInstallThread(
+            self, target, tag, local_path=local_path
+        )
+        self._bl_install_thread.progress.connect(
+            lambda pct, msg: self.consoleFirmwareUpdateProgress.emit(
+                target, "install", int(pct), str(msg)
+            )
+        )
+
+        def _ok() -> None:
+            self._set_console_fw_busy(False)
+            self.bootloaderInstallFinished.emit(
+                target, True,
+                "Bootloader installed. Power-cycle the device before using it.",
+            )
+
+        def _fail(msg: str) -> None:
+            self._set_console_fw_busy(False)
+            self.bootloaderInstallFinished.emit(target, False, str(msg))
+
+        self._bl_install_thread.finished_ok.connect(_ok)
+        self._bl_install_thread.failed.connect(_fail)
+        self._bl_install_thread.finished.connect(
+            lambda: setattr(self, "_bl_install_thread", None)
+        )
+        self._bl_install_thread.start()
+
+    @pyqtSlot(str, str, result=str)
+    def validateProductionImage(self, target: str, local_path: str) -> str:
+        """Vet a browsed production image for QML. "" means usable.
+
+        Called from the file dialog so a bad image is rejected *before* the
+        irreversible-install confirmation appears, rather than after the
+        operator has already agreed to it.
+        """
+        return _validate_production_image(target, local_path)
+
+    @pyqtSlot(str, str)
+    def installBootloaderFromLocal(self, target: str, local_path: str) -> None:
+        """Convert a device using a production image from disk. Irreversible.
+
+        The offline counterpart to installBootloader. QML gates this behind the
+        same confirmation dialog; the image is validated here as well, because
+        by the time the thread runs the operator has already confirmed.
+        """
+        logger.info(
+            f"installBootloaderFromLocal target={target} path={local_path}"
+        )
+        if target not in ("console", "left", "right"):
+            self.bootloaderInstallFinished.emit(target, False, "Invalid target.")
+            return
+        if self.consoleFirmwareUpdateBusy:
+            self.bootloaderInstallFinished.emit(
+                target, False, "A firmware operation is already in progress."
+            )
+            return
+        err = _validate_production_image(target, local_path)
+        if err:
+            self.bootloaderInstallFinished.emit(target, False, err)
+            return
+
+        self._start_bootloader_thread(target, "local", local_path)
+
+    def _note_boot_mode(self, target: str, mode) -> None:
+        """Record the boot mode the SDK detected while the device was in DFU."""
+        label = _boot_mode_label(mode)
+        if not label or self._boot_modes.get(target) == label:
+            return
+        self._boot_modes[target] = label
+        self.deviceBootModeChanged.emit(target, label)
+
+    def _clear_boot_mode(self, target: str) -> None:
+        """Forget a slot's cached boot mode (device unplugged / swapped).
+
+        _boot_modes is keyed by slot, not device identity, so a value learned
+        from one physical device would otherwise be shown for whatever is
+        plugged into that slot next. Cleared on disconnect and re-learned when
+        the (possibly different) device reconnects and is queried; old firmware
+        that can't report its mode then correctly reads as unlocked rather than
+        inheriting the previous device's state.
+        """
+        if self._boot_modes.pop(target, None) is not None:
+            self.deviceBootModeChanged.emit(target, "")
+
+    @pyqtSlot(str, result=str)
+    def deviceBootMode(self, target: str) -> str:
+        """Last observed boot mode for a target, or "" if not yet known.
+
+        Populated on connect by querySensorInfo / queryConsoleInfo, which ask
+        the device over normal comms (OW_CMD_BOOT_INFO) -- no DFU cycle -- and
+        by any DFU operation that runs. Cleared on disconnect so a swapped
+        device does not inherit the previous one's state (issue #77).
+
+        DELIBERATE: a device that does not answer is treated as NOT
+        bootloadered -- the query records only BARE_METAL/BOOTLOADER, this
+        returns "", and the lock icon reads unlocked with the install control
+        live. Do not "fix" that into a locked or greyed-out icon.
+
+        Two populations answer with UNKNOWN, and unlocked is right for both:
+        firmware predating OW_CMD_BOOT_INFO (older sensors; console until #73),
+        and a device converted using a production image whose bundled app
+        predates the command -- observed on the bench with a sensor converted
+        from a 1.8.2-rc.2 production image, which reported UNKNOWN even though
+        the conversion was byte-correct. That second case disappears once
+        release images bundle firmware that answers.
+
+        Guessing "locked" instead would hide the install control on devices
+        that may well be bare metal, and nothing is gained by guessing:
+        install_bootloader re-checks over DFU and aborts without writing if a
+        bootloader is already present. Being wrong here costs a clear error
+        message, not a device.
+        """
+        return self._boot_modes.get(target, "")
+
+    @pyqtSlot(str, result=bool)
+    def bootloaderInstallSupported(self, target: str) -> bool:
+        """Whether the Install Bootloader control should be offered at all.
+
+        This is *not* a claim that the device lacks a bootloader — that cannot
+        be known without entering DFU. The install itself aborts without writing
+        if one is already present. All this does is hide the control once we
+        have positively seen that the device is already converted.
+        """
+        if install_bootloader is None:
+            return False
+        return self._boot_modes.get(target) != "Bootloader"
+
     def _cleanup_fw_token(self, token: str) -> None:
         try:
             dir_path, bin_path, do_cleanup, _ = self._fw_temp_files.pop(token)
@@ -1143,7 +1651,7 @@ class MOTIONConnector(QObject):
 
     @pyqtSlot(str)
     def beginConsoleFirmwareDownload(self, tag: str) -> None:
-        """Download motion-console-fw.bin for the selected release tag into a temp location."""
+        """Download the console firmware for the selected release tag."""
         logger.info(f"beginConsoleFirmwareDownload {tag}")
         target = "console"
         if not tag or tag == "N/A":
@@ -1156,7 +1664,7 @@ class MOTIONConnector(QObject):
             return
 
         self._set_console_fw_busy(True)
-        filename = "motion-console-fw.bin"
+        filename = ""  # resolved from the release by the download thread
 
         self._fw_download_thread = _ConsoleFirmwareDownloadThread(
             self, tag, filename, target
@@ -1192,9 +1700,9 @@ class MOTIONConnector(QObject):
             return
 
         self._set_console_fw_busy(True)
-        filename = (
-            "motion-console-fw.bin" if target == "console" else "motion-sensor-fw.bin"
-        )
+        # Asset naming is the SDK's business; the download thread resolves it
+        # from the release and reports back which image it actually fetched.
+        filename = ""
 
         self._fw_download_thread = _ConsoleFirmwareDownloadThread(
             self, tag, filename, target
@@ -1246,7 +1754,7 @@ class MOTIONConnector(QObject):
 
     @pyqtSlot(str)
     def checkNvcmProgrammed(self, sensor_tag: str) -> None:
-        """Read-only NVCM programmed-state sweep across all 8 cameras."""
+        """NVCM boot-test sweep across all 8 cameras (see _NvcmCheckThread)."""
         logger.info(f"checkNvcmProgrammed sensor={sensor_tag}")
         if sensor_tag not in ("left", "right"):
             self.nvcmCheckFinished.emit(False, "Invalid sensor target.")
@@ -1291,19 +1799,11 @@ class MOTIONConnector(QObject):
                 )
                 return
             fname = p.name
-            # Validate filename
-            if target == "console":
-                if fname != "motion-console-fw.bin":
-                    self.consoleFirmwareUpdateError.emit(
-                        target, "Filename must be motion-console-fw.bin"
-                    )
-                    return
-            else:
-                if fname != "motion-sensor-fw.bin":
-                    self.consoleFirmwareUpdateError.emit(
-                        target, "Filename must be motion-sensor-fw.bin"
-                    )
-                    return
+            # No filename gate here. There are now several legitimate image
+            # names per device, and the old exact-match check rejected all of
+            # the current ones. The SDK validates the file against the boot mode
+            # it detects in DFU and refuses anything that belongs at a different
+            # address, which is the check that actually protects the device.
 
             token = uuid.uuid4().hex
             # store (dir_path, bin_path, do_cleanup=False, target)
@@ -1738,15 +2238,15 @@ class MOTIONConnector(QObject):
         """Expose Console connection status to QML."""
         return self._consoleConnected
 
-    @pyqtProperty(bool, notify=laserStateChanged)
-    def laserOn(self):
-        """Expose Console connection status to QML."""
-        return self._laserOn
-
     @pyqtProperty(bool, notify=safetyFailureStateChanged)
     def safetyFailure(self):
-        """Expose Console connection status to QML."""
+        """True while a laser-safety (EE/OPT) interlock trip is latched."""
         return self._safetyFailure
+
+    @pyqtProperty(str, notify=safetyFaultTextChanged)
+    def safetyFaultText(self):
+        """Human-readable laser-safety fault reason (empty when clear)."""
+        return self._safetyFaultText
 
     @pyqtProperty(int, notify=stateChanged)
     def state(self):
@@ -2148,6 +2648,9 @@ class MOTIONConnector(QObject):
         if is_now_connected:
             self.signalConnected.emit(name, "")
         elif is_now_lost:
+            # Drop the cached boot mode so a device swapped onto this slot does
+            # not inherit the previous device's lock state.
+            self._clear_boot_mode(name)
             self.signalDisconnected.emit(name, "")
         # CONNECTING/DISCONNECTING are intermediate; UI doesn't need a
         # legacy connect/disconnect emission for them.
@@ -2177,6 +2680,20 @@ class MOTIONConnector(QObject):
                     logger.info(
                         f"Sensor Device Info - Firmware: {fw_version}, Device ID: {device_id}"
                     )
+
+                    # Boot mode over normal comms (OW_CMD_BOOT_INFO) — no DFU
+                    # cycle. Lets the lock icon reflect real state on connect.
+                    # Best-effort: skipped on an older SDK, and only a *definite*
+                    # answer is recorded so old firmware's UNKNOWN never
+                    # downgrades a state we already learned (e.g. from an install).
+                    if BootMode is not None:
+                        try:
+                            mode = getattr(motion_interface, sensor_tag).get_boot_mode()
+                            logger.info(f"{target} boot mode: {getattr(mode, 'value', mode)}")
+                            if mode in (BootMode.BARE_METAL, BootMode.BOOTLOADER):
+                                self._note_boot_mode(target, mode)
+                        except Exception:
+                            pass
                 finally:
                     mutex.unlock()
             else:
@@ -2249,6 +2766,18 @@ class MOTIONConnector(QObject):
             logger.info(
                 f"Console Device Info - Firmware: {fw_version}, Device ID: {device_id}, Board ID: {board_id}"
             )
+
+            # Boot mode over normal comms (OW_CMD_BOOT_INFO) — see the matching
+            # sensor query in querySensorInfo. Best-effort: skipped on an older
+            # SDK/firmware, and only a definite answer is recorded.
+            if BootMode is not None and hasattr(motion_interface.console, "get_boot_mode"):
+                try:
+                    mode = motion_interface.console.get_boot_mode()
+                    logger.info(f"console boot mode: {getattr(mode, 'value', mode)}")
+                    if mode in (BootMode.BARE_METAL, BootMode.BOOTLOADER):
+                        self._note_boot_mode("console", mode)
+                except Exception:
+                    pass
         except Exception as e:
             logger.error(f"Error querying device info: {e}")
         finally:
@@ -3555,50 +4084,214 @@ class MOTIONConnector(QObject):
             logger.error("Failed to retrieve histogram.")
             self.histogramReady.emit([])  # Emit empty to clear
 
-    @pyqtSlot()
-    def readSafetyStatus(self):
-        # Replace this with your actual console status check
+    # ------------------------------------------------------------------
+    # Laser-safety (EE/OPT) interlock state — single source of truth (#56)
+    # ------------------------------------------------------------------
+    # Bit -> fault-type mnemonic, decoded per channel (EE and OPT).
+    _SAFETY_BIT_LABELS = {0x01: "PEAK_CURRENT", 0x02: "PULSE_LIMIT", 0x04: "RATE_LIMIT"}
+
+    def _format_safety_faults(self, se_byte: int, so_byte: int) -> str:
+        """List every individual EE/OPT interlock trip, e.g.
+        ``EE:PEAK_CURRENT, OPT:PEAK_CURRENT`` — one entry per (channel, type)
+        that is active. Empty string when clear.
+        """
+        parts = []
+        for name, raw in (("EE", se_byte or 0), ("OPT", so_byte or 0)):
+            for bit, mnem in self._SAFETY_BIT_LABELS.items():
+                if raw & bit:
+                    parts.append(f"{name}:{mnem}")
+        return ", ".join(parts)
+
+    def _read_safety_snapshot(self):
+        """Read laser-safety state from the SDK telemetry snapshot.
+
+        The SDK's ConsoleTelemetryPoller reads the EE/OPT interlock at ~1 Hz
+        (independent of the trigger), so this is one authoritative source for
+        both the failure state and the per-channel fault list — replacing the
+        app's own ad-hoc raw-I2C poll. Returns ``(known, ok, fault_text)``;
+        ``known`` is False when the interlock hasn't answered (keep the last
+        indicator state).
+        """
+        try:
+            console = self._interface.console if self._interface else None
+            snap = console.telemetry.get_snapshot() if console else None
+        except Exception as e:
+            logging.debug(f"safety snapshot unavailable: {e}")
+            snap = None
+        if snap is None or not getattr(snap, "safety_known", False):
+            return False, True, self._safetyFaultText
+        se = getattr(snap, "safety_se", 0) or 0
+        so = getattr(snap, "safety_so", 0) or 0
+        return True, bool(snap.safety_ok), self._format_safety_faults(se, so)
+
+    def _read_safety_direct(self):
+        """Read the EE/OPT interlock status straight from I2C (reg 0x24), bypassing
+        the ~1 Hz cached SDK snapshot. Used right after clearing a fault so the
+        indicators reflect the true post-clear state immediately. Returns
+        ``(known, ok, fault_text)``.
+        """
+        console = self._interface.console if self._interface else None
+        if console is None:
+            return False, True, self._safetyFaultText
         self._console_mutex.lock()
         try:
-            muxIdx = 1
-            i2cAddr = 0x41
-            offset = 0x24
-            data_len = 1  # Number of bytes to read
-
-            channels = {"SE": 6, "SO": 7}
-            statuses = {}
-
-            for label, channel in channels.items():
-                status = self.i2cReadBytes(
-                    "console", muxIdx, channel, i2cAddr, offset, data_len
-                )
-                if status:
-                    statuses[label] = status[0]
-                else:
-                    raise Exception("I2C read error")
-
-            status_text = f"SE: 0x{statuses['SE']:02X}, SO: 0x{statuses['SO']:02X}"
-
-            if (statuses["SE"] & 0x0F) == 0 and (statuses["SO"] & 0x0F) == 0:
-                if self._safetyFailure:
-                    self._safetyFailure = False
-                    self.safetyFailureStateChanged.emit(False)
-            else:
-                if not self._safetyFailure:
-                    self._safetyFailure = True
-                    self.stopTrigger()
-                    self.laserStateChanged.emit(False)
-                    self.safetyFailureStateChanged.emit(True)
-                    logging.error(f"Failure Detected: {status_text}")
-
-            # Emit combined status if needed
-
-            logging.info(f"Status QUERY: {status_text}")
-
+            se, _ = console.read_i2c_packet(mux_index=1, channel=6, device_addr=0x41, reg_addr=0x24, read_len=1)
+            so, _ = console.read_i2c_packet(mux_index=1, channel=7, device_addr=0x41, reg_addr=0x24, read_len=1)
         except Exception as e:
-            logging.error(f"Console status query failed: {e}")
+            logging.debug(f"direct safety read failed: {e}")
+            return False, True, self._safetyFaultText
         finally:
             self._console_mutex.unlock()
+        if not se or not so:
+            return False, True, self._safetyFaultText
+        mask = (se[0] | so[0]) & 0x07
+        return True, (mask == 0), self._format_safety_faults(se[0], so[0])
+
+    def _apply_safety_state(self, known: bool, ok: bool, fault_text: str):
+        """Reconcile the safety-failure, fault-text, and laser/trigger
+        indicators from ONE place, so the 1 Hz poll and the manual slot can't
+        diverge. On a new trip it also forces the trigger indicator OFF (the
+        firmware already stopped the trigger) so the Laser and Failure dots
+        never land in opposite states — the core of #56.
+        """
+        if not known:
+            return  # no fresh data — don't disturb the current indicators
+
+        if fault_text != self._safetyFaultText:
+            self._safetyFaultText = fault_text
+            self.safetyFaultTextChanged.emit(fault_text)
+
+        tripped = not ok
+        if tripped and not self._safetyFailure:
+            self._safetyFailure = True
+            # Tear down the trigger source (belt-and-suspenders with the
+            # firmware interlock) so clearing the fault can't refire the laser.
+            try:
+                self.stopTrigger()
+            except Exception as e:
+                logging.error(f"safety trip: stopTrigger failed: {e}")
+            # Guarantee the Laser indicator reflects the stop even if
+            # stopTrigger threw before it could emit.
+            if self._trigger_state != "OFF":
+                self._trigger_state = "OFF"
+                self.triggerStateChanged.emit("OFF")
+            self.safetyFailureStateChanged.emit(True)
+            logging.error(f"Laser safety trip: {fault_text or 'tripped'}")
+        elif not tripped and self._safetyFailure:
+            self._safetyFailure = False
+            self.safetyFailureStateChanged.emit(False)
+
+    @pyqtSlot()
+    def readSafetyStatus(self):
+        """Refresh the laser-safety indicators from the SDK telemetry snapshot."""
+        known, ok, text = self._read_safety_snapshot()
+        self._apply_safety_state(known, ok, text)
+
+    @pyqtSlot()
+    def resetSafety(self):
+        """Reset a laser-safety trip from the GUI.
+
+        Order matters: stop the trigger *first*, then clear the EE/OPT fault
+        latch (DYNAMIC CTRL reg 0x22 = clear_fail), then re-read. Stopping
+        first means the clear can't refire the laser (the firmware interlock
+        enforces this too); the operator restarts the trigger explicitly.
+        """
+        try:
+            self.stopTrigger()
+        except Exception as e:
+            logging.error(f"resetSafety: stopTrigger failed: {e}")
+
+        console = self._interface.console if self._interface else None
+        if console is not None:
+            self._console_mutex.lock()
+            try:
+                for ch in (7, 6):  # OPT then EE
+                    try:
+                        console.write_i2c_packet(
+                            mux_index=1, channel=ch, device_addr=0x41,
+                            reg_addr=0x22, data=bytes([1]),
+                        )
+                    except Exception as e:
+                        logging.error(f"resetSafety: clear ch{ch} failed: {e}")
+            finally:
+                self._console_mutex.unlock()
+
+        # Read the interlock state FRESH (direct I2C), not the ~1 Hz cached SDK
+        # snapshot which is stale right after we cleared the latch (and nothing
+        # else re-reads once the trigger/poll thread is torn down).
+        known, ok, text = self._read_safety_direct()
+        self._apply_safety_state(known, ok, text)
+
+    @pyqtSlot()
+    def forceLaserFailAtStartup(self):
+        """TEST/QA (enabled by --force-laser-fail): force a laser-safety trip so
+        the failure indicators can be exercised. Once the console is connected,
+        start the trigger (laser firing) and drop the EE/OPT DRIVE CL below the
+        running drive current to force a PEAK_CURRENT fault. Retries until the
+        console is up. Not for normal operation.
+        """
+        from PyQt6.QtCore import QTimer
+
+        console = self._interface.console if self._interface else None
+        if console is None or not console.is_connected():
+            self._force_fail_attempts += 1
+            if self._force_fail_attempts <= 15:
+                QTimer.singleShot(1000, self.forceLaserFailAtStartup)
+            else:
+                logging.warning("forceLaserFail: console never connected; giving up")
+            return
+
+        try:
+            from omotion.config import DEFAULT_TRIGGER_CONFIG
+
+            # Configure + start the trigger so the laser is actually firing.
+            console.set_trigger_json(dict(DEFAULT_TRIGGER_CONFIG))
+            self.startTrigger()
+
+            # Save the real EE/OPT DRIVE CL, then drop it to 1 so the running
+            # drive current exceeds the limit -> PEAK_CURRENT trip. We restore it
+            # shortly after (below) so the fault stays LATCHED but the condition
+            # clears — mirroring a real trip, so Clear Failure can actually reset.
+            self._ff_orig_cl = {}
+            self._console_mutex.lock()
+            try:
+                for ch in (7, 6):  # OPT then EE
+                    d, _ = console.read_i2c_packet(
+                        mux_index=1, channel=ch, device_addr=0x41,
+                        reg_addr=0x10, read_len=2,
+                    )
+                    self._ff_orig_cl[ch] = bytes(d) if d else None
+                    console.write_i2c_packet(
+                        mux_index=1, channel=ch, device_addr=0x41,
+                        reg_addr=0x10, data=bytes([1, 0]),
+                    )
+            finally:
+                self._console_mutex.unlock()
+            logging.warning(
+                "forceLaserFail: trigger started + EE/OPT DRIVE CL dropped -> "
+                "expecting PEAK_CURRENT trip; restoring DRIVE CL in 2.5s"
+            )
+            QTimer.singleShot(2500, self._ff_restore_drive_cl)
+        except Exception as e:
+            logging.error(f"forceLaserFail failed: {e}")
+
+    def _ff_restore_drive_cl(self):
+        """Restore the DRIVE CL saved by forceLaserFailAtStartup (test helper)."""
+        console = self._interface.console if self._interface else None
+        orig = getattr(self, "_ff_orig_cl", {}) or {}
+        if console is None or not orig:
+            return
+        self._console_mutex.lock()
+        try:
+            for ch, data in orig.items():
+                if data:
+                    console.write_i2c_packet(
+                        mux_index=1, channel=ch, device_addr=0x41,
+                        reg_addr=0x10, data=data,
+                    )
+        finally:
+            self._console_mutex.unlock()
+        logging.warning("forceLaserFail: DRIVE CL restored (fault stays latched until Clear Failure)")
 
     @pyqtSlot(str)
     def queryCameraPowerStatus(self, target: str):
@@ -3903,52 +4596,18 @@ class ConsoleStatusThread(QThread):
                     self.connector.pdu_mon()
 
                     #
-                    # 3. Safety / interlock state
+                    # 3. Safety / interlock state (single source: SDK telemetry snapshot)
+                    #    Consumes the SDK ConsoleTelemetry snapshot instead of an
+                    #    ad-hoc raw-I2C read, so the failure indicator + fault text
+                    #    come from one authoritative, decoupled source (#56).
                     #
-                    muxIdx = 1
+                    muxIdx = 1      # still needed by the analog reads below
                     i2cAddr = 0x41
-                    offset = 0x24
-                    data_len = 1
-
-                    channels = {"SE": 6, "SO": 7}
-                    statuses = {}
-
-                    for label, channel in channels.items():
-                        status = self.connector.i2cReadBytes(
-                            "console", muxIdx, channel, i2cAddr, offset, data_len
-                        )
-                        if status:
-                            statuses[label] = status[0]
-                        else:
-                            self.statusUpdate.emit(f"{label} Disconnected")
-                            raise Exception("I2C read error")
-
-                    status_text = (
-                        f"SE: 0x{statuses['SE']:02X}, SO: 0x{statuses['SO']:02X}"
-                    )
-                    run_logger.info(
-                        f"Safety Status - SE: 0x{statuses['SE']:02X}, SO: 0x{statuses['SO']:02X}"
-                    )
-
-                    ok_se = (statuses["SE"] & 0x0F) == 0
-                    ok_so = (statuses["SO"] & 0x0F) == 0
+                    known, ok, fault_text = self.connector._read_safety_snapshot()
+                    self.connector._apply_safety_state(known, ok, fault_text)
                     
-                    if ok_se and ok_so and ok_tec:
-                        if self.connector._safetyFailure:
-                            self.connector._safetyFailure = False
-                            self.connector.safetyFailureStateChanged.emit(False)
-                    else:
-                        if not self.connector._safetyFailure:
-                            # First time we see a failure
-                            self.connector._safetyFailure = True
-                            # Request trigger stop (safe version won't deadlock)
-                            self.connector.stopTrigger()
-                            self.connector.laserStateChanged.emit(False)
-                            self.connector.safetyFailureStateChanged.emit(True)
-                            logging.error(f"Failure Detected: {status_text}")
-
                     #
-                    # 3. Analog telemetry (tcm/tcl/pdc)
+                    # 4. Analog telemetry (tcm/tcl/pdc)
                     #
                     tcm_raw = self.connector.getLsyncCount()
                     tcl_raw = self.connector.i2cReadBytes(

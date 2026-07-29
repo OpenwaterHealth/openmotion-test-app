@@ -1,4 +1,4 @@
-"""Application logging setup for the OpenMOTION test app.
+"""Application logging setup for the Open-Motion test app.
 
 Mirrors the bloodflow app's strategy: every launch writes a timestamped log
 file under ``<root>/app-logs/`` while also echoing to the console. Configures
@@ -69,7 +69,7 @@ def configure_app_logging(debug: bool, app_version: str = "") -> str:
             logging.getLogger(noisy).setLevel(logging.INFO)
 
     root_logger.info("=" * 64)
-    root_logger.info("OpenMOTION Test App %s starting", app_version)
+    root_logger.info("Open-Motion Test App %s starting", app_version)
     root_logger.info("Log file:       %s", logfile_path)
     root_logger.info("Data directory: %s", data_dir)
     root_logger.info("=" * 64)

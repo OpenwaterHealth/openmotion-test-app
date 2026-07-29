@@ -4,6 +4,8 @@ import QtQuick.Layouts 6.0
 import QtQuick.Dialogs 6.2
 import OpenMotion 1.0
 
+import "../components"
+
 Rectangle {
     id: page1
     width: parent.width
@@ -60,6 +62,20 @@ Rectangle {
     property string fwUpdateTarget: "console"
     // Target used when opening the upload dialog
     property string fwUploadTarget: "console"
+    // Pending bootloader install, set by the Install Bootloader buttons
+    // and consumed by bootloaderWarningDialog.
+    property string blInstallTarget: ""
+    property string blInstallTag: ""
+    // Set when the pending install came from a browsed file; "" means the
+    // install should come from the selected release tag instead. Must be
+    // cleared on the tag path or a later tag install would re-flash this file.
+    property string blInstallLocalPath: ""
+    // Target used when opening the production-image upload dialog
+    property string blUploadTarget: ""
+    // Bumped whenever a boot mode is observed, so the Install Bootloader
+    // visibility bindings re-evaluate (the backing call is a slot, not a
+    // notifying property).
+    property int bootModeRevision: 0
 
     // User configuration values (editable by user)
     property real userTecTrip: 0.00
@@ -103,6 +119,49 @@ Rectangle {
         }
         fpgaFwUploadTarget = target
         fpgaJedUploadDialog.open()
+    }
+
+    // FileDialog reports its selection as a QUrl or a file:// string depending
+    // on the Qt version; the connector needs a native path.
+    //
+    // fwUploadDialog and fpgaJedUploadDialog each still carry their own copy of
+    // this logic. They are deliberately left alone: #83 promised no changes to
+    // the application-firmware and FPGA local paths, and those are exactly the
+    // paths those two dialogs drive.
+    function _localPathFromDialog(dialog) {
+        var file = ""
+        if (typeof dialog.selectedFiles !== 'undefined' && dialog.selectedFiles && dialog.selectedFiles.length > 0) file = dialog.selectedFiles[0]
+        else if (typeof dialog.fileUrls !== 'undefined' && dialog.fileUrls && dialog.fileUrls.length > 0) file = dialog.fileUrls[0]
+        else if (typeof dialog.fileUrl !== 'undefined' && dialog.fileUrl) file = dialog.fileUrl
+        if (!file) return ""
+
+        if (typeof file !== 'string') {
+            if (typeof file.toLocalFile === 'function') file = file.toLocalFile()
+            else if (typeof file.toString === 'function') file = file.toString()
+            else file = String(file)
+        }
+
+        if (typeof file === 'string' && file.indexOf("file://") === 0) {
+            file = file.replace(/^file:\/\//, "")
+            // Windows paths arrive as /C:/... -- drop the leading slash.
+            if (file.length > 0 && file[0] === '/' && file[2] === ':') file = file.substring(1)
+        }
+        return file
+    }
+
+    // Shared by the three lock buttons. An "Upload File..." / empty / N/A tag
+    // means the operator wants a local image -- on the factory floor with
+    // --no-github that is the only entry the dropdown has.
+    function _startBootloaderInstall(target, tag) {
+        if (!tag || tag === "" || tag === "N/A" || tag === "Upload File...") {
+            blUploadTarget = target
+            blUploadDialog.open()
+            return
+        }
+        blInstallTarget = target
+        blInstallTag = tag
+        blInstallLocalPath = ""
+        bootloaderWarningDialog.open()
     }
 
     // Modal dialog styling (firmware update)
@@ -357,6 +416,22 @@ Rectangle {
             fwResultDialog.open()
         }
 
+        function onBootloaderInstallFinished(target, success, message) {
+            fwUpdateTarget = target
+            fwProgressDialog.close()
+            fwResultDialog.title = success ? "Bootloader Installed" : "Bootloader Install Failed"
+            var prefix = (target === "console") ? "Console: " : (target === "left") ? "Left sensor: " : "Right sensor: "
+            fwResultDialog.message = prefix + message
+            fwResultDialog.open()
+        }
+
+        function onDeviceBootModeChanged(target, label) {
+            // Refresh the Install Bootloader buttons: each button's `locked`
+            // binding calls MOTIONInterface.deviceBootMode(), a plain slot,
+            // so it needs a nudge to re-evaluate.
+            bootModeRevision += 1
+        }
+
         function onConsoleFirmwareUpdateError(target, message) {
             fwUpdateTarget = target
             fwProgressDialog.close()
@@ -584,17 +659,6 @@ Rectangle {
             if (idx < 0) idx = file.lastIndexOf("\\\\")
             var fname = idx >= 0 ? file.substring(idx + 1) : file
 
-            if (fwUploadTarget === "console" && fname !== "motion-console-fw.bin") {
-                fwErrorDialog.message = "Filename must be motion-console-fw.bin"
-                fwErrorDialog.open()
-                return
-            }
-            if ((fwUploadTarget === "left" || fwUploadTarget === "right") && fname !== "motion-sensor-fw.bin") {
-                fwErrorDialog.message = "Filename must be motion-sensor-fw.bin"
-                fwErrorDialog.open()
-                return
-            }
-
             // Pass the local path to the connector (QML provides native path in selectedFiles/fileUrls)
             // No download step for local files — beginDeviceFirmwareFromLocal emits
             // consoleFirmwareDownloadReady synchronously, which opens fwConfirmDialog directly.
@@ -631,6 +695,36 @@ Rectangle {
             fpgaFwMessage = ""
             MOTIONInterface.beginFpgaFirmwareFromLocal(fpgaFwUploadTarget, file)
             fpgaProgressDialog.open()
+        }
+    }
+
+    FileDialog {
+        id: blUploadDialog
+        title: "Select production firmware image"
+        nameFilters: ["Production images (*.bin)"]
+        onAccepted: {
+            var file = _localPathFromDialog(blUploadDialog)
+            if (!file) return
+
+            // Reject a wrong-device or non-production image here, before the
+            // irreversible-install confirmation is shown.
+            var err = MOTIONInterface.validateProductionImage(blUploadTarget, file)
+            if (err !== "") {
+                fwErrorDialog.message = err
+                fwErrorDialog.open()
+                return
+            }
+
+            var idx = file.lastIndexOf("/")
+            if (idx < 0) idx = file.lastIndexOf("\\")
+            var fname = idx >= 0 ? file.substring(idx + 1) : file
+
+            blInstallTarget = blUploadTarget
+            // The confirmation reads "Install the bootloader from <this>?", so
+            // show the filename where a release tag would normally go.
+            blInstallTag = fname
+            blInstallLocalPath = file
+            bootloaderWarningDialog.open()
         }
     }
 
@@ -1208,10 +1302,8 @@ Rectangle {
                                 Text { anchors.centerIn: parent; text: "Save"; color: "white"; font.pixelSize: 13; font.bold: true }
                                 MouseArea {
                                     id: saveJsonMA; anchors.fill: parent; hoverEnabled: true
-                                    onClicked: {
-                                        MOTIONInterface.setUserConfigJson(userConfigJsonArea.text)
-                                        jsonStatus.text = "Saving..."
-                                    }
+                                    // Gate 2 (issue #47): confirm before writing config to the device.
+                                    onClicked: userConfigSaveConfirmDialog.open()
                                 }
                             }
 
@@ -1592,6 +1684,61 @@ Rectangle {
 
                                 Item { Layout.fillWidth: true }
 
+                                // Lock-state control: 🔓 green = bare-metal (unlocked, click to install
+                                // the bootloader) · 🔒 amber = bootloader installed (locked indicator).
+                                // Boot mode is queried over normal comms (OW_CMD_BOOT_INFO) on connect,
+                                // so this reflects real state without a DFU cycle -- but only where the
+                                // firmware answers. Sensor firmware does; console firmware does not yet
+                                // (issue #73), so a converted console still reads unlocked.
+                                //
+                                // A device that does not answer is DELIBERATELY shown unlocked with the
+                                // install control live -- see deviceBootMode() in motion_connector.py for
+                                // why. Do not change this to a locked or greyed-out icon. Installing is
+                                // irreversible over USB, but the SDK aborts without writing if a
+                                // bootloader is already present, so guessing wrong here costs an error
+                                // message, not a device.
+                                Rectangle {
+                                    id: blConsoleLockBtn
+                                    width: 30
+                                    height: 30
+                                    radius: 15
+                                    visible: MOTIONInterface.consoleConnected
+                                    property bool locked: bootModeRevision >= 0 && MOTIONInterface.deviceBootMode("console") === "Bootloader"
+                                    property bool busy: MOTIONInterface.consoleFirmwareUpdateBusy
+                                    property bool actionable: !locked && !busy
+                                    color: busy ? "#7F8C8D" : "#2C3E50"
+
+                                    Text {
+                                        text: blConsoleLockBtn.locked ? "🔒" : "🔓"
+                                        anchors.centerIn: parent
+                                        font.pixelSize: 14
+                                        color: "white"
+                                    }
+
+                                    MouseArea {
+                                        id: installBlConsoleMouseArea
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: blConsoleLockBtn.actionable ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                        onClicked: {
+                                            if (!blConsoleLockBtn.actionable)
+                                                return
+                                            var tag = consoleLatestCombo.currentText
+                                            if (!tag || tag === "")
+                                                tag = consoleLatestFirmware
+                                            _startBootloaderInstall("console", tag)
+                                        }
+                                        onEntered: if (blConsoleLockBtn.actionable) blConsoleLockBtn.color = "#34495E"
+                                        onExited: blConsoleLockBtn.color = blConsoleLockBtn.busy ? "#7F8C8D" : "#2C3E50"
+                                    }
+
+                                    ToolTip.visible: installBlConsoleMouseArea.containsMouse
+                                    ToolTip.text: blConsoleLockBtn.locked
+                                        ? "Bootloader installed — device is locked (irreversible over USB)"
+                                        : "Install bootloader — locks this device (irreversible)"
+                                    ToolTip.delay: 400
+                                }
+
                                 Rectangle {
                                     width: 30
                                     height: 30
@@ -1703,6 +1850,7 @@ Rectangle {
 
                                 Behavior on color { ColorAnimation { duration: 200 } }
                             }
+
                         }
                     }
 
@@ -1736,6 +1884,61 @@ Rectangle {
                                 }
 
                                 Item { Layout.fillWidth: true }
+
+                                // Lock-state control: 🔓 green = bare-metal (unlocked, click to install
+                                // the bootloader) · 🔒 amber = bootloader installed (locked indicator).
+                                // Boot mode is queried over normal comms (OW_CMD_BOOT_INFO) on connect,
+                                // so this reflects real state without a DFU cycle -- but only where the
+                                // firmware answers. Sensor firmware does; console firmware does not yet
+                                // (issue #73), so a converted console still reads unlocked.
+                                //
+                                // A device that does not answer is DELIBERATELY shown unlocked with the
+                                // install control live -- see deviceBootMode() in motion_connector.py for
+                                // why. Do not change this to a locked or greyed-out icon. Installing is
+                                // irreversible over USB, but the SDK aborts without writing if a
+                                // bootloader is already present, so guessing wrong here costs an error
+                                // message, not a device.
+                                Rectangle {
+                                    id: blLeftLockBtn
+                                    width: 30
+                                    height: 30
+                                    radius: 15
+                                    visible: MOTIONInterface.leftSensorConnected
+                                    property bool locked: bootModeRevision >= 0 && MOTIONInterface.deviceBootMode("left") === "Bootloader"
+                                    property bool busy: MOTIONInterface.consoleFirmwareUpdateBusy
+                                    property bool actionable: !locked && !busy
+                                    color: busy ? "#7F8C8D" : "#2C3E50"
+
+                                    Text {
+                                        text: blLeftLockBtn.locked ? "🔒" : "🔓"
+                                        anchors.centerIn: parent
+                                        font.pixelSize: 14
+                                        color: "white"
+                                    }
+
+                                    MouseArea {
+                                        id: installBlLeftMouseArea
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: blLeftLockBtn.actionable ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                        onClicked: {
+                                            if (!blLeftLockBtn.actionable)
+                                                return
+                                            var tag = leftLatestCombo.currentText
+                                            if (!tag || tag === "")
+                                                tag = leftLatestFirmware
+                                            _startBootloaderInstall("left", tag)
+                                        }
+                                        onEntered: if (blLeftLockBtn.actionable) blLeftLockBtn.color = "#34495E"
+                                        onExited: blLeftLockBtn.color = blLeftLockBtn.busy ? "#7F8C8D" : "#2C3E50"
+                                    }
+
+                                    ToolTip.visible: installBlLeftMouseArea.containsMouse
+                                    ToolTip.text: blLeftLockBtn.locked
+                                        ? "Bootloader installed — device is locked (irreversible over USB)"
+                                        : "Install bootloader — locks this device (irreversible)"
+                                    ToolTip.delay: 400
+                                }
 
                                 Rectangle {
                                     width: 30
@@ -1843,6 +2046,7 @@ Rectangle {
 
                                 Behavior on color { ColorAnimation { duration: 200 } }
                             }
+
                         }
                     }
 
@@ -1876,6 +2080,61 @@ Rectangle {
                                 }
 
                                 Item { Layout.fillWidth: true }
+
+                                // Lock-state control: 🔓 green = bare-metal (unlocked, click to install
+                                // the bootloader) · 🔒 amber = bootloader installed (locked indicator).
+                                // Boot mode is queried over normal comms (OW_CMD_BOOT_INFO) on connect,
+                                // so this reflects real state without a DFU cycle -- but only where the
+                                // firmware answers. Sensor firmware does; console firmware does not yet
+                                // (issue #73), so a converted console still reads unlocked.
+                                //
+                                // A device that does not answer is DELIBERATELY shown unlocked with the
+                                // install control live -- see deviceBootMode() in motion_connector.py for
+                                // why. Do not change this to a locked or greyed-out icon. Installing is
+                                // irreversible over USB, but the SDK aborts without writing if a
+                                // bootloader is already present, so guessing wrong here costs an error
+                                // message, not a device.
+                                Rectangle {
+                                    id: blRightLockBtn
+                                    width: 30
+                                    height: 30
+                                    radius: 15
+                                    visible: MOTIONInterface.rightSensorConnected
+                                    property bool locked: bootModeRevision >= 0 && MOTIONInterface.deviceBootMode("right") === "Bootloader"
+                                    property bool busy: MOTIONInterface.consoleFirmwareUpdateBusy
+                                    property bool actionable: !locked && !busy
+                                    color: busy ? "#7F8C8D" : "#2C3E50"
+
+                                    Text {
+                                        text: blRightLockBtn.locked ? "🔒" : "🔓"
+                                        anchors.centerIn: parent
+                                        font.pixelSize: 14
+                                        color: "white"
+                                    }
+
+                                    MouseArea {
+                                        id: installBlRightMouseArea
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: blRightLockBtn.actionable ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                        onClicked: {
+                                            if (!blRightLockBtn.actionable)
+                                                return
+                                            var tag = rightLatestCombo.currentText
+                                            if (!tag || tag === "")
+                                                tag = rightLatestFirmware
+                                            _startBootloaderInstall("right", tag)
+                                        }
+                                        onEntered: if (blRightLockBtn.actionable) blRightLockBtn.color = "#34495E"
+                                        onExited: blRightLockBtn.color = blRightLockBtn.busy ? "#7F8C8D" : "#2C3E50"
+                                    }
+
+                                    ToolTip.visible: installBlRightMouseArea.containsMouse
+                                    ToolTip.text: blRightLockBtn.locked
+                                        ? "Bootloader installed — device is locked (irreversible over USB)"
+                                        : "Install bootloader — locks this device (irreversible)"
+                                    ToolTip.delay: 400
+                                }
 
                                 Rectangle {
                                     width: 30
@@ -1983,6 +2242,7 @@ Rectangle {
 
                                 Behavior on color { ColorAnimation { duration: 200 } }
                             }
+
                         }
                     }
                 }
@@ -2019,4 +2279,53 @@ Rectangle {
             font.pixelSize: 14
         }
     }
+
+    // Gate 2 (issue #47): second confirmation before a configuration write.
+    // Fires on every Save; not suppressed by the startup warranty acceptance,
+    // which guards a different thing.
+    ConfirmDialog {
+        id: userConfigSaveConfirmDialog
+        title: "Confirm Configuration Change"
+        warningText: "Warning: Modifying your hardware configuration can cause " +
+                     "permanent damage, system instability, or render your device " +
+                     "completely unusable. If you are unsure about a configuration " +
+                     "change, please contact technical support for assistance."
+        questionText: "Are you sure you want to proceed?"
+        onConfirmed: {
+            MOTIONInterface.setUserConfigJson(userConfigJsonArea.text)
+            jsonStatus.text = "Saving..."
+        }
+    }
+
+    // Bootloader installation. Deliberately blunt: this is one of the few
+    // things in the app that a user cannot undo from the app.
+    ConfirmDialog {
+        id: bootloaderWarningDialog
+        title: "Install Bootloader — Irreversible"
+        warningText: "This permanently converts the " + blInstallTarget +
+                     " to run the secure bootloader. It CANNOT be undone over USB: " +
+                     "afterwards the device only accepts signed firmware, and returning " +
+                     "it to a normal image requires an ST-LINK/SWD debugger. The device " +
+                     "will also refuse any firmware older than the newest it has run."
+        // The local-file path is the only thing that can catch a wrong pick
+        // (validation is filename-only), so show the full path rather than
+        // just the filename when the pending install came from a browsed
+        // file. The release-tag case has no path -- keep it reading as it
+        // always has.
+        questionText: "Install the bootloader from " +
+                     (blInstallLocalPath !== "" ? blInstallLocalPath : blInstallTag) + "?"
+        confirmText: "Install Bootloader"
+        declineText: "Cancel"
+        onConfirmed: {
+            consoleFwPercent = -1
+            consoleFwMessage = ""
+            consoleFwStageText = "Starting…"
+            fwProgressDialog.open()
+            if (blInstallLocalPath !== "")
+                MOTIONInterface.installBootloaderFromLocal(blInstallTarget, blInstallLocalPath)
+            else
+                MOTIONInterface.installBootloader(blInstallTarget, blInstallTag)
+        }
+    }
+
 }

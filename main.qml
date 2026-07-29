@@ -33,7 +33,7 @@ ApplicationWindow {
             anchors.right: parent.right
 
             // Set title and logo dynamically
-            titleText: "Open-MOTION Engineering App"
+            titleText: "Open-Motion Engineering App"
             logoSource: "../assets/images/OpenwaterLogo.png" // Correct relative path
             appVerText: "" + appVersion
             sdkVerText: "" + MOTIONInterface.get_sdk_version()
@@ -85,7 +85,21 @@ ApplicationWindow {
         activeMenu = index; // Update the activeMenu property
         // console.log("Button clicked with index:", index);
     }
-    
+
+    // Gate 1 (issue #47): warranty warning. Blocks the whole UI on launch
+    // until accepted. Acceptance is remembered once per install, so this only
+    // appears on the first run after install. Declining quits the app.
+    WarrantyGateDialog {
+        id: warrantyGate
+        onAcceptedWarranty: WarrantyAck.accept()
+        onDeclinedWarranty: Qt.quit()
+    }
+
+    Component.onCompleted: {
+        if (!WarrantyAck.accepted)
+            warrantyGate.open()
+    }
+
     Connections {
         target: MOTIONInterface
     }

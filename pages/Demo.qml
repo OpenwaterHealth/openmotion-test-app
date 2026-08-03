@@ -2015,7 +2015,8 @@ Rectangle {
                             Item { Layout.fillWidth: true }
                         }
 
-                        // Safety: every EE/OPT channel:type that tripped, red when tripped, else OK.
+                        // Safety: every EE/OPT channel:type that tripped, plus TEC_TRIP for the
+                        // console over-temp trip. Red when tripped, else OK.
                         Text {
                             text: "Safety: " + (MOTIONInterface.safetyFailure
                                                 ? (MOTIONInterface.safetyFaultText || "TRIPPED")
@@ -2024,7 +2025,7 @@ Rectangle {
                             color: MOTIONInterface.safetyFailure ? "#E74C3C" : "#BDC3C7"
                             Layout.fillWidth: true
                             elide: Text.ElideRight
-                            ToolTip.text: "Laser-safety (EE/OPT): " + (MOTIONInterface.safetyFailure ? MOTIONInterface.safetyFaultText : "OK")
+                            ToolTip.text: "Laser-safety (EE/OPT interlock + TEC over-temp): " + (MOTIONInterface.safetyFailure ? MOTIONInterface.safetyFaultText : "OK")
                             ToolTip.visible: maSafety.containsMouse
                             ToolTip.delay: 500
                             MouseArea { id: maSafety; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor }

@@ -1369,6 +1369,14 @@ class MOTIONConnector(QObject):
         self._consoleConnected = console_connected
         self._safetyFailure = False
         self._safetyFaultText = ""
+        # EE/OPT faults only. _safetyFaultText is this plus TEC_TRIP when the
+        # over-temp trip is active; keeping them apart stops the composed text
+        # from double-appending TEC_TRIP across polls (#89).
+        self._safety_ee_opt_text = ""
+        # Last *known* EE/OPT interlock verdict. Held across polls where the
+        # interlock doesn't answer, so an unreadable FPGA can't silently clear
+        # a latched trip (#89).
+        self._safety_ee_opt_tripped = False
         self._force_fail_attempts = 0
         self._running = False
         self._trigger_state = "OFF"
@@ -1397,6 +1405,11 @@ class MOTIONConnector(QObject):
         self._tec_monV = 0.0
         self._tec_monC = 0.0
         self._tec_good = False
+        # False until tec_status() has completed one successful read. _tec_good
+        # starts False, which is indistinguishable from "tripped", so the
+        # safety path gates on this rather than reporting a trip we never
+        # measured (same reasoning as the SDK's safety_known, bloodflow#107).
+        self._tec_trip_known = False
 
         self._tec_dac = 0.0
 
@@ -4119,7 +4132,7 @@ class MOTIONConnector(QObject):
             logging.debug(f"safety snapshot unavailable: {e}")
             snap = None
         if snap is None or not getattr(snap, "safety_known", False):
-            return False, True, self._safetyFaultText
+            return False, True, self._safety_ee_opt_text
         se = getattr(snap, "safety_se", 0) or 0
         so = getattr(snap, "safety_so", 0) or 0
         return True, bool(snap.safety_ok), self._format_safety_faults(se, so)
@@ -4132,20 +4145,39 @@ class MOTIONConnector(QObject):
         """
         console = self._interface.console if self._interface else None
         if console is None:
-            return False, True, self._safetyFaultText
+            return False, True, self._safety_ee_opt_text
         self._console_mutex.lock()
         try:
             se, _ = console.read_i2c_packet(mux_index=1, channel=6, device_addr=0x41, reg_addr=0x24, read_len=1)
             so, _ = console.read_i2c_packet(mux_index=1, channel=7, device_addr=0x41, reg_addr=0x24, read_len=1)
         except Exception as e:
             logging.debug(f"direct safety read failed: {e}")
-            return False, True, self._safetyFaultText
+            return False, True, self._safety_ee_opt_text
         finally:
             self._console_mutex.unlock()
         if not se or not so:
-            return False, True, self._safetyFaultText
+            return False, True, self._safety_ee_opt_text
         mask = (se[0] | so[0]) & 0x07
         return True, (mask == 0), self._format_safety_faults(se[0], so[0])
+
+    # Fault label for the console's TEC over-temp trip, listed alongside the
+    # EE/OPT entries produced by _format_safety_faults.
+    _TEC_TRIP_LABEL = "TEC_TRIP"
+
+    def _tec_trip_state(self):
+        """TEC over-temp trip state as ``(known, tripped)``.
+
+        Console FW ``tec_trip_evaluate()`` clears ``TecStats.tec_status`` when
+        the TEC sense voltage crosses ``TEC_TRIP_VALUE``, opens the safety
+        disconnect, and re-arms only after 200 consecutive clean polls — so
+        this is a genuine laser shutdown, not just a temperature reading.
+        ``tec_status()`` refreshes ``_tec_good`` on success and leaves it
+        untouched on failure, so a dropped poll goes stale rather than
+        reporting a trip that never happened (#89).
+        """
+        if not self._tec_trip_known:
+            return False, False  # never read — can't claim either way
+        return True, not self._tec_good
 
     def _apply_safety_state(self, known: bool, ok: bool, fault_text: str):
         """Reconcile the safety-failure, fault-text, and laser/trigger
@@ -4153,15 +4185,36 @@ class MOTIONConnector(QObject):
         diverge. On a new trip it also forces the trigger indicator OFF (the
         firmware already stopped the trigger) so the Laser and Failure dots
         never land in opposite states — the core of #56.
+
+        Two independent sources feed the failure state: the EE/OPT interlock
+        (``known`` / ``ok`` / ``fault_text``, from the safety FPGAs) and the
+        console's TEC over-temp trip. Either alone lights the indicator, and
+        each source's last known verdict is held across polls where it doesn't
+        answer, so an unreadable interlock can't clear a TEC trip or the
+        reverse (#89).
         """
-        if not known:
-            return  # no fresh data — don't disturb the current indicators
+        tec_known, tec_tripped = self._tec_trip_state()
+        if not known and not tec_known:
+            return  # no fresh data from either source — leave indicators alone
 
-        if fault_text != self._safetyFaultText:
-            self._safetyFaultText = fault_text
-            self.safetyFaultTextChanged.emit(fault_text)
+        if known:
+            self._safety_ee_opt_text = fault_text
+            self._safety_ee_opt_tripped = not ok
 
-        tripped = not ok
+        composed = ", ".join(
+            part
+            for part in (
+                self._safety_ee_opt_text,
+                self._TEC_TRIP_LABEL if tec_tripped else "",
+            )
+            if part
+        )
+        if composed != self._safetyFaultText:
+            self._safetyFaultText = composed
+            self.safetyFaultTextChanged.emit(composed)
+
+        fault_text = composed  # log/report the composed list, not just EE/OPT
+        tripped = self._safety_ee_opt_tripped or tec_tripped
         if tripped and not self._safetyFailure:
             self._safetyFailure = True
             # Tear down the trigger source (belt-and-suspenders with the
@@ -4461,7 +4514,13 @@ class MOTIONConnector(QObject):
                 (float(p) - 0.5 * V_REF) / (25 * R_s), 3
             )  # p = V_itec
             self._tec_monV = round((float(t) - 0.5 * V_REF) * 4, 3)  # t = V_vtec
-            self._tec_good = bool(ok)  # TMPGD pin (abs(OUT1-IN2P) < 100mV)
+            # TecStats.tec_status from console FW. NOT the TMPGD pin, despite
+            # what this comment used to say: tec_trip_evaluate() (console-fw
+            # Core/Src/uart_comms.c) is the only writer of that field, so the
+            # bit is the TEC_TRIP over-temp result — False means tripped and
+            # the firmware has opened the safety disconnect (#89).
+            self._tec_good = bool(ok)
+            self._tec_trip_known = True
 
             # Long-run health sample -> goes ONLY to run.log
 

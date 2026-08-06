@@ -165,6 +165,11 @@ class ProceduresController(QObject):
                 "script": script,
                 "args": ["--fresh", "--skip-tuning"],
             },
+            {
+                "name": "WI-00015 Laser Calibration - dev, dim laser OK",
+                "script": script,
+                "args": ["--fresh", "--skip-tuning", "--bench-thresholds"],
+            },
         ]
 
     # ------------------------------------------------------------------ QML

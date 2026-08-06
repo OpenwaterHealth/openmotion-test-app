@@ -149,7 +149,7 @@ Rectangle {
                 id: termScroll
                 anchors.fill: parent
                 anchors.margins: 8
-                ScrollBar.horizontal.policy: ScrollBar.AsNeeded
+                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
                 TextArea {
                     id: terminal
@@ -157,7 +157,7 @@ Rectangle {
                     selectByMouse: true
                     selectByKeyboard: true
                     persistentSelection: true
-                    wrapMode: TextEdit.NoWrap
+                    wrapMode: TextEdit.Wrap
                     textFormat: TextEdit.PlainText
                     color: "#D5D8DC"
                     font.family: "Consolas"

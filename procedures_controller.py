@@ -68,9 +68,37 @@ _INSTRUCTION_PREFIXES = (
 def _is_operator_line(line: str) -> bool:
     s = line.strip()
     return (s.startswith(_INSTRUCTION_PREFIXES)
-            or "[y to continue" in s
-            or "[left/right]" in s
             or "PASSED" in s or "FAILED" in s or "REFUSED" in s)
+
+
+_SIMPLE_TAG = "@@SIMPLE "
+
+
+def _display_line(line: str, verbose: bool, state: dict) -> str | None:
+    """What (if anything) to show for a raw log line.
+
+    ``state`` carries ``simple_active`` between lines: when the guided
+    runner emits an @@SIMPLE plain-language instruction, factory mode shows
+    it INSTEAD of the detailed ``>>>`` prompt that follows. CLI-only hint
+    lines ("[y to continue...]", "[left/right]") are never shown in factory
+    mode - the pane's buttons replace them.
+    """
+    s = line.strip()
+    if s.startswith(_SIMPLE_TAG):
+        if verbose:
+            return None  # verbose users read the detailed prompt instead
+        state["simple_active"] = True
+        return s[len(_SIMPLE_TAG):]
+    if verbose:
+        return line
+    if s.startswith("===") or s.startswith("[operator]"):
+        state["simple_active"] = False
+        return line
+    if s.startswith(">>>"):
+        return None if state.get("simple_active") else line
+    if "[y to continue" in s or "[left/right]" in s:
+        return None
+    return line if _is_operator_line(line) else None
 
 
 def _find_wi15_guided() -> str | None:
@@ -114,6 +142,7 @@ class ProceduresController(QObject):
         self._settings = QSettings()
         self._verbose = self._settings.value(
             "procedures/verbose", True, type=bool)
+        self._filter_state: dict = {}
 
         # Laser tuning (WI sections 4.1-4.5) and BFI/BVI calibration (4.6)
         # are deliberately separate procedures, mirroring the SDK-side
@@ -126,10 +155,10 @@ class ProceduresController(QObject):
                 "args": ["--fresh", "--skip-calibration"],
             },
             {
-                "name": "WI-00015 Laser Tuning - dev window 75-125 uJ",
+                "name": "WI-00015 Laser Tuning - dev window 100-200 uJ",
                 "script": script,
                 "args": ["--fresh", "--skip-calibration",
-                         "--window", "75", "125"],
+                         "--window", "100", "200"],
             },
             {
                 "name": "WI-00015 Laser Calibration (4.6)",
@@ -162,9 +191,13 @@ class ProceduresController(QObject):
     @pyqtProperty(str, constant=False)
     def visibleLog(self) -> str:
         """The log as it should appear under the current verbosity."""
-        if self._verbose:
-            return "\n".join(self._lines)
-        return "\n".join(l for l in self._lines if _is_operator_line(l))
+        state: dict = {}
+        out = []
+        for l in self._lines:
+            d = _display_line(l, self._verbose, state)
+            if d is not None:
+                out.append(d)
+        return "\n".join(out)
 
     def _get_verbose(self) -> bool:
         return self._verbose
@@ -206,6 +239,7 @@ class ProceduresController(QObject):
 
         self._lines.clear()
         self._linebuf = ""
+        self._filter_state = {}
         self.logCleared.emit()
         self._stop_requested = False
         self._log(f"=== {proc['name']} ===")
@@ -280,9 +314,10 @@ class ProceduresController(QObject):
         if len(self._lines) > MAX_LOG_LINES:
             del self._lines[: len(self._lines) - MAX_LOG_LINES]
         # The stored log is always complete; only the display stream is
-        # gated by the Verbose checkbox.
-        if self._verbose or _is_operator_line(line):
-            self.logLine.emit(line)
+        # gated by the Verbose checkbox / @@SIMPLE protocol.
+        shown = _display_line(line, self._verbose, self._filter_state)
+        if shown is not None:
+            self.logLine.emit(shown)
 
     def _log(self, line: str) -> None:
         self._emit_line(line)

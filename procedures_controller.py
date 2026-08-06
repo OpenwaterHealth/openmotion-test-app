@@ -252,6 +252,9 @@ class ProceduresController(QObject):
             QProcess.ProcessChannelMode.MergedChannels)
         env = QProcessEnvironment.systemEnvironment()
         env.insert("PYTHONUNBUFFERED", "1")
+        # Emoji in the @@SIMPLE operator lines require UTF-8 on the child's
+        # pipes; the Windows default (cp1252) would crash the child's print.
+        env.insert("PYTHONUTF8", "1")
         try:
             import omotion
             sdk_root = os.path.dirname(

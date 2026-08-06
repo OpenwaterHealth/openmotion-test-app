@@ -93,6 +93,14 @@ Rectangle {
                 }
             }
 
+            CheckBox {
+                id: verboseCheck
+                text: "Verbose"
+                checked: ProceduresController.verbose
+                onToggled: ProceduresController.verbose = checked
+                Material.accent: "#27AE60"
+            }
+
             Item { Layout.fillWidth: true }
 
             // ------------------------------------- operator prompt answers
@@ -156,11 +164,12 @@ Rectangle {
                     font.pixelSize: 13
                     background: null
 
-                    // Restore the full log when the page is (re)created -
-                    // the Loader destroys pages on tab switch, the
-                    // controller keeps the authoritative buffer.
+                    // Restore the log when the page is (re)created - the
+                    // Loader destroys pages on tab switch, the controller
+                    // keeps the authoritative buffer. visibleLog respects
+                    // the Verbose checkbox.
                     Component.onCompleted: {
-                        text = ProceduresController.fullLog
+                        text = ProceduresController.visibleLog
                         cursorPosition = length
                     }
                 }
@@ -178,6 +187,12 @@ Rectangle {
                 }
                 function onLogCleared() {
                     terminal.clear()
+                }
+                function onVerboseChanged() {
+                    // Re-render the whole terminal under the new filter so
+                    // the toggle applies retroactively, not just to new lines.
+                    terminal.text = ProceduresController.visibleLog
+                    terminal.cursorPosition = terminal.length
                 }
             }
         }

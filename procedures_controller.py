@@ -28,6 +28,7 @@ from PyQt6.QtCore import (
     QObject,
     QProcess,
     QProcessEnvironment,
+    QSettings,
     QTimer,
     pyqtProperty,
     pyqtSignal,
@@ -44,6 +45,32 @@ STATUS_PASS = "pass"
 STATUS_FAIL = "fail"
 
 MAX_LOG_LINES = 5000
+
+# Non-verbose ("factory") mode shows only operator-facing lines: the guided
+# runner's instructions and gates, phase banners, and outcomes. Everything
+# else (measurements, register dumps, engine chatter) is technician detail
+# behind the Verbose checkbox. The full log is always retained - the filter
+# is display-only and applies retroactively when toggled.
+_INSTRUCTION_PREFIXES = (
+    ">>>",            # operator instructions from the guided runner
+    "===",            # phase banners
+    "!",              # errors / warnings raised by this controller
+    "[operator]",     # answers echoed back
+    "procedure ",     # start/stop/completion lines
+    "WI-00015",       # run header
+    "report:",        # emitted PDF paths
+    "outcome:",       # phase outcomes
+    "persistence:",   # power-cycle verification verdict
+    "NEXT:",          # flow hints
+)
+
+
+def _is_operator_line(line: str) -> bool:
+    s = line.strip()
+    return (s.startswith(_INSTRUCTION_PREFIXES)
+            or "[y to continue" in s
+            or "[left/right]" in s
+            or "PASSED" in s or "FAILED" in s or "REFUSED" in s)
 
 
 def _find_wi15_guided() -> str | None:
@@ -73,6 +100,7 @@ class ProceduresController(QObject):
     statusChanged = pyqtSignal()
     promptChanged = pyqtSignal()
     logCleared = pyqtSignal()
+    verboseChanged = pyqtSignal()
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -83,6 +111,9 @@ class ProceduresController(QObject):
         self._process: QProcess | None = None
         self._stop_requested = False
         self._current_index = 0
+        self._settings = QSettings()
+        self._verbose = self._settings.value(
+            "procedures/verbose", True, type=bool)
 
         # Laser tuning (WI sections 4.1-4.5) and BFI/BVI calibration (4.6)
         # are deliberately separate procedures, mirroring the SDK-side
@@ -127,6 +158,25 @@ class ProceduresController(QObject):
     @pyqtProperty(str, constant=False)
     def fullLog(self) -> str:
         return "\n".join(self._lines)
+
+    @pyqtProperty(str, constant=False)
+    def visibleLog(self) -> str:
+        """The log as it should appear under the current verbosity."""
+        if self._verbose:
+            return "\n".join(self._lines)
+        return "\n".join(l for l in self._lines if _is_operator_line(l))
+
+    def _get_verbose(self) -> bool:
+        return self._verbose
+
+    def _set_verbose(self, value: bool) -> None:
+        if value != self._verbose:
+            self._verbose = bool(value)
+            self._settings.setValue("procedures/verbose", self._verbose)
+            self.verboseChanged.emit()
+
+    verbose = pyqtProperty(bool, fget=_get_verbose, fset=_set_verbose,
+                           notify=verboseChanged)
 
     # ---------------------------------------------------------------- slots
     @pyqtSlot(int)
@@ -229,7 +279,10 @@ class ProceduresController(QObject):
         self._lines.append(line)
         if len(self._lines) > MAX_LOG_LINES:
             del self._lines[: len(self._lines) - MAX_LOG_LINES]
-        self.logLine.emit(line)
+        # The stored log is always complete; only the display stream is
+        # gated by the Verbose checkbox.
+        if self._verbose or _is_operator_line(line):
+            self.logLine.emit(line)
 
     def _log(self, line: str) -> None:
         self._emit_line(line)

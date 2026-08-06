@@ -23,6 +23,8 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import threading
+import time
 
 from PyQt6.QtCore import (
     QObject,
@@ -34,6 +36,8 @@ from PyQt6.QtCore import (
     pyqtSignal,
     pyqtSlot,
 )
+
+from omotion.connection_state import ConnectionState
 
 from motion_singleton import motion_interface
 
@@ -129,6 +133,9 @@ class ProceduresController(QObject):
     promptChanged = pyqtSignal()
     logCleared = pyqtSignal()
     verboseChanged = pyqtSignal()
+    # Internal: device release finished on the worker thread; queued back to
+    # the main thread, which owns QProcess creation.
+    _releaseFinished = pyqtSignal(int)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -143,6 +150,7 @@ class ProceduresController(QObject):
         self._verbose = self._settings.value(
             "procedures/verbose", True, type=bool)
         self._filter_state: dict = {}
+        self._releaseFinished.connect(self._spawn_procedure)
 
         # Laser tuning (WI sections 4.1-4.5) and BFI/BVI calibration (4.6)
         # are deliberately separate procedures, mirroring the SDK-side
@@ -249,9 +257,50 @@ class ProceduresController(QObject):
         self._stop_requested = False
         self._log(f"=== {proc['name']} ===")
         self._log(f"script: {proc['script']}")
+        self._set_status(STATUS_RUNNING)
 
-        self._release_devices()
+        # Device release must NOT run on the Qt main thread: the SDK's USB
+        # teardown happens on the ConnectionMonitor's thread via submitted
+        # UserStop events, and doing it synchronously here crashed the app
+        # (0xc0000005 in libusb teardown, 2026-08-06). Order matters too:
+        # disconnect the handles while the monitor is still alive to process
+        # the events, wait for each DISCONNECTED transition, and only then
+        # stop the monitor. QProcess creation returns to the main thread via
+        # _releaseFinished.
+        threading.Thread(target=self._release_devices_worker,
+                         args=(index,), daemon=True,
+                         name="procedures-release").start()
 
+    def _release_devices_worker(self, index: int) -> None:
+        self._log("releasing device handles to the procedure ...")
+        try:
+            for name, handle in (("left", motion_interface.left),
+                                 ("right", motion_interface.right),
+                                 ("console", motion_interface.console)):
+                try:
+                    if handle.is_connected():
+                        handle.request_disconnect()
+                        if handle.wait_for(ConnectionState.DISCONNECTED,
+                                           timeout=10.0):
+                            self._log(f"  {name} released")
+                        else:
+                            self._log(f"! {name} did not confirm disconnect "
+                                      f"within 10 s - continuing")
+                except Exception as e:
+                    self._log(f"! {name} release problem: {e}")
+            motion_interface.stop()
+            time.sleep(1.0)  # let USB re-enumeration settle for the child
+        except Exception as e:
+            self._log(f"! device release problem: {e}")
+        self._releaseFinished.emit(index)
+
+    def _spawn_procedure(self, index: int) -> None:
+        proc = self._procedures[index]
+        if self._stop_requested:
+            self._log("start aborted before launch")
+            self._set_status(STATUS_IDLE)
+            self._reacquire_devices()
+            return
         self._process = QProcess(self)
         self._process.setProcessChannelMode(
             QProcess.ProcessChannelMode.MergedChannels)
@@ -282,6 +331,11 @@ class ProceduresController(QObject):
     @pyqtSlot()
     def stopProcedure(self) -> None:
         if self._process is None:
+            # May be pressed during the release phase, before the child
+            # exists - flag it so _spawn_procedure aborts instead of launching.
+            if self._status == STATUS_RUNNING:
+                self._stop_requested = True
+                self._log("! stop requested - aborting before launch")
             return
         self._stop_requested = True
         self._log("! stop requested - terminating procedure")
@@ -349,20 +403,6 @@ class ProceduresController(QObject):
             self._log(f"procedure completed: FAIL (exit code {exit_code})")
             self._set_status(STATUS_FAIL)
         self._reacquire_devices()
-
-    def _release_devices(self) -> None:
-        """Hand the console + sensors to the child process."""
-        self._log("releasing device handles to the procedure ...")
-        try:
-            motion_interface.stop()
-            for handle in (motion_interface.console, motion_interface.left,
-                           motion_interface.right):
-                try:
-                    handle.request_disconnect()
-                except Exception as e:
-                    logger.debug("request_disconnect: %s", e)
-        except Exception as e:
-            self._log(f"! device release problem: {e}")
 
     def _reacquire_devices(self) -> None:
         """Take the devices back and make the laser safe.

@@ -2257,11 +2257,6 @@ Rectangle {
             }            
         }
         
-        function onLaserStateChanged() {          
-            if (MOTIONInterface.consoleConnected) {
-            }            
-        }
-        
         function onSafetyFailureStateChanged() {          
             if (MOTIONInterface.consoleConnected) {
             }            

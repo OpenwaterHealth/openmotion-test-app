@@ -73,6 +73,7 @@ ApplicationWindow {
                     source: activeMenu === 0 ? "pages/Demo.qml"
                         : activeMenu === 1 ? "pages/Sensor.qml"
                         : activeMenu === 2 ? "pages/Console.qml"
+                        : activeMenu === 4 ? "pages/Procedures.qml"
                         : "pages/Settings.qml"
 
                 }

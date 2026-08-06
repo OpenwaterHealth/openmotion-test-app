@@ -73,5 +73,17 @@ Rectangle {
                 sidebarMenu.handleButtonClick(3); // Call the global function
             }
         }
+
+        // Procedures Button
+        IconButton {
+            buttonIcon: "\ue9a3"
+            buttonText: "Procedures"
+            Layout.alignment: Qt.AlignHCenter
+            backgroundColor: sidebarMenu.activeButtonIndex === 4 ? "white" : "transparent"
+            iconColor: sidebarMenu.activeButtonIndex === 4 ? "#2C3E50" : "#BDC3C7"
+            onClicked: {
+                sidebarMenu.handleButtonClick(4); // Call the global function
+            }
+        }
     }
 }

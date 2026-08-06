@@ -19,6 +19,7 @@ from PyQt6.QtQml import QQmlApplicationEngine, qmlRegisterSingletonInstance
 
 from motion_connector import MOTIONConnector
 from motion_singleton import motion_interface
+from procedures_controller import ProceduresController
 from version import get_version
 from utils.log_setup import configure_app_logging
 from utils.warranty_ack import APPLICATION, ORGANIZATION, WarrantyAck
@@ -98,6 +99,11 @@ def main():
     log_level = logging.DEBUG if args.debug else logging.INFO
     connector = MOTIONConnector(log_level=log_level, github_disabled=args.no_github)
     qmlRegisterSingletonInstance("OpenMotion", 1, 0, "MOTIONInterface", connector)
+
+    # Procedures pane backend (issue #70). Held in a local so Python keeps a
+    # reference alive — qmlRegisterSingletonInstance does not take ownership.
+    procedures = ProceduresController()
+    qmlRegisterSingletonInstance("OpenMotion", 1, 0, "ProceduresController", procedures)
 
     # Warranty acknowledgement gate (issue #47). Held in a local so Python
     # keeps a reference alive for the lifetime of the app — qmlRegisterSingletonInstance

@@ -76,6 +76,8 @@ except Exception:  # pragma: no cover
     BootloaderInstallError = None
     install_bootloader = None
 
+from dfu_driver import dfu_driver_issue
+
 
 def _firmware_kind(target: str):
     """Map a UI target ("console" / "left" / "right") to an SDK FirmwareKind."""
@@ -1516,6 +1518,12 @@ class MOTIONConnector(QObject):
         (browsed file): only the image source differs, so the thread wiring and
         the finished/failed handling live here rather than in both slots.
         """
+        # Same preflight as startConsoleFirmwareUpdate: entering DFU without a
+        # usable Windows driver on 0483:DF11 strands the device for nothing.
+        issue = dfu_driver_issue()
+        if issue:
+            self.bootloaderInstallFinished.emit(target, False, issue)
+            return
         self._set_console_fw_busy(True)
         self._bl_install_thread = _BootloaderInstallThread(
             self, target, tag, local_path=local_path
@@ -1869,6 +1877,15 @@ class MOTIONConnector(QObject):
             self.consoleFirmwareUpdateError.emit(
                 target, "Downloaded firmware file is missing."
             )
+            self._cleanup_fw_token(token)
+            self._set_console_fw_busy(False)
+            return
+        # Last check before the device is told to enter DFU: without a usable
+        # Windows driver on 0483:DF11 the flash cannot succeed, and by the time
+        # that surfaces the device is already stranded in DFU.
+        issue = dfu_driver_issue()
+        if issue:
+            self.consoleFirmwareUpdateError.emit(target, issue)
             self._cleanup_fw_token(token)
             self._set_console_fw_busy(False)
             return

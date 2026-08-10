@@ -32,6 +32,7 @@ python -m PyInstaller -y openwater.spec  # package .exe
 | `motion_singleton.py` | Singleton wrapper for the SDK `MOTIONInterface`. |
 | `version.py` | Version string; updated from git tag in CI. |
 | `rthook_libusb_paths.py` | PyInstaller runtime hook — points the bundle at vendored libusb DLLs at exe launch. |
+| `dfu_driver.py` | ~120 lines. Windows DFU-driver preflight (#94): reads `HKLM\...\Enum\USB\VID_0483&PID_DF11` to verify a usable driver (WinUSB/libusbK) is recorded before any DFU entry. Blocks only on a positively-bad binding; never-seen passes. |
 | `pages/Demo.qml` | **2242 lines.** Live monitoring — PDC tracking chart, per-camera telemetry, console updates. |
 | `pages/Sensor.qml` | 1653 lines. Sensor telemetry, camera power, IMU/accel display. |
 | `pages/Console.qml` | 1420 lines. Device info, fan control, RGB LED, safety limits. |
@@ -94,6 +95,7 @@ To add or change a register:
 - **`histogram_classifier.py` thresholds are hardcoded** (351 lines, no visible config). Inspect before trusting outputs for new conditions.
 - **Single TODO** in `motion_connector.py` (~line 2985): "replace stub with actual SDK query when available" — flag if you hit it.
 - **Windows libusb** must be reachable at runtime; PyInstaller bundles it via `rthook_libusb_paths.py`. If exe enumeration fails, check the hook.
+- **DFU driver preflight can refuse a flash before DFU entry** (#94). `startConsoleFirmwareUpdate` and `_start_bootloader_thread` call `dfu_driver.dfu_driver_issue()` and emit the existing error signals with a "install WinUSB via Zadig" message if Windows records the DFU device (0483:DF11) bound to no/an unusable driver. A machine that has never seen a DFU device passes the preflight — first-flash failures there still surface the old way (SDK-side, after DFU entry).
 
 ## Differences vs `openmotion-bloodflow-app`
 

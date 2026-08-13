@@ -1779,7 +1779,7 @@ Rectangle {
                                 rowSpacing: 6
 
                                 Text { text: "Device ID:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
-                                Text { text: consoleDeviceId; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
+                                TextEdit { text: consoleDeviceId; color: "#3498DB"; font.pixelSize: 14; readOnly: true; selectByMouse: true; selectionColor: "#3498DB"; selectedTextColor: "#FFFFFF"; clip: true; Layout.fillWidth: true }
 
                                 Text { text: "Board Rev ID:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: consoleBoardRevId; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
@@ -1980,7 +1980,7 @@ Rectangle {
                                 rowSpacing: 6
 
                                 Text { text: "Device ID:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
-                                Text { text: leftSensorDeviceId; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
+                                TextEdit { text: leftSensorDeviceId; color: "#3498DB"; font.pixelSize: 14; readOnly: true; selectByMouse: true; selectionColor: "#3498DB"; selectedTextColor: "#FFFFFF"; clip: true; Layout.fillWidth: true }
 
                                 Text { text: "Firmware:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: leftSensorFirmwareVersion; color: "#2ECC71"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
@@ -2176,7 +2176,7 @@ Rectangle {
                                 rowSpacing: 6
 
                                 Text { text: "Device ID:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
-                                Text { text: rightSensorDeviceId; color: "#3498DB"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }
+                                TextEdit { text: rightSensorDeviceId; color: "#3498DB"; font.pixelSize: 14; readOnly: true; selectByMouse: true; selectionColor: "#3498DB"; selectedTextColor: "#FFFFFF"; clip: true; Layout.fillWidth: true }
 
                                 Text { text: "Firmware:"; color: "#BDC3C7"; font.pixelSize: 14; horizontalAlignment: Text.AlignLeft; Layout.preferredWidth: 120 }
                                 Text { text: rightSensorFirmwareVersion; color: "#2ECC71"; font.pixelSize: 14; elide: Text.ElideRight; Layout.fillWidth: true }

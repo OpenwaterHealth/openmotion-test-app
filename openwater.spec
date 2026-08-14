@@ -37,6 +37,14 @@ datas   += om_datas
 binaries += om_bins
 hidden  += om_hidden
 
+# Runtime deps of the PYTHONPATH-sourced omotion that static analysis can
+# miss (crcmod: wire-protocol CRC, found missing in the 2026-08-14 build).
+for _extra in ("crcmod",):
+    _e_datas, _e_bins, _e_hidden = collect_all(_extra)
+    datas    += _e_datas
+    binaries += _e_bins
+    hidden   += _e_hidden
+
 # --- force include pyserial / pyusb dependency ---
 hidden += [
     "serial",

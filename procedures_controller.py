@@ -36,6 +36,7 @@ import io
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -111,48 +112,105 @@ def _prompt_options(prompt: str) -> list[str]:
     return options
 
 
-def _sdk_root() -> str | None:
-    """Locate the openmotion-sdk checkout the procedure scripts run from.
+# Where procedure evidence lands on this bench: a stable per-user location,
+# independent of any checkout. Each run prints its exact evidence paths.
+_PROCEDURE_OUTPUT_ROOT = os.path.join(
+    os.path.expanduser("~"), "Documents", "OpenMotion")
 
-    Resolution order: OPENMOTION_SDK_ROOT env var (a repo root directory),
-    then the parent of the imported omotion package (works for PYTHONPATH /
-    editable installs; wheels do not ship scripts/).
+
+def _candidate_import_roots() -> list[str]:
+    """Checkout roots whose ``omotion`` could serve the child, best first.
+
+    The procedures are package modules (``omotion.scripts``), so no checkout
+    is *required* - these are overrides for when a specific source tree
+    should win the child's import race: OPENMOTION_SDK_ROOT first, then the
+    source of the app's own imported omotion (the PYTHONPATH dev setup). In
+    a frozen build the latter is the bundled ``_internal`` archive, which
+    carries no loose module files and drops out of the file check naturally.
     """
+    roots: list[str] = []
     env = os.environ.get("OPENMOTION_SDK_ROOT")
-    if env and os.path.isdir(env):
-        return env
+    if env and os.path.isdir(os.path.join(env, "omotion")):
+        roots.append(env)
     try:
         import omotion
-        return os.path.dirname(os.path.dirname(os.path.abspath(omotion.__file__)))
+        roots.append(os.path.dirname(os.path.dirname(
+            os.path.abspath(omotion.__file__))))
     except Exception:
-        return None
+        pass
+    return roots
+
+
+_probe_cache: dict[str, bool] = {}
+
+
+def _interpreter_has_omotion_scripts(program: str) -> bool:
+    """Can this interpreter import ``omotion.scripts`` on its own?
+
+    Probed only when no checkout carries the procedure modules - i.e. a
+    frozen app on a bench whose Python has the omotion wheel installed.
+    One subprocess per interpreter, cached for the app's lifetime.
+    """
+    cached = _probe_cache.get(program)
+    if cached is None:
+        try:
+            cached = subprocess.run(
+                [program, "-c",
+                 "import importlib.util, sys; "
+                 "sys.exit(0 if importlib.util.find_spec('omotion.scripts')"
+                 " else 1)"],
+                capture_output=True, timeout=30,
+            ).returncode == 0
+        except Exception:
+            cached = False
+        _probe_cache[program] = cached
+    return cached
+
+
+def _python_interpreter() -> str | None:
+    """The Python interpreter that runs procedures.
+
+    In a frozen (PyInstaller) build ``sys.executable`` is the app exe
+    itself - spawning it would relaunch the app, not the procedure - so a
+    real interpreter is resolved from PATH instead.
+    """
+    if not getattr(sys, "frozen", False):
+        return sys.executable
+    return shutil.which("python") or shutil.which("py")
 
 
 def _sdk_module_procedure(name: str, module: str,
                           args: list[str] | None = None) -> dict:
-    """Registry entry for a ``python -m`` procedure inside the SDK checkout.
+    """Registry entry for an SDK procedure module (``python -m <module>``).
 
-    The module form with the checkout as working directory guarantees the
-    checkout's ``omotion`` package is the one the procedure imports (see
-    scripts/WI15_PROCEDURES.md in the SDK).
+    The procedures ship inside the ``omotion`` package (``omotion.scripts``,
+    see docs/WI15Procedures.md in the SDK), so the requirements are just a
+    Python interpreter and an ``omotion`` it can import that carries them:
+    either pip-installed, or a checkout from ``_candidate_import_roots``
+    prepended to the child's PYTHONPATH.
     """
-    root = _sdk_root()
-    module_file = None
-    if root:
-        candidate = os.path.join(root, *module.split(".")) + ".py"
-        if os.path.isfile(candidate):
-            module_file = candidate
+    program = _python_interpreter()
+    module_relpath = os.path.join(*module.split(".")) + ".py"
+    import_root = next(
+        (root for root in _candidate_import_roots()
+         if os.path.isfile(os.path.join(root, module_relpath))),
+        None)
+    if program is None:
+        missing = ("no Python interpreter found on PATH - procedures run "
+                   "out-of-process and need one installed")
+    elif import_root is None and not _interpreter_has_omotion_scripts(program):
+        missing = (f"{module} is not importable by {program} - pip install "
+                   "an openmotion-sdk wheel that ships omotion.scripts, or "
+                   "set OPENMOTION_SDK_ROOT to a checkout that has it")
+    else:
+        missing = None
     return {
         "name": name,
-        "program": sys.executable,
+        "program": program,
         "args": ["-u", "-m", module, *(args or [])],
-        "cwd": root,
-        "missing": (
-            None if module_file else
-            f"{module}.py not found under the SDK checkout "
-            f"({root or 'no checkout located'}) - set OPENMOTION_SDK_ROOT to "
-            "an openmotion-sdk checkout that contains it"
-        ),
+        "cwd": _PROCEDURE_OUTPUT_ROOT,
+        "import_root": import_root,
+        "missing": missing,
     }
 
 
@@ -203,27 +261,30 @@ def _bench_identity_args() -> list[str]:
 
 def _build_procedures() -> list[dict]:
     """The procedure registry. Append entries here to add procedures."""
-    identity = _bench_identity_args()
+    common = [
+        *_bench_identity_args(),
+        "--output-dir", os.path.join(_PROCEDURE_OUTPUT_ROOT, "wi15_out"),
+    ]
     return [
         _sdk_module_procedure(
             "WI-00015 Single-Sensor Laser Calibration",
-            "scripts.wi15_single_sensor_laser_calibration",
-            identity,
+            "omotion.scripts.wi15_single_sensor_laser_calibration",
+            common,
         ),
         _sdk_module_procedure(
             "WI-00015 Dual-Sensor Laser Calibration",
-            "scripts.wi15_dual_sensor_laser_calibration",
-            identity,
+            "omotion.scripts.wi15_dual_sensor_laser_calibration",
+            common,
         ),
         _sdk_module_procedure(
             "WI-00015 Safety Calibration",
-            "scripts.wi15_safety_calibration",
-            identity,
+            "omotion.scripts.wi15_safety_calibration",
+            common,
         ),
         _sdk_module_procedure(
             "WI-00015 Measurement Calibration (one sensor)",
-            "scripts.wi15_measurement_calibration",
-            identity,
+            "omotion.scripts.wi15_measurement_calibration",
+            common,
         ),
     ]
 
@@ -386,22 +447,31 @@ class ProceduresController(QObject):
         # The child's pipes must be UTF-8; the Windows default (cp1252) can
         # crash a child print that carries non-ASCII output.
         env.insert("PYTHONUTF8", "1")
-        # The procedure's checkout wins the import race: its root goes ahead
-        # of any inherited PYTHONPATH (the working directory itself is first
-        # on sys.path for -m children).
+        # The working directory is the evidence root, not a code location -
+        # the procedure modules ship inside omotion itself.
         if proc.get("cwd"):
+            try:
+                os.makedirs(proc["cwd"], exist_ok=True)
+            except OSError as e:
+                self._log(f"! cannot create {proc['cwd']}: {e}")
             self._process.setWorkingDirectory(proc["cwd"])
+        # A resolved checkout (OPENMOTION_SDK_ROOT or the app's own omotion
+        # source) wins the child's import race via PYTHONPATH; without one
+        # the interpreter's installed omotion wheel is used as-is.
+        if proc.get("import_root"):
             prev = env.value("PYTHONPATH", "")
             env.insert("PYTHONPATH",
-                       proc["cwd"] + (os.pathsep + prev if prev else ""))
+                       proc["import_root"]
+                       + (os.pathsep + prev if prev else ""))
         self._process.setProcessEnvironment(env)
         self._process.readyReadStandardOutput.connect(self._on_stdout)
         self._process.finished.connect(self._on_finished)
         self._process.errorOccurred.connect(self._on_error)
 
         self._log(f"launching: {proc['program']} {' '.join(proc['args'])}")
-        if proc.get("cwd"):
-            self._log(f"working directory: {proc['cwd']}")
+        self._log("omotion source: "
+                  + (proc.get("import_root")
+                     or "interpreter's installed package"))
         self._set_status(STATUS_RUNNING)
         self._process.start(proc["program"], proc["args"])
 

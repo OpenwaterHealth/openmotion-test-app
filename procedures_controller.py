@@ -197,6 +197,11 @@ def _build_procedures() -> list[dict]:
             "scripts.wi15_safety_calibration",
             identity,
         ),
+        _sdk_module_procedure(
+            "WI-00015 Measurement Calibration (one sensor)",
+            "scripts.wi15_measurement_calibration",
+            identity,
+        ),
     ]
 
 

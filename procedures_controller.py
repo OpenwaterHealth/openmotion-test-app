@@ -22,7 +22,10 @@ must never be left firing.
 Prompt detection: ``input()`` prompts arrive on stdout without a trailing
 newline. An unterminated tail that ends with ": " is flushed and shown
 immediately; any other tail is flushed after a short quiet interval. Both arm
-the operator input field.
+the operator input field. When the prompt ends with a small option group -
+``(left/right)``, ``(yes/no)``, ``[y/N]``, ``(single-left/single-right/dual)``
+- the pane additionally renders one answer button per option; clicking sends
+that option to the child's stdin verbatim.
 """
 
 from __future__ import annotations
@@ -86,6 +89,25 @@ def _display_line(line: str, verbose: bool) -> str | None:
     if s.startswith(_ALWAYS_SHOW_PREFIXES) or _OPERATOR_LINE.search(s):
         return line
     return None
+
+
+# A prompt whose trailing group is a short slash-separated list - e.g.
+# "(left/right): ", "[y/N]: ", "(single-left/single-right/dual): " - gets
+# one answer button per option in addition to the free-text field.
+_OPTION_GROUP = re.compile(r"[(\[]([^()\[\]]+)[)\]]\s*:?\s*$")
+
+
+def _prompt_options(prompt: str) -> list[str]:
+    match = _OPTION_GROUP.search(prompt.strip())
+    if match is None:
+        return []
+    options = [part.strip() for part in match.group(1).split("/")]
+    if not 2 <= len(options) <= 4:
+        return []
+    if any(not option or len(option) > 20 or " " in option
+           for option in options):
+        return []
+    return options
 
 
 def _sdk_root() -> str | None:
@@ -219,6 +241,7 @@ class ProceduresController(QObject):
         super().__init__(parent)
         self._status = STATUS_IDLE
         self._prompt = ""          # "" or "text"
+        self._prompt_options: list[str] = []
         self._lines: list[str] = []
         self._linebuf = ""
         self._process: QProcess | None = None
@@ -250,6 +273,10 @@ class ProceduresController(QObject):
     @pyqtProperty(str, notify=promptChanged)
     def promptType(self) -> str:
         return self._prompt
+
+    @pyqtProperty("QVariantList", notify=promptChanged)
+    def promptOptions(self):
+        return list(self._prompt_options)
 
     @pyqtProperty(str, constant=False)
     def fullLog(self) -> str:
@@ -423,9 +450,10 @@ class ProceduresController(QObject):
     def _flush_prompt_tail(self) -> None:
         if not self._linebuf or self._process is None:
             return
-        self._emit_line(self._linebuf, force_show=True)
+        prompt = self._linebuf
+        self._emit_line(prompt, force_show=True)
         self._linebuf = ""
-        self._set_prompt("text")
+        self._set_prompt("text", options=_prompt_options(prompt))
 
     def _emit_line(self, line: str, force_show: bool = False) -> None:
         self._lines.append(line)
@@ -502,7 +530,9 @@ class ProceduresController(QObject):
             self._status = status
             self.statusChanged.emit()
 
-    def _set_prompt(self, prompt: str) -> None:
-        if prompt != self._prompt:
+    def _set_prompt(self, prompt: str, options: list[str] | None = None) -> None:
+        options = options or []
+        if prompt != self._prompt or options != self._prompt_options:
             self._prompt = prompt
+            self._prompt_options = options
             self.promptChanged.emit()

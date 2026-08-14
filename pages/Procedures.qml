@@ -181,6 +181,19 @@ Rectangle {
             Layout.fillWidth: true
             spacing: 8
 
+            // One button per option when the prompt ends with a small
+            // option group like "(left/right)" or "[y/N]"; clicking sends
+            // that option verbatim.
+            Repeater {
+                model: ProceduresController.promptOptions
+                Button {
+                    text: modelData
+                    Material.background: "#F1C40F"
+                    Material.foreground: "black"
+                    onClicked: ProceduresController.answerPrompt(modelData)
+                }
+            }
+
             TextField {
                 id: operatorInput
                 Layout.fillWidth: true

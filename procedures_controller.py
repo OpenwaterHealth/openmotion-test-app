@@ -70,15 +70,16 @@ MAX_LOG_LINES = 5000
 # (PYTHONUNBUFFERED), so only prompts linger without a newline.
 PROMPT_QUIET_MS = 400
 
-# Non-verbose ("factory") mode shows only operator-facing lines: prompts,
-# echoed answers, this controller's own markers, and outcome/status lines.
-# The full log is always retained - the filter is display-only and applies
-# retroactively when toggled.
-_OPERATOR_LINE = re.compile(
-    r"(?i)\b(pass|passed|fail|failed|error|warning|status|reason|category|"
-    r"report|evidence|canceled|cancelled|confirm|ncr)\b"
+# Non-verbose ("factory") mode hides only log-record-shaped noise (SDK/library
+# logging that leaks onto the child's stderr); every other child line is
+# operator output and must stay visible - a hidden instruction once left an
+# operator waiting on a power-cycle prompt that never appeared. The full log
+# is always retained - the filter is display-only and applies retroactively
+# when toggled.
+_LOG_RECORD_LINE = re.compile(
+    r"^\d{4}-\d{2}-\d{2} [\d:,.]+ - \S+ - (DEBUG|INFO|WARNING|ERROR|CRITICAL)"
+    r"|^(DEBUG|INFO|WARNING|ERROR|CRITICAL)[ :]"
 )
-_ALWAYS_SHOW_PREFIXES = ("===", "!", "[operator]", "procedure ")
 
 
 def _display_line(line: str, verbose: bool) -> str | None:
@@ -86,9 +87,9 @@ def _display_line(line: str, verbose: bool) -> str | None:
     if verbose:
         return line
     s = line.strip()
-    if s.startswith(_ALWAYS_SHOW_PREFIXES) or _OPERATOR_LINE.search(s):
-        return line
-    return None
+    if not s or _LOG_RECORD_LINE.match(s):
+        return None
+    return line
 
 
 # A prompt whose trailing group is a short slash-separated list - e.g.

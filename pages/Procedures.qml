@@ -136,7 +136,7 @@ Rectangle {
                     textFormat: TextEdit.PlainText
                     color: "#D5D8DC"
                     font.family: "Consolas"
-                    font.pixelSize: 13
+                    font.pixelSize: 16
                     background: null
 
                     // Restore the log when the page is (re)created - the
@@ -203,7 +203,7 @@ Rectangle {
                     : "Procedure input (available while running)"
                 color: "#D5D8DC"
                 font.family: "Consolas"
-                font.pixelSize: 13
+                font.pixelSize: 16
                 Material.accent: ProceduresController.promptType === "text"
                     ? "#F1C40F" : "#27AE60"
                 onAccepted: {

@@ -27,9 +27,13 @@ the operator input field.
 
 from __future__ import annotations
 
+import csv
+import getpass
+import io
 import logging
 import os
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -129,20 +133,69 @@ def _sdk_module_procedure(name: str, module: str,
     }
 
 
+def _wifi_mac() -> str | None:
+    """MAC address of this machine's Wi-Fi adapter — the bench/rig identity.
+
+    ``getmac`` is used rather than ``netsh wlan`` because the latter is gated
+    behind Windows Location permissions.
+    """
+    try:
+        out = subprocess.run(
+            ["getmac", "/v", "/fo", "csv"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout
+        for row in csv.reader(io.StringIO(out)):
+            if len(row) < 3:
+                continue
+            name = f"{row[0]} {row[1]}".lower()
+            if "wi-fi" in name or "wireless" in name:
+                mac = row[2].strip()
+                if re.fullmatch(r"([0-9A-Fa-f]{2}-){5}[0-9A-Fa-f]{2}", mac):
+                    return mac
+    except Exception:
+        pass
+    return None
+
+
+def _bench_identity_args() -> list[str]:
+    """Prefill operator and rig identity so the scripts skip those prompts.
+
+    Operator is the logged-in username; the rig/fixture ID is the Wi-Fi
+    adapter's MAC address (stable per bench PC). Anything that cannot be
+    determined is omitted, so the script prompts for it instead of recording
+    a wrong value.
+    """
+    args: list[str] = []
+    try:
+        user = getpass.getuser().strip()
+        if user:
+            args += ["--operator", user]
+    except Exception:
+        pass
+    mac = _wifi_mac()
+    if mac:
+        args += ["--fixture-id", mac]
+    return args
+
+
 def _build_procedures() -> list[dict]:
     """The procedure registry. Append entries here to add procedures."""
+    identity = _bench_identity_args()
     return [
         _sdk_module_procedure(
             "WI-00015 Single-Sensor Laser Calibration",
             "scripts.wi15_single_sensor_laser_calibration",
+            identity,
         ),
         _sdk_module_procedure(
             "WI-00015 Dual-Sensor Laser Calibration",
             "scripts.wi15_dual_sensor_laser_calibration",
+            identity,
         ),
         _sdk_module_procedure(
             "WI-00015 Safety Calibration",
             "scripts.wi15_safety_calibration",
+            identity,
         ),
     ]
 

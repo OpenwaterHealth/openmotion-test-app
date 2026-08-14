@@ -9,6 +9,7 @@ an importable ``omotion`` that carries them, with an optional checkout
 override winning the import race. No Qt objects are constructed.
 """
 
+import logging
 import os
 
 import procedures_controller as pc
@@ -73,6 +74,37 @@ def test_env_root_without_the_module_is_not_a_candidate(tmp_path, monkeypatch):
 
     assert entry["import_root"] != str(tmp_path)
     assert entry["missing"] is not None
+
+
+def test_pane_terminal_lines_are_mirrored_to_the_app_log(monkeypatch, caplog):
+    """Audit trail: everything the pane terminal records reaches the app log
+    (child output, operator answers, final verdict), plus pane-open and
+    procedure-selection events."""
+    from PyQt6.QtCore import QCoreApplication
+
+    QCoreApplication.instance() or QCoreApplication([])
+    monkeypatch.setattr(
+        pc, "_build_procedures", lambda: [{"name": "Demo Procedure"}]
+    )
+    controller = pc.ProceduresController()
+
+    with caplog.at_level(logging.INFO, logger="procedures_controller"):
+        controller.paneOpened()
+        controller.selectProcedure(0)
+        controller._emit_line("=== Demo Procedure ===")
+        controller._emit_line("[operator] left")
+        controller._emit_line(
+            "2026-08-14 12:00:00,000 - openmotion - INFO - hidden on screen"
+        )
+        controller._emit_line("procedure completed: PASS")
+
+    assert "Procedures pane opened" in caplog.text
+    assert "procedure selected: Demo Procedure" in caplog.text
+    assert "=== Demo Procedure ===" in caplog.text
+    assert "[operator] left" in caplog.text
+    # The Verbose display filter must not gate the audit log.
+    assert "hidden on screen" in caplog.text
+    assert "procedure completed: PASS" in caplog.text
 
 
 def test_registry_uses_package_modules_and_shared_output_dir(monkeypatch):

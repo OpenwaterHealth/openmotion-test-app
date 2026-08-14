@@ -26,6 +26,14 @@ the operator input field. When the prompt ends with a small option group -
 ``(left/right)``, ``(yes/no)``, ``[y/N]``, ``(single-left/single-right/dual)``
 - the pane additionally renders one answer button per option; clicking sends
 that option to the child's stdin verbatim.
+
+Audit logging: every line the pane terminal records - child output, operator
+answers (button presses and typed sends both funnel through
+``answerPrompt``), pane status messages, and the final PASS/FAIL verdict -
+is also mirrored to the application log via this module's logger, regardless
+of the Verbose display filter. Pane opening and procedure selection are
+logged too, so the app's session logfile carries a complete audit trail of
+procedure activity.
 """
 
 from __future__ import annotations
@@ -367,11 +375,20 @@ class ProceduresController(QObject):
                            notify=verboseChanged)
 
     # ---------------------------------------------------------------- slots
+    @pyqtSlot()
+    def paneOpened(self) -> None:
+        """QML calls this when the Procedures page is instantiated."""
+        logger.info("Procedures pane opened")
+
     @pyqtSlot(int)
     def selectProcedure(self, index: int) -> None:
         """Changing procedure resets the status indicator (and prompt)."""
         if self._status == STATUS_RUNNING:
             return  # UI disables the combo while running; belt and braces
+        if 0 <= index < len(self._procedures):
+            logger.info(
+                "procedure selected: %s", self._procedures[index]["name"]
+            )
         self._current_index = index
         self._set_status(STATUS_IDLE)
         self._set_prompt("")
@@ -530,8 +547,10 @@ class ProceduresController(QObject):
         self._lines.append(line)
         if len(self._lines) > MAX_LOG_LINES:
             del self._lines[: len(self._lines) - MAX_LOG_LINES]
-        # The stored log is always complete; only the display stream is
-        # gated by the Verbose checkbox. Prompts are always shown.
+        # Mirror every terminal line into the application log (audit trail:
+        # child output, operator answers, status, final verdict). The
+        # Verbose checkbox gates only the on-screen stream, never the log.
+        logger.info("%s", line)
         shown = line if force_show else _display_line(line, self._verbose)
         if shown is not None:
             self.logLine.emit(shown)

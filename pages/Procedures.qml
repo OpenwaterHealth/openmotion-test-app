@@ -9,6 +9,10 @@ Rectangle {
     color: "#1C1C1E"
     radius: 10
 
+    // The page is re-instantiated whenever the sidebar selects it, so this
+    // fires exactly when the operator opens the pane (audit logging).
+    Component.onCompleted: ProceduresController.paneOpened()
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 16

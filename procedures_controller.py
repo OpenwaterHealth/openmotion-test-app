@@ -132,20 +132,28 @@ def _candidate_import_roots() -> list[str]:
     The procedures are package modules (``omotion.scripts``), so no checkout
     is *required* - these are overrides for when a specific source tree
     should win the child's import race: OPENMOTION_SDK_ROOT first, then the
-    source of the app's own imported omotion (the PYTHONPATH dev setup). In
-    a frozen build the latter is the bundled ``_internal`` archive, which
-    carries no loose module files and drops out of the file check naturally.
+    source of the app's own imported omotion (the PYTHONPATH dev setup).
+
+    A frozen build must NEVER offer its own omotion parent: that directory
+    is the PyInstaller ``_internal`` bundle, which ships the app Python's
+    stdlib extension modules (e.g. a 3.13 ``_ctypes.pyd``) alongside any
+    loose package files - prepending it to another interpreter's PYTHONPATH
+    shadows that interpreter's own stdlib (seen live on the QA bench,
+    2026-08-14: a Python 3.14 child died with "Module use of python313.dll
+    conflicts with this version of Python"). Frozen builds rely on
+    OPENMOTION_SDK_ROOT or the interpreter's installed omotion wheel.
     """
     roots: list[str] = []
     env = os.environ.get("OPENMOTION_SDK_ROOT")
     if env and os.path.isdir(os.path.join(env, "omotion")):
         roots.append(env)
-    try:
-        import omotion
-        roots.append(os.path.dirname(os.path.dirname(
-            os.path.abspath(omotion.__file__))))
-    except Exception:
-        pass
+    if not getattr(sys, "frozen", False):
+        try:
+            import omotion
+            roots.append(os.path.dirname(os.path.dirname(
+                os.path.abspath(omotion.__file__))))
+        except Exception:
+            pass
     return roots
 
 

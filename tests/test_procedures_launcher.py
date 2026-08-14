@@ -64,6 +64,16 @@ def test_unimportable_procedures_report_both_remedies(monkeypatch):
     assert "OPENMOTION_SDK_ROOT" in entry["missing"]
 
 
+def test_frozen_app_never_offers_its_own_bundle_as_an_import_root(monkeypatch):
+    """The _internal bundle ships the app Python's stdlib .pyds; putting it
+    on another interpreter's PYTHONPATH shadows that interpreter's stdlib
+    (QA bench, 2026-08-14: python313.dll conflict inside a 3.14 child)."""
+    monkeypatch.delenv("OPENMOTION_SDK_ROOT", raising=False)
+    monkeypatch.setattr(pc.sys, "frozen", True, raising=False)
+
+    assert pc._candidate_import_roots() == []
+
+
 def test_env_root_without_the_module_is_not_a_candidate(tmp_path, monkeypatch):
     (tmp_path / "omotion").mkdir()  # a checkout too old to have the module
     monkeypatch.setenv("OPENMOTION_SDK_ROOT", str(tmp_path))

@@ -103,36 +103,11 @@ Rectangle {
 
             Item { Layout.fillWidth: true }
 
-            // ------------------------------------- operator prompt answers
             Label {
-                visible: ProceduresController.promptType !== ""
-                text: "Operator input needed:"
+                visible: ProceduresController.promptType === "text"
+                text: "Operator input needed"
                 color: "#F1C40F"
                 font.pixelSize: 14
-            }
-
-            Button {
-                visible: ProceduresController.promptType === "continue"
-                text: "Continue"
-                Material.background: "#F1C40F"
-                Material.foreground: "black"
-                onClicked: ProceduresController.answerPrompt("y")
-            }
-
-            Button {
-                visible: ProceduresController.promptType === "side"
-                text: "Left"
-                Material.background: "#F1C40F"
-                Material.foreground: "black"
-                onClicked: ProceduresController.answerPrompt("left")
-            }
-
-            Button {
-                visible: ProceduresController.promptType === "side"
-                text: "Right"
-                Material.background: "#F1C40F"
-                Material.foreground: "black"
-                onClicked: ProceduresController.answerPrompt("right")
             }
         }
 
@@ -193,6 +168,47 @@ Rectangle {
                     // the toggle applies retroactively, not just to new lines.
                     terminal.text = ProceduresController.visibleLog
                     terminal.cursorPosition = terminal.length
+                }
+                function onPromptChanged() {
+                    if (ProceduresController.promptType === "text")
+                        operatorInput.forceActiveFocus()
+                }
+            }
+        }
+
+        // ------------------------------------------------- operator input
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 8
+
+            TextField {
+                id: operatorInput
+                Layout.fillWidth: true
+                enabled: ProceduresController.running
+                placeholderText: ProceduresController.running
+                    ? "Type a response and press Enter"
+                    : "Procedure input (available while running)"
+                color: "#D5D8DC"
+                font.family: "Consolas"
+                font.pixelSize: 13
+                Material.accent: ProceduresController.promptType === "text"
+                    ? "#F1C40F" : "#27AE60"
+                onAccepted: {
+                    ProceduresController.answerPrompt(text)
+                    clear()
+                }
+            }
+
+            Button {
+                text: "Send"
+                enabled: ProceduresController.running
+                Material.background: ProceduresController.promptType === "text"
+                    ? "#F1C40F" : "#2C2C2E"
+                Material.foreground: ProceduresController.promptType === "text"
+                    ? "black" : "white"
+                onClicked: {
+                    ProceduresController.answerPrompt(operatorInput.text)
+                    operatorInput.clear()
                 }
             }
         }

@@ -1,10 +1,16 @@
-"""Procedures pane backend — runs guided WI procedures as subprocesses.
+"""Procedures pane backend — runs operator procedures as subprocesses.
 
-Design: a procedure is an external script (today: the SDK's guided WI-00015
-runner) executed as a child process with its stdout piped into the pane's
-terminal and its interactive prompts answered through the UI. Running out of
-process keeps the hardware-validated runner byte-identical to what a headless
-factory rig executes, and gives Stop a hard boundary.
+Design: a procedure is an external command (today: the SDK's WI-00015
+calibration scripts) executed as a child process with its stdout piped into
+the pane's terminal and its interactive prompts answered through a free-text
+input that writes to the child's stdin. Running out of process keeps each
+procedure byte-identical to what a headless bench run executes, and gives
+Stop a hard boundary.
+
+Adding a procedure means appending one registry entry in ``_build_procedures``
+(name, program, args, working directory) — the pane itself is
+procedure-agnostic: any script that prompts via ``input()`` and exits 0 on
+pass / nonzero otherwise works unchanged.
 
 Device handling: the child needs exclusive access to the console COM port and
 the sensors' USB interfaces, so Start releases the app's device handles
@@ -13,15 +19,17 @@ safety backstop, after any stop/kill the console is reconnected and issued a
 ``stop_trigger`` — a killed child cannot run its own cleanup, and the laser
 must never be left firing.
 
-Prompt protocol (matches scripts/wi15_guided.py in openmotion-sdk):
-  - a line containing "[y to continue"  -> Continue button ("y")
-  - a line containing "[left/right]"    -> Left / Right buttons
+Prompt detection: ``input()`` prompts arrive on stdout without a trailing
+newline. An unterminated tail that ends with ": " is flushed and shown
+immediately; any other tail is flushed after a short quiet interval. Both arm
+the operator input field.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -50,81 +58,93 @@ STATUS_FAIL = "fail"
 
 MAX_LOG_LINES = 5000
 
-# Non-verbose ("factory") mode shows only operator-facing lines: the guided
-# runner's instructions and gates, phase banners, and outcomes. Everything
-# else (measurements, register dumps, engine chatter) is technician detail
-# behind the Verbose checkbox. The full log is always retained - the filter
-# is display-only and applies retroactively when toggled.
-_INSTRUCTION_PREFIXES = (
-    ">>>",            # operator instructions from the guided runner
-    "===",            # phase banners
-    "!",              # errors / warnings raised by this controller
-    "[operator]",     # answers echoed back
-    "procedure ",     # start/stop/completion lines
-    "WI-00015",       # run header
-    "report:",        # emitted PDF paths
-    "outcome:",       # phase outcomes
-    "persistence:",   # power-cycle verification verdict
-    "NEXT:",          # flow hints
+# How long an unterminated stdout tail may sit before it is treated as an
+# interactive prompt and shown. Ordinary output is line-buffered
+# (PYTHONUNBUFFERED), so only prompts linger without a newline.
+PROMPT_QUIET_MS = 400
+
+# Non-verbose ("factory") mode shows only operator-facing lines: prompts,
+# echoed answers, this controller's own markers, and outcome/status lines.
+# The full log is always retained - the filter is display-only and applies
+# retroactively when toggled.
+_OPERATOR_LINE = re.compile(
+    r"(?i)\b(pass|passed|fail|failed|error|warning|status|reason|category|"
+    r"report|evidence|canceled|cancelled|confirm|ncr)\b"
 )
+_ALWAYS_SHOW_PREFIXES = ("===", "!", "[operator]", "procedure ")
 
 
-def _is_operator_line(line: str) -> bool:
-    s = line.strip()
-    return (s.startswith(_INSTRUCTION_PREFIXES)
-            or "PASSED" in s or "FAILED" in s or "REFUSED" in s)
-
-
-_SIMPLE_TAG = "@@SIMPLE "
-
-
-def _display_line(line: str, verbose: bool, state: dict) -> str | None:
-    """What (if anything) to show for a raw log line.
-
-    ``state`` carries ``simple_active`` between lines: when the guided
-    runner emits an @@SIMPLE plain-language instruction, factory mode shows
-    it INSTEAD of the detailed ``>>>`` prompt that follows. CLI-only hint
-    lines ("[y to continue...]", "[left/right]") are never shown in factory
-    mode - the pane's buttons replace them.
-    """
-    s = line.strip()
-    if s.startswith(_SIMPLE_TAG):
-        if verbose:
-            return None  # verbose users read the detailed prompt instead
-        state["simple_active"] = True
-        return s[len(_SIMPLE_TAG):]
+def _display_line(line: str, verbose: bool) -> str | None:
+    """What (if anything) to show for a raw log line."""
     if verbose:
         return line
-    if s.startswith("===") or s.startswith("[operator]"):
-        state["simple_active"] = False
+    s = line.strip()
+    if s.startswith(_ALWAYS_SHOW_PREFIXES) or _OPERATOR_LINE.search(s):
         return line
-    if s.startswith(">>>"):
-        return None if state.get("simple_active") else line
-    if "[y to continue" in s or "[left/right]" in s:
-        return None
-    return line if _is_operator_line(line) else None
+    return None
 
 
-def _find_wi15_guided() -> str | None:
-    """Locate the SDK's guided WI-00015 runner.
+def _sdk_root() -> str | None:
+    """Locate the openmotion-sdk checkout the procedure scripts run from.
 
-    Resolution order: OPENMOTION_WI15_GUIDED env var, then
-    <sdk-repo>/scripts/wi15_guided.py relative to the imported omotion
-    package (works for PYTHONPATH / editable installs; wheels do not ship
-    scripts/).
+    Resolution order: OPENMOTION_SDK_ROOT env var (a repo root directory),
+    then the parent of the imported omotion package (works for PYTHONPATH /
+    editable installs; wheels do not ship scripts/).
     """
-    env = os.environ.get("OPENMOTION_WI15_GUIDED")
-    if env and os.path.isfile(env):
+    env = os.environ.get("OPENMOTION_SDK_ROOT")
+    if env and os.path.isdir(env):
         return env
     try:
         import omotion
-        root = os.path.dirname(os.path.dirname(os.path.abspath(omotion.__file__)))
-        cand = os.path.join(root, "scripts", "wi15_guided.py")
-        if os.path.isfile(cand):
-            return cand
+        return os.path.dirname(os.path.dirname(os.path.abspath(omotion.__file__)))
     except Exception:
-        pass
-    return None
+        return None
+
+
+def _sdk_module_procedure(name: str, module: str,
+                          args: list[str] | None = None) -> dict:
+    """Registry entry for a ``python -m`` procedure inside the SDK checkout.
+
+    The module form with the checkout as working directory guarantees the
+    checkout's ``omotion`` package is the one the procedure imports (see
+    scripts/WI15_PROCEDURES.md in the SDK).
+    """
+    root = _sdk_root()
+    module_file = None
+    if root:
+        candidate = os.path.join(root, *module.split(".")) + ".py"
+        if os.path.isfile(candidate):
+            module_file = candidate
+    return {
+        "name": name,
+        "program": sys.executable,
+        "args": ["-u", "-m", module, *(args or [])],
+        "cwd": root,
+        "missing": (
+            None if module_file else
+            f"{module}.py not found under the SDK checkout "
+            f"({root or 'no checkout located'}) - set OPENMOTION_SDK_ROOT to "
+            "an openmotion-sdk checkout that contains it"
+        ),
+    }
+
+
+def _build_procedures() -> list[dict]:
+    """The procedure registry. Append entries here to add procedures."""
+    return [
+        _sdk_module_procedure(
+            "WI-00015 Single-Sensor Laser Calibration",
+            "scripts.wi15_single_sensor_laser_calibration",
+        ),
+        _sdk_module_procedure(
+            "WI-00015 Dual-Sensor Laser Calibration",
+            "scripts.wi15_dual_sensor_laser_calibration",
+        ),
+        _sdk_module_procedure(
+            "WI-00015 Safety Calibration",
+            "scripts.wi15_safety_calibration",
+        ),
+    ]
 
 
 class ProceduresController(QObject):
@@ -140,7 +160,7 @@ class ProceduresController(QObject):
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._status = STATUS_IDLE
-        self._prompt = ""          # "", "continue", "side"
+        self._prompt = ""          # "" or "text"
         self._lines: list[str] = []
         self._linebuf = ""
         self._process: QProcess | None = None
@@ -149,36 +169,12 @@ class ProceduresController(QObject):
         self._settings = QSettings()
         self._verbose = self._settings.value(
             "procedures/verbose", True, type=bool)
-        self._filter_state: dict = {}
         self._releaseFinished.connect(self._spawn_procedure)
-
-        # Laser tuning (WI sections 4.1-4.5) and BFI/BVI calibration (4.6)
-        # are deliberately separate procedures, mirroring the SDK-side
-        # segmentation of the two flows.
-        script = _find_wi15_guided()
-        self._procedures = [
-            {
-                "name": "WI-00015 Laser Tuning (4.1-4.5)",
-                "script": script,
-                "args": ["--fresh", "--skip-calibration"],
-            },
-            {
-                "name": "WI-00015 Laser Tuning - dev window 100-200 uJ",
-                "script": script,
-                "args": ["--fresh", "--skip-calibration",
-                         "--window", "100", "200"],
-            },
-            {
-                "name": "WI-00015 Laser Calibration (4.6)",
-                "script": script,
-                "args": ["--fresh", "--skip-tuning"],
-            },
-            {
-                "name": "WI-00015 Laser Calibration - dev, dim laser OK",
-                "script": script,
-                "args": ["--fresh", "--skip-tuning", "--bench-thresholds"],
-            },
-        ]
+        self._prompt_timer = QTimer(self)
+        self._prompt_timer.setSingleShot(True)
+        self._prompt_timer.setInterval(PROMPT_QUIET_MS)
+        self._prompt_timer.timeout.connect(self._flush_prompt_tail)
+        self._procedures = _build_procedures()
 
     # ------------------------------------------------------------------ QML
     @pyqtProperty("QVariantList", constant=True)
@@ -204,10 +200,9 @@ class ProceduresController(QObject):
     @pyqtProperty(str, constant=False)
     def visibleLog(self) -> str:
         """The log as it should appear under the current verbosity."""
-        state: dict = {}
         out = []
         for l in self._lines:
-            d = _display_line(l, self._verbose, state)
+            d = _display_line(l, self._verbose)
             if d is not None:
                 out.append(d)
         return "\n".join(out)
@@ -243,20 +238,16 @@ class ProceduresController(QObject):
             return
         proc = self._procedures[index]
         self._current_index = index
-        if not proc["script"]:
-            self._log("! cannot locate the guided runner script "
-                      "(set OPENMOTION_WI15_GUIDED or run the app against an "
-                      "SDK checkout that contains scripts/wi15_guided.py)")
+        if proc.get("missing"):
+            self._log(f"! cannot start: {proc['missing']}")
             self._set_status(STATUS_FAIL)
             return
 
         self._lines.clear()
         self._linebuf = ""
-        self._filter_state = {}
         self.logCleared.emit()
         self._stop_requested = False
         self._log(f"=== {proc['name']} ===")
-        self._log(f"script: {proc['script']}")
         self._set_status(STATUS_RUNNING)
 
         # Device release must NOT run on the Qt main thread: the SDK's USB
@@ -306,27 +297,27 @@ class ProceduresController(QObject):
             QProcess.ProcessChannelMode.MergedChannels)
         env = QProcessEnvironment.systemEnvironment()
         env.insert("PYTHONUNBUFFERED", "1")
-        # Emoji in the @@SIMPLE operator lines require UTF-8 on the child's
-        # pipes; the Windows default (cp1252) would crash the child's print.
+        # The child's pipes must be UTF-8; the Windows default (cp1252) can
+        # crash a child print that carries non-ASCII output.
         env.insert("PYTHONUTF8", "1")
-        try:
-            import omotion
-            sdk_root = os.path.dirname(
-                os.path.dirname(os.path.abspath(omotion.__file__)))
+        # The procedure's checkout wins the import race: its root goes ahead
+        # of any inherited PYTHONPATH (the working directory itself is first
+        # on sys.path for -m children).
+        if proc.get("cwd"):
+            self._process.setWorkingDirectory(proc["cwd"])
             prev = env.value("PYTHONPATH", "")
             env.insert("PYTHONPATH",
-                       sdk_root + (os.pathsep + prev if prev else ""))
-        except Exception:
-            pass
+                       proc["cwd"] + (os.pathsep + prev if prev else ""))
         self._process.setProcessEnvironment(env)
         self._process.readyReadStandardOutput.connect(self._on_stdout)
         self._process.finished.connect(self._on_finished)
         self._process.errorOccurred.connect(self._on_error)
 
-        args = ["-u", proc["script"], *proc["args"]]
-        self._log(f"launching: {sys.executable} {' '.join(args)}")
+        self._log(f"launching: {proc['program']} {' '.join(proc['args'])}")
+        if proc.get("cwd"):
+            self._log(f"working directory: {proc['cwd']}")
         self._set_status(STATUS_RUNNING)
-        self._process.start(sys.executable, args)
+        self._process.start(proc["program"], proc["args"])
 
     @pyqtSlot()
     def stopProcedure(self) -> None:
@@ -359,25 +350,32 @@ class ProceduresController(QObject):
         while "\n" in self._linebuf:
             line, self._linebuf = self._linebuf.split("\n", 1)
             self._emit_line(line.rstrip("\r"))
-        # input() prompts arrive without a trailing newline - flush them so
-        # the operator can see what is being asked, and arm the answer UI.
-        tail = self._linebuf
-        if "[y to continue" in tail:
-            self._emit_line(tail)
-            self._linebuf = ""
-            self._set_prompt("continue")
-        elif "[left/right]" in tail:
-            self._emit_line(tail)
-            self._linebuf = ""
-            self._set_prompt("side")
+        # input() prompts arrive without a trailing newline. A tail ending
+        # with ": " is certainly a prompt - flush it at once. Anything else
+        # unterminated is flushed after a quiet interval, so unusual prompt
+        # shapes still surface instead of leaving the pane looking hung.
+        self._prompt_timer.stop()
+        if not self._linebuf:
+            return
+        if self._linebuf.endswith(": "):
+            self._flush_prompt_tail()
+        else:
+            self._prompt_timer.start()
 
-    def _emit_line(self, line: str) -> None:
+    def _flush_prompt_tail(self) -> None:
+        if not self._linebuf or self._process is None:
+            return
+        self._emit_line(self._linebuf, force_show=True)
+        self._linebuf = ""
+        self._set_prompt("text")
+
+    def _emit_line(self, line: str, force_show: bool = False) -> None:
         self._lines.append(line)
         if len(self._lines) > MAX_LOG_LINES:
             del self._lines[: len(self._lines) - MAX_LOG_LINES]
         # The stored log is always complete; only the display stream is
-        # gated by the Verbose checkbox / @@SIMPLE protocol.
-        shown = _display_line(line, self._verbose, self._filter_state)
+        # gated by the Verbose checkbox. Prompts are always shown.
+        shown = line if force_show else _display_line(line, self._verbose)
         if shown is not None:
             self.logLine.emit(shown)
 
@@ -388,6 +386,7 @@ class ProceduresController(QObject):
         self._log(f"! process error: {err}")
 
     def _on_finished(self, exit_code: int, exit_status) -> None:
+        self._prompt_timer.stop()
         if self._linebuf:
             self._emit_line(self._linebuf)
             self._linebuf = ""

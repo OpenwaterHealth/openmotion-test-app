@@ -36,6 +36,7 @@ import io
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -128,6 +129,18 @@ def _sdk_root() -> str | None:
         return None
 
 
+def _python_interpreter() -> str | None:
+    """The Python interpreter that runs procedures.
+
+    In a frozen (PyInstaller) build ``sys.executable`` is the app exe
+    itself - spawning it would relaunch the app, not the procedure - so a
+    real interpreter is resolved from PATH instead.
+    """
+    if not getattr(sys, "frozen", False):
+        return sys.executable
+    return shutil.which("python") or shutil.which("py")
+
+
 def _sdk_module_procedure(name: str, module: str,
                           args: list[str] | None = None) -> dict:
     """Registry entry for a ``python -m`` procedure inside the SDK checkout.
@@ -142,17 +155,23 @@ def _sdk_module_procedure(name: str, module: str,
         candidate = os.path.join(root, *module.split(".")) + ".py"
         if os.path.isfile(candidate):
             module_file = candidate
+    program = _python_interpreter()
+    if program is None:
+        missing = ("no Python interpreter found on PATH - procedures run "
+                   "out-of-process and need one installed")
+    elif module_file is None:
+        missing = (f"{module}.py not found under the SDK checkout "
+                   f"({root or 'no checkout located'}) - set "
+                   "OPENMOTION_SDK_ROOT to an openmotion-sdk checkout "
+                   "that contains it")
+    else:
+        missing = None
     return {
         "name": name,
-        "program": sys.executable,
+        "program": program,
         "args": ["-u", "-m", module, *(args or [])],
         "cwd": root,
-        "missing": (
-            None if module_file else
-            f"{module}.py not found under the SDK checkout "
-            f"({root or 'no checkout located'}) - set OPENMOTION_SDK_ROOT to "
-            "an openmotion-sdk checkout that contains it"
-        ),
+        "missing": missing,
     }
 
 

@@ -37,6 +37,21 @@ datas   += om_datas
 binaries += om_bins
 hidden  += om_hidden
 
+# The Procedures pane runs omotion.scripts.* modules by re-executing this
+# bundle (--run-procedure), so they must be IN the bundle. They are never
+# imported statically — only ever by name at runtime — so name them
+# explicitly rather than trusting analysis to reach them. Missing procedures
+# fail at the bench, not at build time; assert instead.
+procedure_modules = collect_submodules("omotion.scripts")
+if not any(m.startswith("omotion.scripts.wi15") for m in procedure_modules):
+    raise SystemExit(
+        "[spec] omotion.scripts carries no wi15 procedure modules — the "
+        "installed openmotion-sdk predates them. Install an SDK that ships "
+        "them or the packaged Procedures pane will have nothing to run."
+    )
+hidden += procedure_modules
+print(f"[spec] Bundling {len(procedure_modules)} omotion.scripts module(s)")
+
 # Runtime deps of the PYTHONPATH-sourced omotion that static analysis can
 # miss (crcmod: wire-protocol CRC, found missing in the 2026-08-14 build).
 for _extra in ("crcmod",):

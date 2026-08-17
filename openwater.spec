@@ -60,6 +60,21 @@ for _extra in ("crcmod",):
     binaries += _e_bins
     hidden   += _e_hidden
 
+# pywin32: the Ophir meter layer (omotion.calibration.laser_hardware) does a
+# deferred "import win32com.client", so nothing imports it statically. A build
+# without it ships an exe whose WI-00015 procedures die at the bench with
+# "No module named 'win32com'" (found in the 2026-08-17 factory install).
+try:
+    import win32com  # noqa: F401 — build-environment probe only
+except ImportError:
+    raise SystemExit(
+        "[spec] pywin32 is missing from the build environment — the packaged "
+        "Procedures pane could not drive the Ophir meter. "
+        "pip install -r requirements.txt and rebuild."
+    )
+hidden += collect_submodules("win32com")
+hidden += ["pythoncom", "pywintypes"]
+
 # --- force include pyserial / pyusb dependency ---
 hidden += [
     "serial",

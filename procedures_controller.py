@@ -28,13 +28,19 @@ safety backstop, after any stop/kill the console is reconnected and issued a
 ``stop_trigger`` — a killed child cannot run its own cleanup, and the laser
 must never be left firing.
 
-Prompt detection: ``input()`` prompts arrive on stdout without a trailing
-newline. An unterminated tail that ends with ": " is flushed and shown
-immediately; any other tail is flushed after a short quiet interval. Both arm
-the operator input field. When the prompt ends with a small option group -
-``(left/right)``, ``(yes/no)``, ``[y/N]``, ``(single-left/single-right/dual)``
-- the pane additionally renders one answer button per option; clicking sends
-that option to the child's stdin verbatim.
+Prompt detection: when the app's omotion ships ``omotion.scripts.
+framed_prompts`` (SDK #241), procedures are launched through it, so every
+``input()`` prompt arrives as one complete sentinel-tagged JSON line and is
+recognized exactly; an unterminated stdout tail is then just partial output,
+flushed after a quiet interval without arming the operator input. With an
+older omotion the pane falls back to heuristics: ``input()`` prompts arrive
+on stdout without a trailing newline, so an unterminated tail ending with
+": " is flushed and shown immediately, and any other tail is flushed after a
+short quiet interval - both arming the input field. Either way, a prompt
+ending with a small option group - ``(left/right)``, ``(yes/no)``,
+``[y/N]``, ``(single-left/single-right/dual)`` - additionally renders one
+answer button per option; clicking sends that option to the child's stdin
+verbatim.
 
 Audit logging: every line the pane terminal records - child output, operator
 answers (button presses and typed sends both funnel through
@@ -51,6 +57,7 @@ import csv
 import getpass
 import importlib.util
 import io
+import json
 import logging
 import os
 import re
@@ -186,6 +193,38 @@ def _omotion_location() -> str:
         return "unavailable"
 
 
+# Host-facing runner shipped with the procedures (SDK #241): executes a
+# procedure module with every ``input()`` prompt announced as one complete
+# sentinel-tagged JSON stdout line, so the pane recognizes prompts exactly
+# instead of sniffing unterminated output tails.
+_FRAMED_RUNNER = "omotion.scripts.framed_prompts"
+
+
+def _framed_sentinel() -> str | None:
+    """The prompt-frame sentinel, if this omotion ships the framed runner.
+
+    The import doubles as the availability probe, on the same argument as
+    ``_has_module``: both launch shapes give the child exactly this process's
+    imports, so what this process can import is what the child will run.
+    """
+    try:
+        from omotion.scripts.framed_prompts import PROMPT_SENTINEL
+    except ImportError:
+        return None
+    return PROMPT_SENTINEL
+
+
+def _framed_prompt(line: str, sentinel: str | None) -> str | None:
+    """The prompt text if ``line`` is a well-formed prompt frame, else None."""
+    if not sentinel or not line.startswith(sentinel):
+        return None
+    try:
+        prompt = json.loads(line[len(sentinel):])["prompt"]
+    except (ValueError, TypeError, KeyError):
+        return None
+    return prompt if isinstance(prompt, str) else None
+
+
 def _sdk_module_procedure(name: str, module: str,
                           args: list[str] | None = None) -> dict:
     """Registry entry for an SDK procedure module.
@@ -203,14 +242,21 @@ def _sdk_module_procedure(name: str, module: str,
     other checkout's procedures would produce calibration evidence whose
     provenance the app cannot vouch for; to run a different copy, run it from
     the SDK directly.
+
+    When the omotion also ships the framed runner (``_FRAMED_RUNNER``), the
+    module is launched through it so prompts arrive framed; otherwise the
+    module is launched directly and the pane falls back to prompt heuristics.
+    The entry's ``sentinel`` records which (the frame marker, or None).
     """
     runner = _bundled_procedure_runner()
+    sentinel = _framed_sentinel()
+    target = [_FRAMED_RUNNER, module] if sentinel else [module]
     if runner is not None:
-        program, argv = runner, [RUN_PROCEDURE_FLAG, module]
+        program, argv = runner, [RUN_PROCEDURE_FLAG, *target]
         source = "bundled with this build of the app"
         remedy = "install a release built against an SDK that ships it"
     else:
-        program, argv = sys.executable, ["-u", "-m", module]
+        program, argv = sys.executable, ["-u", "-m", *target]
         source = _omotion_location()
         remedy = (f"install an openmotion-sdk that ships {module} into "
                   f"{program}")
@@ -220,6 +266,7 @@ def _sdk_module_procedure(name: str, module: str,
         "args": [*argv, *(args or [])],
         "cwd": _PROCEDURE_OUTPUT_ROOT,
         "source": source,
+        "sentinel": sentinel,
         "missing": (None if _has_module(module)
                     else f"{module} is not available - {remedy}"),
     }
@@ -318,6 +365,7 @@ class ProceduresController(QObject):
         self._lines: list[str] = []
         self._linebuf = ""
         self._process: QProcess | None = None
+        self._sentinel: str | None = None  # the running child's frame marker
         self._stop_requested = False
         self._current_index = 0
         self._settings = QSettings()
@@ -485,9 +533,13 @@ class ProceduresController(QObject):
         self._process.finished.connect(self._on_finished)
         self._process.errorOccurred.connect(self._on_error)
 
+        self._sentinel = proc.get("sentinel")
         self._log(f"launching: {proc['program']} {' '.join(proc['args'])}")
         self._log("procedure source: "
                   + (proc.get("source") or "interpreter's installed package"))
+        self._log("prompt framing: "
+                  + ("structured" if self._sentinel
+                     else "heuristic (this omotion has no framed runner)"))
         self._set_status(STATUS_RUNNING)
         self._process.start(proc["program"], proc["args"])
 
@@ -521,15 +573,23 @@ class ProceduresController(QObject):
         self._linebuf += data
         while "\n" in self._linebuf:
             line, self._linebuf = self._linebuf.split("\n", 1)
-            self._emit_line(line.rstrip("\r"))
-        # input() prompts arrive without a trailing newline. A tail ending
-        # with ": " is certainly a prompt - flush it at once. Anything else
-        # unterminated is flushed after a quiet interval, so unusual prompt
-        # shapes still surface instead of leaving the pane looking hung.
+            line = line.rstrip("\r")
+            prompt = _framed_prompt(line, self._sentinel)
+            if prompt is not None:
+                self._show_prompt(prompt)
+            else:
+                self._emit_line(line)
+        # Heuristic children: input() prompts arrive without a trailing
+        # newline, so a tail ending with ": " is certainly a prompt - flush
+        # it at once - and anything else unterminated is flushed after a
+        # quiet interval, so unusual prompt shapes still surface instead of
+        # leaving the pane looking hung. A framed child's prompts are
+        # complete frame lines, never tails, so its quiet flush is display
+        # only and must not arm the operator input.
         self._prompt_timer.stop()
         if not self._linebuf:
             return
-        if self._linebuf.endswith(": "):
+        if self._sentinel is None and self._linebuf.endswith(": "):
             self._flush_prompt_tail()
         else:
             self._prompt_timer.start()
@@ -537,9 +597,15 @@ class ProceduresController(QObject):
     def _flush_prompt_tail(self) -> None:
         if not self._linebuf or self._process is None:
             return
-        prompt = self._linebuf
-        self._emit_line(prompt, force_show=True)
+        tail = self._linebuf
         self._linebuf = ""
+        if self._sentinel is not None:
+            self._emit_line(tail)  # partial output of a framed child
+            return
+        self._show_prompt(tail)
+
+    def _show_prompt(self, prompt: str) -> None:
+        self._emit_line(prompt, force_show=True)
         self._set_prompt("text", options=_prompt_options(prompt))
 
     def _emit_line(self, line: str, force_show: bool = False) -> None:

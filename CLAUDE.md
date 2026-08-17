@@ -46,10 +46,16 @@ python -m PyInstaller -y openwater.spec  # package .exe
 ## Procedures pane (WI-00015)
 
 Procedures are `omotion.scripts.wi15_*` modules run as a **child process**, so
-each run is byte-identical to a headless bench run and Stop is a hard kill. The
-pane releases the app's console/sensor handles for the child and reacquires them
-after, issuing a `stop_trigger` backstop so a killed procedure can't leave the
-laser firing.
+each run executes exactly the procedure code a headless bench run executes and
+Stop is a hard kill. The pane launches them through
+`omotion.scripts.framed_prompts` (SDK #241) when the app's omotion ships it —
+a host-facing runner that drives the same `main()` with an `input_func` that
+announces each prompt as one complete sentinel-tagged JSON stdout line, so the
+pane recognizes prompts exactly and never arms the operator input on partial
+output. With an older omotion the pane falls back to heuristic tail-sniffing
+(": " suffix / quiet timer). The pane releases the app's console/sensor
+handles for the child and reacquires them after, issuing a `stop_trigger`
+backstop so a killed procedure can't leave the laser firing.
 
 **The app runs only the procedures in the omotion it was built with.** There is
 deliberately no override — no env var, no `PYTHONPATH`, no checkout selection.

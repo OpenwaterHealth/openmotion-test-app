@@ -49,6 +49,13 @@ if not any(m.startswith("omotion.scripts.wi15") for m in procedure_modules):
         "installed openmotion-sdk predates them. Install an SDK that ships "
         "them or the packaged Procedures pane will have nothing to run."
     )
+if "omotion.scripts.framed_prompts" not in procedure_modules:
+    raise SystemExit(
+        "[spec] omotion.scripts.framed_prompts is missing — the installed "
+        "openmotion-sdk predates structured prompt framing (SDK #241), so a "
+        "packaged Procedures pane would fall back to prompt sniffing. "
+        "Install an SDK that ships it."
+    )
 hidden += procedure_modules
 print(f"[spec] Bundling {len(procedure_modules)} omotion.scripts module(s)")
 

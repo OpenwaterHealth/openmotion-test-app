@@ -33,6 +33,8 @@ def _sdk_checkout(tmp_path):
 def test_source_run_uses_the_apps_own_interpreter(monkeypatch):
     monkeypatch.delattr(pc.sys, "frozen", raising=False)
     monkeypatch.setattr(pc, "_has_module", lambda module: True)
+    # framed-runner launch shapes have their own tests; pin the plain shape
+    monkeypatch.setattr(pc, "_framed_sentinel", lambda: None)
 
     entry = pc._sdk_module_procedure("name", MODULE)
 
@@ -67,6 +69,7 @@ def test_release_runs_the_procedure_out_of_its_own_bundle(tmp_path, monkeypatch)
     """No Python and no SDK on the bench: the app is its own runner."""
     exe = _frozen_build(tmp_path, monkeypatch)
     monkeypatch.setattr(pc, "_has_module", lambda module: True)
+    monkeypatch.setattr(pc, "_framed_sentinel", lambda: None)
 
     entry = pc._sdk_module_procedure("name", MODULE, ["--output-dir", "out"])
 
@@ -113,6 +116,7 @@ def test_a_checkout_on_the_bench_cannot_displace_the_bundled_procedure(
     exe = _frozen_build(tmp_path, monkeypatch, console_twin=True)
     monkeypatch.setenv("OPENMOTION_SDK_ROOT", str(root))
     monkeypatch.setattr(pc, "_has_module", lambda module: True)
+    monkeypatch.setattr(pc, "_framed_sentinel", lambda: None)
 
     entry = pc._sdk_module_procedure("name", MODULE)
 
@@ -230,6 +234,7 @@ def test_registry_uses_package_modules_and_shared_output_dir(monkeypatch):
                         lambda: ["--operator", "op"])
     monkeypatch.delattr(pc.sys, "frozen", raising=False)
     monkeypatch.setattr(pc, "_has_module", lambda module: True)
+    monkeypatch.setattr(pc, "_framed_sentinel", lambda: None)
 
     entries = pc._build_procedures()
 

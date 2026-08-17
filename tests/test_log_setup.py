@@ -109,3 +109,84 @@ def test_banner_and_log_lines_reach_the_file(tmp_path, monkeypatch, clean_root_l
 
     assert "Open-Motion Test App 9.9.9 starting" in contents
     assert "hello from a module logger" in contents
+
+
+def _restore_hooks():
+    import sys
+    import threading
+    saved = (sys.excepthook, threading.excepthook)
+
+    def undo():
+        sys.excepthook, threading.excepthook = saved
+    return undo
+
+
+def test_an_unhandled_exception_reaches_the_log(tmp_path, monkeypatch,
+                                                clean_root_logger):
+    """PyQt reports a slot's exception through sys.excepthook and then aborts,
+    so this is the only chance to record it - and in a windowed build stderr
+    is os.devnull, so the log is the only place it can go."""
+    import sys
+    from utils.log_setup import configure_app_logging
+
+    monkeypatch.chdir(tmp_path)
+    undo = _restore_hooks()
+    try:
+        path = configure_app_logging(debug=False)
+        try:
+            raise RuntimeError("libusb teardown went sideways")
+        except RuntimeError:
+            sys.excepthook(*sys.exc_info())
+    finally:
+        undo()
+
+    contents = Path(path).read_text(encoding="utf-8")
+    assert "libusb teardown went sideways" in contents
+    assert "Unhandled exception on main thread" in contents
+    assert "Traceback" in contents
+
+
+def test_a_worker_threads_exception_reaches_the_log(tmp_path, monkeypatch,
+                                                    clean_root_logger):
+    """The pane releases device handles on a worker thread; an exception there
+    would otherwise vanish."""
+    import threading
+    from utils.log_setup import configure_app_logging
+
+    monkeypatch.chdir(tmp_path)
+    undo = _restore_hooks()
+    try:
+        path = configure_app_logging(debug=False)
+
+        def boom():
+            raise ValueError("release worker died")
+
+        worker = threading.Thread(target=boom, name="procedures-release")
+        worker.start()
+        worker.join()
+    finally:
+        undo()
+
+    contents = Path(path).read_text(encoding="utf-8")
+    assert "release worker died" in contents
+    assert "procedures-release" in contents
+
+
+def test_faulthandler_writes_beside_the_app_log(tmp_path, monkeypatch,
+                                                clean_root_logger):
+    """Native faults (a libusb teardown race) bypass every Python hook;
+    faulthandler is what leaves a Python stack behind for those."""
+    import faulthandler
+    from utils.log_setup import configure_app_logging
+
+    monkeypatch.chdir(tmp_path)
+    undo = _restore_hooks()
+    try:
+        path = configure_app_logging(debug=False)
+    finally:
+        undo()
+
+    assert faulthandler.is_enabled()
+    fault_path = Path(path).with_name(Path(path).stem + "-fault.log")
+    assert fault_path.is_file()
+    assert "Fault dumps:" in Path(path).read_text(encoding="utf-8")

@@ -14,15 +14,31 @@ if sys.stdout is None:
 if sys.stderr is None:
     sys.stderr = open(os.devnull, "w", encoding="utf-8", buffering=1)
 
-from PyQt6.QtGui import QGuiApplication, QIcon
-from PyQt6.QtQml import QQmlApplicationEngine, qmlRegisterSingletonInstance
+# The Procedures pane runs a procedure by re-executing this same program with
+# --run-procedure <module> [args...], so a release runs its own bundled
+# procedure code on its own bundled Python. This must happen before the
+# imports below: importing motion_singleton constructs a MOTIONInterface and
+# would grab the device handles the parent app just released for this child.
+from utils.procedure_runner import maybe_run_procedure  # noqa: E402
 
-from motion_connector import MOTIONConnector
-from motion_singleton import motion_interface
-from procedures_controller import ProceduresController
-from version import get_version
-from utils.log_setup import configure_app_logging
-from utils.warranty_ack import APPLICATION, ORGANIZATION, WarrantyAck
+maybe_run_procedure()
+
+from PyQt6.QtGui import QGuiApplication, QIcon  # noqa: E402
+from PyQt6.QtQml import (  # noqa: E402
+    QQmlApplicationEngine,
+    qmlRegisterSingletonInstance,
+)
+
+from motion_connector import MOTIONConnector  # noqa: E402
+from motion_singleton import motion_interface  # noqa: E402
+from procedures_controller import ProceduresController  # noqa: E402
+from version import get_version  # noqa: E402
+from utils.log_setup import configure_app_logging  # noqa: E402
+from utils.warranty_ack import (  # noqa: E402
+    APPLICATION,
+    ORGANIZATION,
+    WarrantyAck,
+)
 
 # set PYTHONPATH=%cd%\..\Open-Motion-PyLib;%PYTHONPATH%
 # python main.py

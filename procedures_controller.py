@@ -12,12 +12,14 @@ Adding a procedure means appending one registry entry in ``_build_procedures``
 procedure-agnostic: any script that prompts via ``input()`` and exits 0 on
 pass / nonzero otherwise works unchanged.
 
-Where the child comes from: a released build runs the procedure out of its
-own bundle by re-executing itself (``--run-procedure``, see
-``utils/procedure_runner.py``), so a factory bench needs no Python and no SDK
-install and the app version pins the procedure version. Running from source —
-or with OPENMOTION_SDK_ROOT pointed at a checkout — launches ``python -m
-<module>`` against that source instead. See ``_sdk_module_procedure``.
+Where the child comes from: **the app runs only the procedures in the omotion
+it was built with, and cannot be pointed at another copy.** A released build
+re-executes itself (``--run-procedure``, see ``utils/procedure_runner.py``)
+and imports from its own bundle; a source run launches ``python -m <module>``
+under the app's own interpreter. Nothing on the bench — no env var, no
+PYTHONPATH, no stray checkout — can substitute different procedure code into
+a release, so the app version pins the procedure version for the evidence a
+run produces. To run a different copy, run it from the SDK directly.
 
 Device handling: the child needs exclusive access to the console COM port and
 the sensors' USB interfaces, so Start releases the app's device handles
@@ -52,7 +54,6 @@ import io
 import logging
 import os
 import re
-import shutil
 import subprocess
 import sys
 import threading
@@ -135,77 +136,6 @@ _PROCEDURE_OUTPUT_ROOT = os.path.join(
     os.path.expanduser("~"), "Documents", "OpenMotion")
 
 
-def _candidate_import_roots() -> list[str]:
-    """Checkout roots whose ``omotion`` could serve the child, best first.
-
-    The procedures are package modules (``omotion.scripts``), so no checkout
-    is *required* - these are overrides for when a specific source tree
-    should win the child's import race: OPENMOTION_SDK_ROOT first, then the
-    source of the app's own imported omotion (the PYTHONPATH dev setup).
-
-    A frozen build must NEVER offer its own omotion parent: that directory
-    is the PyInstaller ``_internal`` bundle, which ships the app Python's
-    stdlib extension modules (e.g. a 3.13 ``_ctypes.pyd``) alongside any
-    loose package files - prepending it to another interpreter's PYTHONPATH
-    shadows that interpreter's own stdlib (seen live on the QA bench,
-    2026-08-14: a Python 3.14 child died with "Module use of python313.dll
-    conflicts with this version of Python"). A frozen build reaches its own
-    omotion by re-executing itself instead - see
-    ``_bundled_procedure_runner``.
-    """
-    roots: list[str] = []
-    env = os.environ.get("OPENMOTION_SDK_ROOT")
-    if env and os.path.isdir(os.path.join(env, "omotion")):
-        roots.append(env)
-    if not getattr(sys, "frozen", False):
-        try:
-            import omotion
-            roots.append(os.path.dirname(os.path.dirname(
-                os.path.abspath(omotion.__file__))))
-        except Exception:
-            pass
-    return roots
-
-
-_probe_cache: dict[str, bool] = {}
-
-
-def _interpreter_has_omotion_scripts(program: str) -> bool:
-    """Can this interpreter import ``omotion.scripts`` on its own?
-
-    Probed only when no checkout carries the procedure modules - i.e. a
-    frozen app on a bench whose Python has the omotion wheel installed.
-    One subprocess per interpreter, cached for the app's lifetime.
-    """
-    cached = _probe_cache.get(program)
-    if cached is None:
-        try:
-            cached = subprocess.run(
-                [program, "-c",
-                 "import importlib.util, sys; "
-                 "sys.exit(0 if importlib.util.find_spec('omotion.scripts')"
-                 " else 1)"],
-                capture_output=True, timeout=30,
-            ).returncode == 0
-        except Exception:
-            cached = False
-        _probe_cache[program] = cached
-    return cached
-
-
-def _python_interpreter() -> str | None:
-    """The external Python interpreter that runs checkout procedures.
-
-    In a frozen (PyInstaller) build ``sys.executable`` is the app exe
-    itself, so a real interpreter is resolved from PATH instead. Only the
-    OPENMOTION_SDK_ROOT override reaches this in a release - the bundled
-    runner needs no interpreter on the bench at all.
-    """
-    if not getattr(sys, "frozen", False):
-        return sys.executable
-    return shutil.which("python") or shutil.which("py")
-
-
 # Name suffix of the console-subsystem exe built alongside the windowed one
 # (openwater.spec: APP_NAME vs APP_NAME + this).
 _CONSOLE_SUFFIX = "_console"
@@ -214,11 +144,12 @@ _CONSOLE_SUFFIX = "_console"
 def _bundled_procedure_runner() -> str | None:
     """This frozen build re-executed as a procedure runner, or None.
 
-    A release bundles the procedure modules, the omotion they drive and the
-    Python that runs both, so the app is its own runner: spawning it with
-    ``--run-procedure <module>`` (see ``utils/procedure_runner.py``) runs the
-    procedure exactly as shipped - no Python on the bench, no SDK install, no
-    version skew between the app and the procedures it was validated with.
+    A PyInstaller bundle ships no ``python.exe`` - ``sys.executable`` is the
+    app - so the child the pane needs can only be the app itself, told to be
+    a runner rather than the GUI. That is all ``--run-procedure`` is: the
+    signal that distinguishes the two (see ``utils/procedure_runner.py``).
+    The procedure code, the omotion it drives and the Python running both
+    then come from the release, with nothing installed on the bench.
     """
     if not getattr(sys, "frozen", False):
         return None
@@ -232,12 +163,27 @@ def _bundled_procedure_runner() -> str | None:
     return sys.executable
 
 
-def _bundle_has_module(module: str) -> bool:
-    """Is ``module`` importable from this bundle? (Same bundle the child runs.)"""
+def _has_module(module: str) -> bool:
+    """Can the child import ``module``? Answered from this process.
+
+    Sound for both launch shapes, because both give the child exactly this
+    process's imports: a release re-executes its own bundle, and a source run
+    spawns this same interpreter, which inherits this ``sys.path`` through the
+    environment. So no probe subprocess is needed - and none is possible in a
+    release, where there is no other interpreter to probe.
+    """
     try:
         return importlib.util.find_spec(module) is not None
     except Exception:
         return False
+
+
+def _omotion_location() -> str:
+    try:
+        import omotion
+        return os.path.dirname(os.path.abspath(omotion.__file__))
+    except Exception:
+        return "unavailable"
 
 
 def _sdk_module_procedure(name: str, module: str,
@@ -245,58 +191,37 @@ def _sdk_module_procedure(name: str, module: str,
     """Registry entry for an SDK procedure module.
 
     The procedures ship inside the ``omotion`` package (``omotion.scripts``,
-    see docs/WI15Procedures.md in the SDK), and how they are launched depends
-    on how the app itself is running:
+    see docs/WI15Procedures.md in the SDK), and the app runs **only** the copy
+    it was built with:
 
-    * **Released build** - the app re-executes itself as a runner and the
-      procedure comes from its own bundle. Nothing needs installing.
-    * **From source, or with OPENMOTION_SDK_ROOT set** - ``python -m
-      <module>`` under an interpreter, with a checkout from
-      ``_candidate_import_roots`` prepended to the child's PYTHONPATH so it
-      wins the import race. In a release, setting OPENMOTION_SDK_ROOT to a
-      checkout carrying the module is the deliberate opt-out from the bundled
-      copy, e.g. to try a fixed procedure ahead of an app build.
+    * **Released build** - re-executes itself as a runner, importing from its
+      own bundle. Nothing on the bench can redirect it.
+    * **From source** - ``python -m <module>`` under the app's own
+      interpreter, against the omotion that interpreter imports.
+
+    There is deliberately no override. A release that could be pointed at some
+    other checkout's procedures would produce calibration evidence whose
+    provenance the app cannot vouch for; to run a different copy, run it from
+    the SDK directly.
     """
-    module_relpath = os.path.join(*module.split(".")) + ".py"
-    import_root = next(
-        (root for root in _candidate_import_roots()
-         if os.path.isfile(os.path.join(root, module_relpath))),
-        None)
-
-    runner = _bundled_procedure_runner() if import_root is None else None
+    runner = _bundled_procedure_runner()
     if runner is not None:
-        return {
-            "name": name,
-            "program": runner,
-            "args": [RUN_PROCEDURE_FLAG, module, *(args or [])],
-            "cwd": _PROCEDURE_OUTPUT_ROOT,
-            "import_root": None,
-            "source": "bundled with this build of the app",
-            "missing": None if _bundle_has_module(module) else (
-                f"{module} is not bundled in this build of the app - it was "
-                "packaged against an SDK without that procedure; install a "
-                "newer release, or set OPENMOTION_SDK_ROOT to a checkout "
-                "that has it"),
-        }
-
-    program = _python_interpreter()
-    if program is None:
-        missing = ("no Python interpreter found on PATH - procedures run "
-                   "out-of-process and need one installed")
-    elif import_root is None and not _interpreter_has_omotion_scripts(program):
-        missing = (f"{module} is not importable by {program} - pip install "
-                   "an openmotion-sdk wheel that ships omotion.scripts, or "
-                   "set OPENMOTION_SDK_ROOT to a checkout that has it")
+        program, argv = runner, [RUN_PROCEDURE_FLAG, module]
+        source = "bundled with this build of the app"
+        remedy = "install a release built against an SDK that ships it"
     else:
-        missing = None
+        program, argv = sys.executable, ["-u", "-m", module]
+        source = _omotion_location()
+        remedy = (f"install an openmotion-sdk that ships {module} into "
+                  f"{program}")
     return {
         "name": name,
         "program": program,
-        "args": ["-u", "-m", module, *(args or [])],
+        "args": [*argv, *(args or [])],
         "cwd": _PROCEDURE_OUTPUT_ROOT,
-        "import_root": import_root,
-        "source": import_root or "interpreter's installed package",
-        "missing": missing,
+        "source": source,
+        "missing": (None if _has_module(module)
+                    else f"{module} is not available - {remedy}"),
     }
 
 
@@ -550,14 +475,11 @@ class ProceduresController(QObject):
             except OSError as e:
                 self._log(f"! cannot create {proc['cwd']}: {e}")
             self._process.setWorkingDirectory(proc["cwd"])
-        # A resolved checkout (OPENMOTION_SDK_ROOT or the app's own omotion
-        # source) wins the child's import race via PYTHONPATH; without one
-        # the interpreter's installed omotion wheel is used as-is.
-        if proc.get("import_root"):
-            prev = env.value("PYTHONPATH", "")
-            env.insert("PYTHONPATH",
-                       proc["import_root"]
-                       + (os.pathsep + prev if prev else ""))
+        # Nothing is added to the child's import path: it imports what this
+        # process imports, by construction. A frozen child could not be
+        # steered anyway - PyInstaller starts it isolated, so it ignores
+        # PYTHONPATH (and PYTHONUNBUFFERED/PYTHONUTF8 above, which is why the
+        # runner reconfigures its own streams).
         self._process.setProcessEnvironment(env)
         self._process.readyReadStandardOutput.connect(self._on_stdout)
         self._process.finished.connect(self._on_finished)

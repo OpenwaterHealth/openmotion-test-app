@@ -51,25 +51,34 @@ pane releases the app's console/sensor handles for the child and reacquires them
 after, issuing a `stop_trigger` backstop so a killed procedure can't leave the
 laser firing.
 
-Where the child's code comes from depends on how the app is running:
+**The app runs only the procedures in the omotion it was built with.** There is
+deliberately no override — no env var, no `PYTHONPATH`, no checkout selection.
+A release that could be pointed at another copy would produce calibration
+evidence whose provenance it cannot vouch for. To run a different copy, run it
+from the SDK directly.
 
 | App is | Runs | Needs on the bench |
 |---|---|---|
 | A release (frozen) | `TestApp_console.exe --run-procedure <module> …` — itself | nothing |
-| From source | `python -m <module>` under `sys.executable` | an importable `omotion` carrying `omotion.scripts` |
-| Either, with `OPENMOTION_SDK_ROOT` set to a checkout holding the module | `python -m <module>` with that checkout on `PYTHONPATH` | a Python on PATH |
+| From source | `python -m <module>` under `sys.executable` | the omotion that interpreter imports must carry `omotion.scripts` |
 
-A released build **must** be self-contained: the procedure modules, the omotion
-they drive, and the Python running both ship inside it, so the app version pins
-the procedure version for evidence. `openwater.spec` asserts at build time that
-`omotion.scripts` carries the `wi15_*` modules — the SDK it packages against
-must be new enough (they landed in openmotion-sdk PR #232, branch `next`).
+`--run-procedure` is not a feature, it's a discriminator. A PyInstaller bundle
+ships no `python.exe` — `sys.executable` *is* the app — so the child the pane
+needs can only be the app itself, told to be a runner instead of the GUI.
+`utils/procedure_runner.py` handles it above `main.py`'s imports, because
+importing `motion_singleton` would construct a `MOTIONInterface` and grab the
+device handles the parent just released for that child.
 
-`OPENMOTION_SDK_ROOT` is the deliberate opt-out, for trying a fixed procedure
-ahead of an app build. A frozen build must never put its own `_internal`
-directory on an external interpreter's `PYTHONPATH` — that bundle ships the app
-Python's stdlib `.pyd`s and shadows the child's stdlib (QA bench, 2026-08-14: a
-3.14 child died with "Module use of python313.dll conflicts").
+PyInstaller starts the child isolated, so it ignores `PYTHONPATH` (making the
+no-override rule structural, not just policy) *and* `PYTHONUNBUFFERED` /
+`PYTHONUTF8` — which is why the runner reconfigures its own streams to UTF-8
+line-buffered.
+
+`openwater.spec` asserts at build time that `omotion.scripts` carries the
+`wi15_*` modules — the SDK it packages against must be new enough (they landed
+in openmotion-sdk PR #232, branch `next`). A build against the latest *published*
+SDK wheel will fail this until an SDK release includes them; the workflow's
+`-dev.N` tag path installs from SDK `next` and does build.
 
 ## Working without hardware
 

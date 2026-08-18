@@ -72,6 +72,14 @@ from PyQt6.QtCore import (
 
 from omotion.connection_state import ConnectionState
 
+try:
+    from omotion.calibration.script_support import (
+        DETAIL_PREFIX as _DETAIL_PREFIX,
+    )
+except Exception:
+    # SDK predating the detail-line convention: keep the same literal.
+    _DETAIL_PREFIX = "# "
+
 from motion_singleton import motion_interface
 from utils.procedure_runner import RUN_PROCEDURE_FLAG
 
@@ -89,12 +97,16 @@ MAX_LOG_LINES = 5000
 # (PYTHONUNBUFFERED), so only prompts linger without a newline.
 PROMPT_QUIET_MS = 400
 
-# Non-verbose ("factory") mode hides only log-record-shaped noise (SDK/library
-# logging that leaks onto the child's stderr); every other child line is
-# operator output and must stay visible - a hidden instruction once left an
-# operator waiting on a power-cycle prompt that never appeared. The full log
-# is always retained - the filter is display-only and applies retroactively
-# when toggled.
+# Non-verbose ("factory") mode hides engineer-facing narration: lines the
+# SDK's WI-00015 scripts prefix with "# " (hardware call detail, echoed
+# evidence events, forwarded library logging - see
+# omotion.calibration.script_support.DETAIL_PREFIX; the pane's own chrome
+# uses the same convention via _detail), plus log-record-shaped noise that
+# leaks onto the child's stderr. Every other child line is operator output
+# and must stay visible - a hidden instruction once left an operator waiting
+# on a power-cycle prompt that never appeared. The full log is always
+# retained - the filter is display-only and applies retroactively when
+# toggled.
 _LOG_RECORD_LINE = re.compile(
     r"^\d{4}-\d{2}-\d{2} [\d:,.]+ - \S+ - (DEBUG|INFO|WARNING|ERROR|CRITICAL)"
     r"|^(DEBUG|INFO|WARNING|ERROR|CRITICAL)[ :]"
@@ -106,7 +118,7 @@ def _display_line(line: str, verbose: bool) -> str | None:
     if verbose:
         return line
     s = line.strip()
-    if not s or _LOG_RECORD_LINE.match(s):
+    if not s or s.startswith(_DETAIL_PREFIX) or _LOG_RECORD_LINE.match(s):
         return None
     return line
 
@@ -415,6 +427,7 @@ class ProceduresController(QObject):
         self.logCleared.emit()
         self._stop_requested = False
         self._log(f"=== {proc['name']} ===")
+        self._log("Preparing to start ...")
         self._set_status(STATUS_RUNNING)
 
         # Device release must NOT run on the Qt main thread: the SDK's USB
@@ -430,7 +443,7 @@ class ProceduresController(QObject):
                          name="procedures-release").start()
 
     def _release_devices_worker(self, index: int) -> None:
-        self._log("releasing device handles to the procedure ...")
+        self._detail("releasing device handles to the procedure ...")
         try:
             for name, handle in (("left", motion_interface.left),
                                  ("right", motion_interface.right),
@@ -440,7 +453,7 @@ class ProceduresController(QObject):
                         handle.request_disconnect()
                         if handle.wait_for(ConnectionState.DISCONNECTED,
                                            timeout=10.0):
-                            self._log(f"  {name} released")
+                            self._detail(f"{name} released")
                         else:
                             self._log(f"! {name} did not confirm disconnect "
                                       f"within 10 s - continuing")
@@ -485,9 +498,10 @@ class ProceduresController(QObject):
         self._process.finished.connect(self._on_finished)
         self._process.errorOccurred.connect(self._on_error)
 
-        self._log(f"launching: {proc['program']} {' '.join(proc['args'])}")
-        self._log("procedure source: "
-                  + (proc.get("source") or "interpreter's installed package"))
+        self._detail(f"launching: {proc['program']} {' '.join(proc['args'])}")
+        # Provenance belongs in the audit log, not on the operator terminal.
+        logger.info("procedure source: %s",
+                    proc.get("source") or "interpreter's installed package")
         self._set_status(STATUS_RUNNING)
         self._process.start(proc["program"], proc["args"])
 
@@ -557,6 +571,10 @@ class ProceduresController(QObject):
     def _log(self, line: str) -> None:
         self._emit_line(line)
 
+    def _detail(self, line: str) -> None:
+        """Pane chrome only verbose watchers need; audit-logged regardless."""
+        self._emit_line(_DETAIL_PREFIX + line)
+
     def _on_error(self, err) -> None:
         self._log(f"! process error: {err}")
 
@@ -571,10 +589,11 @@ class ProceduresController(QObject):
             self._log("procedure stopped by operator")
             self._set_status(STATUS_IDLE)
         elif exit_code == 0:
-            self._log("procedure completed: PASS")
+            self._log("Final result: PASS")
             self._set_status(STATUS_PASS)
         else:
-            self._log(f"procedure completed: FAIL (exit code {exit_code})")
+            self._detail(f"procedure exit code {exit_code}")
+            self._log("Final result: FAIL")
             self._set_status(STATUS_FAIL)
         self._reacquire_devices()
 
@@ -585,7 +604,7 @@ class ProceduresController(QObject):
         killed process cannot - so once the console reconnects, issue a
         stop_trigger unconditionally.
         """
-        self._log("reacquiring device handles ...")
+        self._detail("reacquiring device handles ...")
         try:
             motion_interface.start(wait=False)
         except Exception as e:
@@ -600,7 +619,8 @@ class ProceduresController(QObject):
                 if motion_interface.console.is_connected():
                     try:
                         motion_interface.console.stop_trigger()
-                        self._log("console reconnected; trigger stop confirmed")
+                        self._detail("console reconnected; "
+                                     "trigger stop confirmed")
                     except Exception as e:
                         self._log(f"! stop_trigger after reacquire failed: {e}")
                     return

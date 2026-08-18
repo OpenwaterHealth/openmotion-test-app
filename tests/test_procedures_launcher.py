@@ -214,7 +214,8 @@ def test_pane_terminal_lines_are_mirrored_to_the_app_log(monkeypatch, caplog):
         controller._emit_line(
             "2026-08-14 12:00:00,000 - openmotion - INFO - hidden on screen"
         )
-        controller._emit_line("procedure completed: PASS")
+        controller._emit_line("# measure_energy() -> 26 pulses, hidden too")
+        controller._emit_line("Final result: PASS")
 
     assert "Procedures pane opened" in caplog.text
     assert "procedure selected: Demo Procedure" in caplog.text
@@ -222,7 +223,43 @@ def test_pane_terminal_lines_are_mirrored_to_the_app_log(monkeypatch, caplog):
     assert "[operator] left" in caplog.text
     # The Verbose display filter must not gate the audit log.
     assert "hidden on screen" in caplog.text
-    assert "procedure completed: PASS" in caplog.text
+    assert "# measure_energy() -> 26 pulses, hidden too" in caplog.text
+    assert "Final result: PASS" in caplog.text
+
+
+def test_display_filter_hides_detail_lines_only_when_not_verbose():
+    """'# ' narration and log-shaped noise hide in factory mode; operator
+    lines never do. Verbose shows everything."""
+    detail = "# write_register(TA_CURRENT_DRV, 4950) -> requested 4950, read back 4948"
+    log_shaped = "WARNING openmotion.sdk.UART: retrying"
+    operator = "Measured 361 uJ. Target is 350 uJ."
+
+    assert pc._display_line(detail, verbose=True) == detail
+    assert pc._display_line(detail, verbose=False) is None
+    assert pc._display_line(log_shaped, verbose=False) is None
+    assert pc._display_line(operator, verbose=False) == operator
+    assert pc._display_line("", verbose=False) is None
+
+
+def test_finish_verdict_uses_final_result_wording(monkeypatch, caplog):
+    """The pane's verdict matches the scripts' own final line, with the exit
+    code demoted to a detail line."""
+    from PyQt6.QtCore import QCoreApplication
+
+    QCoreApplication.instance() or QCoreApplication([])
+    monkeypatch.setattr(
+        pc, "_build_procedures", lambda: [{"name": "Demo Procedure"}]
+    )
+    controller = pc.ProceduresController()
+    monkeypatch.setattr(controller, "_reacquire_devices", lambda: None)
+
+    with caplog.at_level(logging.INFO, logger="procedures_controller"):
+        controller._on_finished(0, None)
+        controller._on_finished(2, None)
+
+    assert "Final result: PASS" in caplog.text
+    assert "Final result: FAIL" in caplog.text
+    assert "# procedure exit code 2" in caplog.text
 
 
 def test_registry_uses_package_modules_and_shared_output_dir(monkeypatch):

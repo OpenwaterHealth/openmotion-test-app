@@ -87,4 +87,7 @@ local_notes.md
 app-logs/
 run-logs/
 
+# Procedure evidence written next to the app by the Procedures pane
+wi15_out/
+
 downloads/

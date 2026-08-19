@@ -278,5 +278,19 @@ def test_registry_uses_package_modules_and_shared_output_dir(monkeypatch):
     ]
     for entry in entries:
         i = entry["args"].index("--output-dir")
-        assert entry["args"][i + 1].endswith(
-            os.path.join("OpenMotion", "wi15_out"))
+        assert entry["args"][i + 1] == os.path.join(
+            pc._PROCEDURE_OUTPUT_ROOT, "wi15_out")
+
+
+def test_evidence_root_is_the_release_folder_when_frozen(monkeypatch,
+                                                         tmp_path):
+    monkeypatch.setattr(pc.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(pc.sys, "executable", str(tmp_path / "TestApp.exe"))
+
+    assert pc._app_dir() == str(tmp_path)
+
+
+def test_evidence_root_is_the_checkout_when_run_from_source(monkeypatch):
+    monkeypatch.delattr(pc.sys, "frozen", raising=False)
+
+    assert pc._app_dir() == os.path.dirname(os.path.abspath(pc.__file__))

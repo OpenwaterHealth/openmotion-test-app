@@ -142,10 +142,21 @@ def _prompt_options(prompt: str) -> list[str]:
     return options
 
 
-# Where procedure evidence lands on this bench: a stable per-user location,
-# independent of any checkout. Each run prints its exact evidence paths.
-_PROCEDURE_OUTPUT_ROOT = os.path.join(
-    os.path.expanduser("~"), "Documents", "OpenMotion")
+def _app_dir() -> str:
+    """The folder the app runs from: the release folder in a frozen build
+    (one-dir COLLECT - both exes and their support files live there), the
+    checkout in a source run."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+# Where procedure evidence lands on this bench: in the app's own folder, so
+# an install carries its evidence with it. Assumes the install sits somewhere
+# user-writable (factory practice is an unzipped folder); a create failure
+# surfaces in the pane when a run starts. Each run prints its exact evidence
+# paths.
+_PROCEDURE_OUTPUT_ROOT = _app_dir()
 
 
 # Name suffix of the console-subsystem exe built alongside the windowed one
@@ -480,8 +491,9 @@ class ProceduresController(QObject):
         # The child's pipes must be UTF-8; the Windows default (cp1252) can
         # crash a child print that carries non-ASCII output.
         env.insert("PYTHONUTF8", "1")
-        # The working directory is the evidence root, not a code location -
-        # the procedure modules ship inside omotion itself.
+        # The working directory is only the evidence root - the procedure
+        # modules ship inside omotion itself, so cwd never selects which
+        # procedure code runs.
         if proc.get("cwd"):
             try:
                 os.makedirs(proc["cwd"], exist_ok=True)

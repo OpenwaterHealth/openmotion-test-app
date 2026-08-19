@@ -301,22 +301,22 @@ def _build_procedures() -> list[dict]:
     ]
     return [
         _sdk_module_procedure(
-            "WI-00015 Single-Sensor Laser Calibration",
+            "Single-Sensor Laser Calibration",
             "omotion.scripts.wi15_single_sensor_laser_calibration",
             common,
         ),
         _sdk_module_procedure(
-            "WI-00015 Dual-Sensor Laser Calibration",
+            "Dual-Sensor Laser Calibration",
             "omotion.scripts.wi15_dual_sensor_laser_calibration",
             common,
         ),
         _sdk_module_procedure(
-            "WI-00015 Safety Calibration",
+            "Safety Calibration",
             "omotion.scripts.wi15_safety_calibration",
             common,
         ),
         _sdk_module_procedure(
-            "WI-00015 Measurement Calibration (one sensor)",
+            "Measurement Calibration (one sensor)",
             "omotion.scripts.wi15_measurement_calibration",
             common,
         ),

@@ -78,6 +78,50 @@ def test_registry_style_string_true_is_accepted(ini_path):
     assert WarrantyAck(_settings(ini_path)).accepted is True
 
 
+def test_legacy_acceptance_migrates_and_persists(ini_path, tmp_path):
+    # Issue #114: acceptance recorded under the old "Engineering App" scope
+    # must carry over to the renamed scope without re-prompting.
+    legacy_path = str(tmp_path / "legacy.ini")
+    seeded = _settings(legacy_path)
+    # The registry backend hands back the string "true", not a bool.
+    seeded.setValue(SETTINGS_KEY, "true")
+    seeded.sync()
+
+    ack = WarrantyAck(
+        _settings(ini_path), legacy_settings=_settings(legacy_path)
+    )
+    assert ack.accepted is True
+
+    # Migration re-records under the new scope, so a fresh instance with no
+    # legacy store must not need the legacy one again.
+    assert WarrantyAck(_settings(ini_path)).accepted is True
+
+
+def test_corrupt_legacy_value_fails_closed(ini_path, tmp_path):
+    legacy_path = str(tmp_path / "legacy.ini")
+    seeded = _settings(legacy_path)
+    seeded.setValue(SETTINGS_KEY, "garbage")
+    seeded.sync()
+
+    ack = WarrantyAck(
+        _settings(ini_path), legacy_settings=_settings(legacy_path)
+    )
+    assert ack.accepted is False
+
+
+def test_current_scope_wins_without_touching_legacy(ini_path, tmp_path):
+    # An acceptance in the current scope short-circuits the legacy read, and
+    # the legacy store is never written to either way.
+    legacy_path = str(tmp_path / "legacy.ini")
+    WarrantyAck(_settings(ini_path)).accept()
+
+    ack = WarrantyAck(
+        _settings(ini_path), legacy_settings=_settings(legacy_path)
+    )
+    assert ack.accepted is True
+    assert not Path(legacy_path).exists()
+
+
 def test_unwritable_store_does_not_raise(tmp_path):
     # Point QSettings at a path that is a directory: writes fail with
     # AccessError. accept() must swallow that.

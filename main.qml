@@ -33,7 +33,7 @@ ApplicationWindow {
             anchors.right: parent.right
 
             // Set title and logo dynamically
-            titleText: "Open-Motion Engineering App"
+            titleText: "Open-Motion Test App"
             logoSource: "../assets/images/OpenwaterLogo.png" // Correct relative path
             appVerText: "" + appVersion
             sdkVerText: "" + MOTIONInterface.get_sdk_version()

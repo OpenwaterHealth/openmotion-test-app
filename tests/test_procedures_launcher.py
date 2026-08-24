@@ -227,6 +227,23 @@ def test_pane_terminal_lines_are_mirrored_to_the_app_log(monkeypatch, caplog):
     assert "Final result: PASS" in caplog.text
 
 
+def test_verbose_starts_unchecked_every_launch_and_does_not_persist():
+    """The plain operator view is the default on every launch (#121): a
+    fresh controller starts with Verbose off, even right after another
+    controller turned it on - the toggle is session-only."""
+    from PyQt6.QtCore import QCoreApplication
+
+    QCoreApplication.instance() or QCoreApplication([])
+
+    first = pc.ProceduresController()
+    assert first.verbose is False
+
+    first.verbose = True
+    assert first.verbose is True
+
+    assert pc.ProceduresController().verbose is False
+
+
 def test_display_filter_hides_detail_lines_only_when_not_verbose():
     """'# ' narration and log-shaped noise hide in factory mode; operator
     lines never do. Verbose shows everything."""
@@ -263,8 +280,6 @@ def test_finish_verdict_uses_final_result_wording(monkeypatch, caplog):
 
 
 def test_registry_uses_package_modules_and_shared_output_dir(monkeypatch):
-    monkeypatch.setattr(pc, "_bench_identity_args",
-                        lambda: ["--operator", "op"])
     monkeypatch.delattr(pc.sys, "frozen", raising=False)
     monkeypatch.setattr(pc, "_has_module", lambda module: True)
 
@@ -280,6 +295,34 @@ def test_registry_uses_package_modules_and_shared_output_dir(monkeypatch):
         i = entry["args"].index("--output-dir")
         assert entry["args"][i + 1] == os.path.join(
             pc._PROCEDURE_OUTPUT_ROOT, "wi15_out")
+
+
+def test_registry_prefills_the_operator_but_never_the_fixture_id(monkeypatch):
+    """The operator prefill (logged-in username) stays; the fixture ID is
+    never prefilled (#119) - collecting the test fixture is mandatory on
+    every run, and a Wi-Fi MAC is machine identity, not attestation."""
+    monkeypatch.delattr(pc.sys, "frozen", raising=False)
+    monkeypatch.setattr(pc, "_has_module", lambda module: True)
+    monkeypatch.setattr(pc.getpass, "getuser", lambda: "opuser")
+
+    for entry in pc._build_procedures():
+        i = entry["args"].index("--operator")
+        assert entry["args"][i + 1] == "opuser"
+        assert "--fixture-id" not in entry["args"]
+
+
+def test_an_undeterminable_username_is_omitted_so_the_script_prompts(
+        monkeypatch):
+    monkeypatch.delattr(pc.sys, "frozen", raising=False)
+    monkeypatch.setattr(pc, "_has_module", lambda module: True)
+
+    def boom():
+        raise OSError("no user database")
+
+    monkeypatch.setattr(pc.getpass, "getuser", boom)
+
+    for entry in pc._build_procedures():
+        assert "--operator" not in entry["args"]
 
 
 def test_evidence_root_is_the_release_folder_when_frozen(monkeypatch,

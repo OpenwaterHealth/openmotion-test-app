@@ -47,14 +47,11 @@ procedure activity.
 
 from __future__ import annotations
 
-import csv
 import getpass
 import importlib.util
-import io
 import logging
 import os
 import re
-import subprocess
 import sys
 import threading
 import time
@@ -63,7 +60,6 @@ from PyQt6.QtCore import (
     QObject,
     QProcess,
     QProcessEnvironment,
-    QSettings,
     QTimer,
     pyqtProperty,
     pyqtSignal,
@@ -248,55 +244,28 @@ def _sdk_module_procedure(name: str, module: str,
     }
 
 
-def _wifi_mac() -> str | None:
-    """MAC address of this machine's Wi-Fi adapter — the bench/rig identity.
+def _operator_prefill_args() -> list[str]:
+    """Prefill the operator (logged-in username) so that prompt is skipped.
 
-    ``getmac`` is used rather than ``netsh wlan`` because the latter is gated
-    behind Windows Location permissions.
+    The fixture ID is deliberately NOT prefilled (#119): collecting the test
+    fixture is mandatory for every run, and the earlier Wi-Fi-MAC prefill
+    recorded machine identity where the evidence needs what the operator
+    attests. An undeterminable username is omitted, so the script prompts
+    for it instead of recording a wrong value.
     """
-    try:
-        out = subprocess.run(
-            ["getmac", "/v", "/fo", "csv"],
-            capture_output=True, text=True, timeout=10,
-        ).stdout
-        for row in csv.reader(io.StringIO(out)):
-            if len(row) < 3:
-                continue
-            name = f"{row[0]} {row[1]}".lower()
-            if "wi-fi" in name or "wireless" in name:
-                mac = row[2].strip()
-                if re.fullmatch(r"([0-9A-Fa-f]{2}-){5}[0-9A-Fa-f]{2}", mac):
-                    return mac
-    except Exception:
-        pass
-    return None
-
-
-def _bench_identity_args() -> list[str]:
-    """Prefill operator and rig identity so the scripts skip those prompts.
-
-    Operator is the logged-in username; the rig/fixture ID is the Wi-Fi
-    adapter's MAC address (stable per bench PC). Anything that cannot be
-    determined is omitted, so the script prompts for it instead of recording
-    a wrong value.
-    """
-    args: list[str] = []
     try:
         user = getpass.getuser().strip()
         if user:
-            args += ["--operator", user]
+            return ["--operator", user]
     except Exception:
         pass
-    mac = _wifi_mac()
-    if mac:
-        args += ["--fixture-id", mac]
-    return args
+    return []
 
 
 def _build_procedures() -> list[dict]:
     """The procedure registry. Append entries here to add procedures."""
     common = [
-        *_bench_identity_args(),
+        *_operator_prefill_args(),
         "--output-dir", os.path.join(_PROCEDURE_OUTPUT_ROOT, "wi15_out"),
     ]
     return [
@@ -343,9 +312,12 @@ class ProceduresController(QObject):
         self._process: QProcess | None = None
         self._stop_requested = False
         self._current_index = 0
-        self._settings = QSettings()
-        self._verbose = self._settings.value(
-            "procedures/verbose", True, type=bool)
+        # Verbose is a session-only display filter and starts OFF on every
+        # launch (#121): the plain operator view is the default, and an
+        # engineer's leftover verbose state must not carry into the next
+        # operator session. The full log is always retained and audit-logged
+        # regardless, so nothing is lost by starting hidden.
+        self._verbose = False
         self._releaseFinished.connect(self._spawn_procedure)
         self._prompt_timer = QTimer(self)
         self._prompt_timer.setSingleShot(True)
@@ -394,7 +366,6 @@ class ProceduresController(QObject):
     def _set_verbose(self, value: bool) -> None:
         if value != self._verbose:
             self._verbose = bool(value)
-            self._settings.setValue("procedures/verbose", self._verbose)
             self.verboseChanged.emit()
 
     verbose = pyqtProperty(bool, fget=_get_verbose, fset=_set_verbose,

@@ -280,16 +280,32 @@ def test_registry_uses_package_modules_and_shared_output_dir(monkeypatch):
             pc._PROCEDURE_OUTPUT_ROOT, "wi15_out")
 
 
-def test_registry_prefills_no_identity_so_every_script_prompts(monkeypatch):
-    """Operator and Fixture ID are collected by the scripts on every run
-    (#119): the launcher must not pass --operator/--fixture-id, which would
-    skip those prompts and record machine identity as attestation."""
+def test_registry_prefills_the_operator_but_never_the_fixture_id(monkeypatch):
+    """The operator prefill (logged-in username) stays; the fixture ID is
+    never prefilled (#119) - collecting the test fixture is mandatory on
+    every run, and a Wi-Fi MAC is machine identity, not attestation."""
+    monkeypatch.delattr(pc.sys, "frozen", raising=False)
+    monkeypatch.setattr(pc, "_has_module", lambda module: True)
+    monkeypatch.setattr(pc.getpass, "getuser", lambda: "opuser")
+
+    for entry in pc._build_procedures():
+        i = entry["args"].index("--operator")
+        assert entry["args"][i + 1] == "opuser"
+        assert "--fixture-id" not in entry["args"]
+
+
+def test_an_undeterminable_username_is_omitted_so_the_script_prompts(
+        monkeypatch):
     monkeypatch.delattr(pc.sys, "frozen", raising=False)
     monkeypatch.setattr(pc, "_has_module", lambda module: True)
 
+    def boom():
+        raise OSError("no user database")
+
+    monkeypatch.setattr(pc.getpass, "getuser", boom)
+
     for entry in pc._build_procedures():
         assert "--operator" not in entry["args"]
-        assert "--fixture-id" not in entry["args"]
 
 
 def test_evidence_root_is_the_release_folder_when_frozen(monkeypatch,

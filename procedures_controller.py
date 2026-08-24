@@ -47,6 +47,7 @@ procedure activity.
 
 from __future__ import annotations
 
+import getpass
 import importlib.util
 import logging
 import os
@@ -244,15 +245,28 @@ def _sdk_module_procedure(name: str, module: str,
     }
 
 
-def _build_procedures() -> list[dict]:
-    """The procedure registry. Append entries here to add procedures.
+def _operator_prefill_args() -> list[str]:
+    """Prefill the operator (logged-in username) so that prompt is skipped.
 
-    No identity is prefilled: the scripts' own Operator / Fixture ID prompts
-    must run every time (#119 - the earlier username/Wi-Fi-MAC prefill
+    The fixture ID is deliberately NOT prefilled (#119): collecting the test
+    fixture is mandatory for every run, and the earlier Wi-Fi-MAC prefill
     recorded machine identity where the evidence needs what the operator
-    attests).
+    attests. An undeterminable username is omitted, so the script prompts
+    for it instead of recording a wrong value.
     """
+    try:
+        user = getpass.getuser().strip()
+        if user:
+            return ["--operator", user]
+    except Exception:
+        pass
+    return []
+
+
+def _build_procedures() -> list[dict]:
+    """The procedure registry. Append entries here to add procedures."""
     common = [
+        *_operator_prefill_args(),
         "--output-dir", os.path.join(_PROCEDURE_OUTPUT_ROOT, "wi15_out"),
     ]
     return [

@@ -263,8 +263,6 @@ def test_finish_verdict_uses_final_result_wording(monkeypatch, caplog):
 
 
 def test_registry_uses_package_modules_and_shared_output_dir(monkeypatch):
-    monkeypatch.setattr(pc, "_bench_identity_args",
-                        lambda: ["--operator", "op"])
     monkeypatch.delattr(pc.sys, "frozen", raising=False)
     monkeypatch.setattr(pc, "_has_module", lambda module: True)
 
@@ -280,6 +278,18 @@ def test_registry_uses_package_modules_and_shared_output_dir(monkeypatch):
         i = entry["args"].index("--output-dir")
         assert entry["args"][i + 1] == os.path.join(
             pc._PROCEDURE_OUTPUT_ROOT, "wi15_out")
+
+
+def test_registry_prefills_no_identity_so_every_script_prompts(monkeypatch):
+    """Operator and Fixture ID are collected by the scripts on every run
+    (#119): the launcher must not pass --operator/--fixture-id, which would
+    skip those prompts and record machine identity as attestation."""
+    monkeypatch.delattr(pc.sys, "frozen", raising=False)
+    monkeypatch.setattr(pc, "_has_module", lambda module: True)
+
+    for entry in pc._build_procedures():
+        assert "--operator" not in entry["args"]
+        assert "--fixture-id" not in entry["args"]
 
 
 def test_evidence_root_is_the_release_folder_when_frozen(monkeypatch,

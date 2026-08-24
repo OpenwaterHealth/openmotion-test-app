@@ -60,7 +60,6 @@ from PyQt6.QtCore import (
     QObject,
     QProcess,
     QProcessEnvironment,
-    QSettings,
     QTimer,
     pyqtProperty,
     pyqtSignal,
@@ -313,9 +312,12 @@ class ProceduresController(QObject):
         self._process: QProcess | None = None
         self._stop_requested = False
         self._current_index = 0
-        self._settings = QSettings()
-        self._verbose = self._settings.value(
-            "procedures/verbose", True, type=bool)
+        # Verbose is a session-only display filter and starts OFF on every
+        # launch (#121): the plain operator view is the default, and an
+        # engineer's leftover verbose state must not carry into the next
+        # operator session. The full log is always retained and audit-logged
+        # regardless, so nothing is lost by starting hidden.
+        self._verbose = False
         self._releaseFinished.connect(self._spawn_procedure)
         self._prompt_timer = QTimer(self)
         self._prompt_timer.setSingleShot(True)
@@ -364,7 +366,6 @@ class ProceduresController(QObject):
     def _set_verbose(self, value: bool) -> None:
         if value != self._verbose:
             self._verbose = bool(value)
-            self._settings.setValue("procedures/verbose", self._verbose)
             self.verboseChanged.emit()
 
     verbose = pyqtProperty(bool, fget=_get_verbose, fset=_set_verbose,

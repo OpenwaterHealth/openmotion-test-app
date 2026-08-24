@@ -227,6 +227,23 @@ def test_pane_terminal_lines_are_mirrored_to_the_app_log(monkeypatch, caplog):
     assert "Final result: PASS" in caplog.text
 
 
+def test_verbose_starts_unchecked_every_launch_and_does_not_persist():
+    """The plain operator view is the default on every launch (#121): a
+    fresh controller starts with Verbose off, even right after another
+    controller turned it on - the toggle is session-only."""
+    from PyQt6.QtCore import QCoreApplication
+
+    QCoreApplication.instance() or QCoreApplication([])
+
+    first = pc.ProceduresController()
+    assert first.verbose is False
+
+    first.verbose = True
+    assert first.verbose is True
+
+    assert pc.ProceduresController().verbose is False
+
+
 def test_display_filter_hides_detail_lines_only_when_not_verbose():
     """'# ' narration and log-shaped noise hide in factory mode; operator
     lines never do. Verbose shows everything."""

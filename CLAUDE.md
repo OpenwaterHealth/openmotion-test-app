@@ -57,6 +57,18 @@ A release that could be pointed at another copy would produce calibration
 evidence whose provenance it cannot vouch for. To run a different copy, run it
 from the SDK directly.
 
+**Override mode** (epic bloodflow-app#482): the "Allow override" checkbox next
+to Verbose arms a password-protected override for the *next run only* —
+`overrideArmed` adds `--allow-override` to that one launch, nothing else. The
+SDK script asks for the password itself, then (laser calibrations) for the
+acceptance band and target in the terminal (10–1000 µJ, Enter keeps the
+factory value); the pane masks any prompt containing "password" and logs the
+answer as `********`. Exit code 3 (the SDK's `EXIT_OVERRIDE`) is the amber
+"Override" verdict — never Pass. Safety Calibration has no override. The
+checkbox only appears when the bundled SDK has `omotion.calibration.override`
+(`overrideSupported`), so a build against an older SDK never passes a flag it
+would reject.
+
 | App is | Runs | Needs on the bench |
 |---|---|---|
 | A release (frozen) | `TestApp_console.exe --run-procedure <module> …` — itself | nothing |

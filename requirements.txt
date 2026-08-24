@@ -8,6 +8,8 @@ base58==2.1.1
 PyInstaller==6.15.0
 pandas==2.3.3
 numpy>=1.24.0
+# Ophir Centauri COM driver for the bundled WI-00015 procedures (win32com).
+pywin32==311; sys_platform == "win32"
 # Optional tools for development and testing
 pytest==9.0.3
 flake8==7.1.1

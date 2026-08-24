@@ -1435,7 +1435,15 @@ Rectangle {
                         RowLayout {
                             spacing: 8
                             Text { text: "Device ID:"; color: "#BDC3C7"; font.pixelSize: 14 }
-                            Text { text: deviceId; color: "#3498DB"; font.pixelSize: 14 }
+                            TextEdit {
+                                text: deviceId
+                                color: "#3498DB"
+                                font.pixelSize: 14
+                                readOnly: true
+                                selectByMouse: true
+                                selectionColor: "#3498DB"
+                                selectedTextColor: "#FFFFFF"
+                            }
                         }
 
                         // Serial Number — matches the Device ID row; pencil opens an edit modal
@@ -1443,12 +1451,16 @@ Rectangle {
                             spacing: 8
 
                             Text { text: "Serial Number:"; color: "#BDC3C7"; font.pixelSize: 14 }
-                            Text {
+                            TextEdit {
                                 id: consoleSerialValue
                                 property bool programmed: false
                                 text: "not programmed"
                                 color: "#3498DB"
                                 font.pixelSize: 14
+                                readOnly: true
+                                selectByMouse: true
+                                selectionColor: "#3498DB"
+                                selectedTextColor: "#FFFFFF"
                             }
 
                             // Pencil opens the edit modal

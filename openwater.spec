@@ -37,6 +37,44 @@ datas   += om_datas
 binaries += om_bins
 hidden  += om_hidden
 
+# The Procedures pane runs omotion.scripts.* modules by re-executing this
+# bundle (--run-procedure), so they must be IN the bundle. They are never
+# imported statically — only ever by name at runtime — so name them
+# explicitly rather than trusting analysis to reach them. Missing procedures
+# fail at the bench, not at build time; assert instead.
+procedure_modules = collect_submodules("omotion.scripts")
+if not any(m.startswith("omotion.scripts.wi15") for m in procedure_modules):
+    raise SystemExit(
+        "[spec] omotion.scripts carries no wi15 procedure modules — the "
+        "installed openmotion-sdk predates them. Install an SDK that ships "
+        "them or the packaged Procedures pane will have nothing to run."
+    )
+hidden += procedure_modules
+print(f"[spec] Bundling {len(procedure_modules)} omotion.scripts module(s)")
+
+# Runtime deps of the PYTHONPATH-sourced omotion that static analysis can
+# miss (crcmod: wire-protocol CRC, found missing in the 2026-08-14 build).
+for _extra in ("crcmod",):
+    _e_datas, _e_bins, _e_hidden = collect_all(_extra)
+    datas    += _e_datas
+    binaries += _e_bins
+    hidden   += _e_hidden
+
+# pywin32: the Ophir meter layer (omotion.calibration.laser_hardware) does a
+# deferred "import win32com.client", so nothing imports it statically. A build
+# without it ships an exe whose WI-00015 procedures die at the bench with
+# "No module named 'win32com'" (found in the 2026-08-17 factory install).
+try:
+    import win32com  # noqa: F401 — build-environment probe only
+except ImportError:
+    raise SystemExit(
+        "[spec] pywin32 is missing from the build environment — the packaged "
+        "Procedures pane could not drive the Ophir meter. "
+        "pip install -r requirements.txt and rebuild."
+    )
+hidden += collect_submodules("win32com")
+hidden += ["pythoncom", "pywintypes"]
+
 # --- force include pyserial / pyusb dependency ---
 hidden += [
     "serial",
@@ -104,6 +142,48 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+
+# MSVC runtime DLLs in _internal shadow the System32 copies for every DLL
+# that ever loads into this process — including out-of-bundle COM servers.
+# The PyQt6 wheel ships 14.26 (2020) copies in Qt6\bin, and Ophir's
+# OphirLMMeasurement.dll (built against 14.44) dies at DllMain with
+# ERROR_DLL_INIT_FAILED (0x8007045A) when it resolves against them — found
+# on the 2026-08-17 factory install. Ship the build machine's System32
+# copies instead whenever they are newer; the C++ 14.x runtime is
+# ABI-stable, so Qt built against 14.26 runs unchanged on a newer runtime.
+_MSVC_RUNTIME = {
+    "concrt140.dll", "msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll",
+    "msvcp140_atomic_wait.dll", "msvcp140_codecvt_ids.dll",
+    "vccorlib140.dll", "vcruntime140.dll", "vcruntime140_1.dll",
+}
+
+def _dll_version(path):
+    import win32api
+    try:
+        info = win32api.GetFileVersionInfo(path, "\\")
+        # win32api hands back signed 32-bit values; mask each 16-bit field
+        # or high build numbers compare (and print) as negatives.
+        return ((info["FileVersionMS"] >> 16) & 0xFFFF,
+                info["FileVersionMS"] & 0xFFFF,
+                (info["FileVersionLS"] >> 16) & 0xFFFF,
+                info["FileVersionLS"] & 0xFFFF)
+    except Exception:
+        return (0, 0, 0, 0)
+
+_sys32 = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
+_swapped_runtimes = []
+for _i, (_dest, _src, _kind) in enumerate(a.binaries):
+    _base = os.path.basename(_dest).lower()
+    if _base not in _MSVC_RUNTIME:
+        continue
+    _cand = os.path.join(_sys32, _base)
+    _old_v, _new_v = _dll_version(_src), _dll_version(_cand)
+    if os.path.exists(_cand) and _new_v >= _old_v:
+        a.binaries[_i] = (_dest, _cand, _kind)
+        _swapped_runtimes.append(f"{_dest} {'.'.join(map(str, _old_v))} -> "
+                                 f"{'.'.join(map(str, _new_v))}")
+for _s in _swapped_runtimes:
+    print(f"[spec] MSVC runtime swapped to System32 copy: {_s}")
 
 pyz = PYZ(a.pure)
 

@@ -30,8 +30,11 @@ python -m PyInstaller -y openwater.spec  # package .exe
 | `fpga_laser_config.py` | 391 lines. FPGA register model + laser-param loader. Used by `motion_connector.fpgaAddressModel` and `Settings.qml`. |
 | `histogram_classifier.py` | 351 lines. Signal-processing for histogram analysis (thresholds appear hardcoded — inspect before relying on outputs). |
 | `motion_singleton.py` | Singleton wrapper for the SDK `MOTIONInterface`. |
+| `procedures_controller.py` | Procedures pane backend — resolves and spawns WI-00015 procedures, streams their stdout, answers their prompts. |
+| `utils/procedure_runner.py` | The `--run-procedure` hook: turns the app exe into a runner for a bundled `omotion.scripts.*` module. |
 | `version.py` | Version string; updated from git tag in CI. |
 | `rthook_libusb_paths.py` | PyInstaller runtime hook — points the bundle at vendored libusb DLLs at exe launch. |
+| `pages/Procedures.qml` | Procedures pane — procedure picker, Start/Stop, status pill, terminal, operator prompt row. |
 | `pages/Demo.qml` | **2242 lines.** Live monitoring — PDC tracking chart, per-camera telemetry, console updates. |
 | `pages/Sensor.qml` | 1653 lines. Sensor telemetry, camera power, IMU/accel display. |
 | `pages/Console.qml` | 1420 lines. Device info, fan control, RGB LED, safety limits. |
@@ -39,6 +42,43 @@ python -m PyInstaller -y openwater.spec  # package .exe
 | `models/fpga_model.json` | FPGA register map — 4 modules (TA, Seed, Safety EE, Safety OPT), each on its own I2C channel via `mux_idx=1`. Per-register fields: `name`, `friendlyName`, `desc`, `start_address`, `data_size`, `direction` (RW/RD/WR), `unit`, `scale`. |
 | `openwater.spec` | PyInstaller spec. |
 | `.github/workflows/release-build.yml` | Single CI workflow — builds, packages, releases on tags / push / manual dispatch. |
+
+## Procedures pane (WI-00015)
+
+Procedures are `omotion.scripts.wi15_*` modules run as a **child process**, so
+each run is byte-identical to a headless bench run and Stop is a hard kill. The
+pane releases the app's console/sensor handles for the child and reacquires them
+after, issuing a `stop_trigger` backstop so a killed procedure can't leave the
+laser firing.
+
+**The app runs only the procedures in the omotion it was built with.** There is
+deliberately no override — no env var, no `PYTHONPATH`, no checkout selection.
+A release that could be pointed at another copy would produce calibration
+evidence whose provenance it cannot vouch for. To run a different copy, run it
+from the SDK directly.
+
+| App is | Runs | Needs on the bench |
+|---|---|---|
+| A release (frozen) | `TestApp_console.exe --run-procedure <module> …` — itself | nothing |
+| From source | `python -m <module>` under `sys.executable` | the omotion that interpreter imports must carry `omotion.scripts` |
+
+`--run-procedure` is not a feature, it's a discriminator. A PyInstaller bundle
+ships no `python.exe` — `sys.executable` *is* the app — so the child the pane
+needs can only be the app itself, told to be a runner instead of the GUI.
+`utils/procedure_runner.py` handles it above `main.py`'s imports, because
+importing `motion_singleton` would construct a `MOTIONInterface` and grab the
+device handles the parent just released for that child.
+
+PyInstaller starts the child isolated, so it ignores `PYTHONPATH` (making the
+no-override rule structural, not just policy) *and* `PYTHONUNBUFFERED` /
+`PYTHONUTF8` — which is why the runner reconfigures its own streams to UTF-8
+line-buffered.
+
+`openwater.spec` asserts at build time that `omotion.scripts` carries the
+`wi15_*` modules — the SDK it packages against must be new enough (they landed
+in openmotion-sdk PR #232, branch `next`). A build against the latest *published*
+SDK wheel will fail this until an SDK release includes them; the workflow's
+`-dev.N` tag path installs from SDK `next` and does build.
 
 ## Working without hardware
 
@@ -123,5 +163,6 @@ Both use the same `motion_connector.py` pattern, but expose different surfaces:
 | Add a sensor or console diagnostic | Pick the right page (`Demo.qml` / `Sensor.qml` / `Console.qml`) → add a slot in `motion_connector.py` → call the relevant SDK method. |
 | Add or change an FPGA register | `models/fpga_model.json` → slot in `motion_connector.py` → bind in `pages/Settings.qml`. |
 | Tune a histogram classifier threshold | `histogram_classifier.py` — currently hardcoded; consider moving to config. |
-| Add a CLI flag | `main.py` lines 42–51 (argparse). |
+| Add a CLI flag | `main.py` — argparse in `main()`. Anything that must run before Qt and before the SDK singleton (as `--run-procedure` does) goes above the imports instead. |
+| Add a procedure to the pane | Append a `_sdk_module_procedure(...)` entry in `procedures_controller._build_procedures`. Nothing else — the pane is procedure-agnostic. |
 | Trigger firmware update | `motion_connector.py` `beginFpgaFirmwareUpdate` / sensor DFU path. **No confirmation UI** — wrap in a dialog if you're worried about misclicks. Bootloader install is the exception: `installBootloader` (release tag) and `installBootloaderFromLocal` (browsed `motion-*-production.bin`) both gate behind `bootloaderWarningDialog`. |

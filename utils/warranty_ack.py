@@ -20,9 +20,14 @@ from PyQt6.QtCore import QObject, QSettings, pyqtProperty, pyqtSignal, pyqtSlot
 logger = logging.getLogger(__name__)
 
 # QSettings scope. On Windows this resolves to
-# HKCU\Software\Openwater\Open-MOTION Engineering App.
+# HKCU\Software\Openwater\Open-Motion Test App.
 ORGANIZATION = "Openwater"
-APPLICATION = "Open-MOTION Engineering App"
+APPLICATION = "Open-Motion Test App"
+
+# Scope used before the app was renamed (issue #114). Acceptance recorded by
+# older builds lives here; read once as a fallback so the rename does not
+# re-prompt existing installs. Never written to.
+LEGACY_APPLICATION = "Open-MOTION Engineering App"
 
 # Key holding the acceptance flag.
 SETTINGS_KEY = "warranty/accepted"
@@ -58,14 +63,45 @@ class WarrantyAck(QObject):
 
     acceptedChanged = pyqtSignal()
 
-    def __init__(self, settings: QSettings | None = None, parent=None):
-        """`settings` is injectable so tests can supply a temp INI store
-        instead of touching the real registry."""
+    def __init__(
+        self,
+        settings: QSettings | None = None,
+        parent=None,
+        legacy_settings: QSettings | None = None,
+    ):
+        """`settings` and `legacy_settings` are injectable so tests can supply
+        temp INI stores instead of touching the real registry. When `settings`
+        is injected without `legacy_settings`, the legacy fallback is skipped
+        entirely — tests must never read the developer's real registry."""
         super().__init__(parent)
+        if settings is None and legacy_settings is None:
+            legacy_settings = QSettings(ORGANIZATION, LEGACY_APPLICATION)
         self._settings = (
             settings if settings is not None else QSettings(ORGANIZATION, APPLICATION)
         )
         self._accepted = self._read()
+        if not self._accepted and legacy_settings is not None:
+            self._migrate_legacy(legacy_settings)
+
+    def _migrate_legacy(self, legacy_settings: QSettings) -> None:
+        """Carry an acceptance recorded under the pre-rename scope forward.
+
+        Read-only against the legacy store; a hit is re-recorded under the
+        current scope via ``accept()``. Same fail-closed rule as ``_read``:
+        any problem means no migration, worst case a re-prompt.
+        """
+        try:
+            if not _coerce_accepted(legacy_settings.value(SETTINGS_KEY)):
+                return
+        except Exception as exc:
+            logger.warning(
+                "Could not read legacy warranty acceptance: %s", exc
+            )
+            return
+        logger.info(
+            "Migrating warranty acceptance from legacy settings scope."
+        )
+        self.accept()
 
     def _read(self) -> bool:
         try:

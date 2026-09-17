@@ -70,6 +70,8 @@ Rectangle {
                                    ? "#F1C40F"
                                : ProceduresController.status === "pass"
                                    ? "#27AE60"
+                               : ProceduresController.status === "override"
+                                   ? "#E67E22"
                                : ProceduresController.status === "fail"
                                    ? "#C0392B"
                                    : "#7F8C8D"
@@ -88,6 +90,8 @@ Rectangle {
                                   ? "In process"
                               : ProceduresController.status === "pass"
                                   ? "Pass"
+                              : ProceduresController.status === "override"
+                                  ? "Override"
                               : ProceduresController.status === "fail"
                                   ? "Fail"
                                   : "Idle"
@@ -105,11 +109,28 @@ Rectangle {
                 Material.accent: "#27AE60"
             }
 
+            // Arms a password-protected override for the next run only. The
+            // procedure asks for the password (masked below) and then for
+            // the acceptance values in the terminal; a run that writes under
+            // override ends amber, never as a pass.
+            CheckBox {
+                id: overrideCheck
+                visible: ProceduresController.overrideSupported
+                text: "Allow override"
+                enabled: !ProceduresController.running
+                         && ProceduresController.currentProcedureSupportsOverride
+                checked: ProceduresController.overrideArmed
+                onToggled: ProceduresController.overrideArmed = checked
+                Material.accent: "#E67E22"
+            }
+
             Item { Layout.fillWidth: true }
 
             Label {
-                visible: ProceduresController.promptType === "text"
-                text: "Operator input needed"
+                visible: ProceduresController.promptType !== ""
+                text: ProceduresController.promptType === "password"
+                          ? "Password needed"
+                          : "Operator input needed"
                 color: "#F1C40F"
                 font.pixelSize: 14
             }
@@ -174,7 +195,7 @@ Rectangle {
                     terminal.cursorPosition = terminal.length
                 }
                 function onPromptChanged() {
-                    if (ProceduresController.promptType === "text")
+                    if (ProceduresController.promptType !== "")
                         operatorInput.forceActiveFocus()
                 }
             }
@@ -202,13 +223,19 @@ Rectangle {
                 id: operatorInput
                 Layout.fillWidth: true
                 enabled: ProceduresController.running
-                placeholderText: ProceduresController.running
+                // A password prompt (override mode) is typed masked; the
+                // controller also keeps the answer out of the audit log.
+                echoMode: ProceduresController.promptType === "password"
+                    ? TextInput.Password : TextInput.Normal
+                placeholderText: ProceduresController.promptType === "password"
+                    ? "Type the override password and press Enter"
+                    : ProceduresController.running
                     ? "Type a response and press Enter"
                     : "Procedure input (available while running)"
                 color: "#D5D8DC"
                 font.family: "Consolas"
                 font.pixelSize: 16
-                Material.accent: ProceduresController.promptType === "text"
+                Material.accent: ProceduresController.promptType !== ""
                     ? "#F1C40F" : "#27AE60"
                 onAccepted: {
                     ProceduresController.answerPrompt(text)
@@ -219,9 +246,9 @@ Rectangle {
             Button {
                 text: "Send"
                 enabled: ProceduresController.running
-                Material.background: ProceduresController.promptType === "text"
+                Material.background: ProceduresController.promptType !== ""
                     ? "#F1C40F" : "#2C2C2E"
-                Material.foreground: ProceduresController.promptType === "text"
+                Material.foreground: ProceduresController.promptType !== ""
                     ? "black" : "white"
                 onClicked: {
                     ProceduresController.answerPrompt(operatorInput.text)

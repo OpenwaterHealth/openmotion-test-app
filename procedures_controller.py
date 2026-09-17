@@ -36,6 +36,15 @@ the operator input field. When the prompt ends with a small option group -
 - the pane additionally renders one answer button per option; clicking sends
 that option to the child's stdin verbatim.
 
+Override mode: the operator can arm a password-protected override for the
+next run (the SDK's ``omotion.calibration.override``). Arming adds
+``--allow-override`` to that one launch; the child asks for the password
+itself - which the pane masks and never logs - and then, for the laser
+calibrations, for the acceptance band and target in the terminal. A run that
+writes under override exits with the SDK's ``EXIT_OVERRIDE`` and is shown as
+an amber "Override" verdict, never as a pass. Arming never carries over to
+the next run.
+
 Audit logging: every line the pane terminal records - child output, operator
 answers (button presses and typed sends both funnel through
 ``answerPrompt``), pane status messages, and the final PASS/FAIL verdict -
@@ -85,6 +94,21 @@ STATUS_IDLE = "idle"
 STATUS_RUNNING = "running"
 STATUS_PASS = "pass"
 STATUS_FAIL = "fail"
+# The procedure wrote a calibration under operator override (the SDK's
+# omotion.calibration.override): neither a pass nor a fail, shown amber.
+STATUS_OVERRIDE = "override"
+
+# Exit code of a procedure that ended OVERRIDDEN. Mirrors the SDK constant;
+# the literal fallback keeps the verdict mapping stable against an SDK that
+# predates override mode (which then never exits with it).
+try:
+    from omotion.calibration.override import EXIT_OVERRIDE as _EXIT_OVERRIDE
+except Exception:
+    _EXIT_OVERRIDE = 3
+
+# The module whose presence means the bundled SDK understands
+# --allow-override.
+_OVERRIDE_MODULE = "omotion.calibration.override"
 
 MAX_LOG_LINES = 5000
 
@@ -206,7 +230,8 @@ def _omotion_location() -> str:
 
 
 def _sdk_module_procedure(name: str, module: str,
-                          args: list[str] | None = None) -> dict:
+                          args: list[str] | None = None,
+                          *, override: bool = False) -> dict:
     """Registry entry for an SDK procedure module.
 
     The procedures ship inside the ``omotion`` package (``omotion.scripts``,
@@ -241,6 +266,10 @@ def _sdk_module_procedure(name: str, module: str,
         "source": source,
         "missing": (None if _has_module(module)
                     else f"{module} is not available - {remedy}"),
+        # Whether the procedure honours operator override mode
+        # (--allow-override): the laser and measurement calibrations do,
+        # Safety Calibration never does.
+        "override": override,
     }
 
 
@@ -273,12 +302,17 @@ def _build_procedures() -> list[dict]:
             "Single-Sensor Laser Calibration",
             "omotion.scripts.wi15_single_sensor_laser_calibration",
             common,
+            override=True,
         ),
         _sdk_module_procedure(
             "Dual-Sensor Laser Calibration",
             "omotion.scripts.wi15_dual_sensor_laser_calibration",
             common,
+            override=True,
         ),
+        # Safety Calibration writes the laser-safety interlock limits; its
+        # gates are evidence checks, not an acceptance band. No override
+        # (bloodflow-app#482, open decision 1).
         _sdk_module_procedure(
             "Safety Calibration",
             "omotion.scripts.wi15_safety_calibration",
@@ -288,8 +322,29 @@ def _build_procedures() -> list[dict]:
             "Measurement Calibration (one sensor)",
             "omotion.scripts.wi15_measurement_calibration",
             common,
+            override=True,
         ),
     ]
+
+
+def _override_args(entry: dict, *, armed: bool) -> list[str]:
+    """The override flag for one launch.
+
+    Nothing unless the operator armed override for this run AND the selected
+    procedure honours it. The command line otherwise stays byte-identical to
+    a normal run, so an SDK predating override mode is never handed a flag it
+    would reject. The acceptance band and target are deliberately not passed:
+    the script asks the operator for them in the terminal after the password.
+    """
+    if not armed or not entry.get("override"):
+        return []
+    return ["--allow-override"]
+
+
+def _is_password_prompt(prompt: str) -> bool:
+    """A child prompt asking for a secret: the pane masks the typed answer
+    and keeps it out of the audit log."""
+    return "password" in prompt.lower()
 
 
 class ProceduresController(QObject):
@@ -298,6 +353,7 @@ class ProceduresController(QObject):
     promptChanged = pyqtSignal()
     logCleared = pyqtSignal()
     verboseChanged = pyqtSignal()
+    overrideChanged = pyqtSignal()
     # Internal: device release finished on the worker thread; queued back to
     # the main thread, which owns QProcess creation.
     _releaseFinished = pyqtSignal(int)
@@ -318,6 +374,8 @@ class ProceduresController(QObject):
         # operator session. The full log is always retained and audit-logged
         # regardless, so nothing is lost by starting hidden.
         self._verbose = False
+        # Override mode is armed per run and never persisted.
+        self._override_armed = False
         self._releaseFinished.connect(self._spawn_procedure)
         self._prompt_timer = QTimer(self)
         self._prompt_timer.setSingleShot(True)
@@ -371,6 +429,36 @@ class ProceduresController(QObject):
     verbose = pyqtProperty(bool, fget=_get_verbose, fset=_set_verbose,
                            notify=verboseChanged)
 
+    # -------------------------------------------------------- override mode
+    @pyqtProperty(bool, constant=True)
+    def overrideSupported(self) -> bool:
+        """Whether the bundled SDK understands override mode at all."""
+        return _has_module(_OVERRIDE_MODULE)
+
+    @pyqtProperty(bool, notify=overrideChanged)
+    def currentProcedureSupportsOverride(self) -> bool:
+        if 0 <= self._current_index < len(self._procedures):
+            return bool(self._procedures[self._current_index].get("override"))
+        return False
+
+    def _get_override_armed(self) -> bool:
+        return self._override_armed
+
+    def _set_override_armed(self, value: bool) -> None:
+        value = bool(value)
+        if value != self._override_armed:
+            self._override_armed = value
+            logger.info("override %s for the next run",
+                        "armed" if value else "disarmed")
+            self.overrideChanged.emit()
+
+    overrideArmed = pyqtProperty(bool, fget=_get_override_armed,
+                                 fset=_set_override_armed,
+                                 notify=overrideChanged)
+
+    def _override_launch_args(self, proc: dict) -> list[str]:
+        return _override_args(proc, armed=self._override_armed)
+
     # ---------------------------------------------------------------- slots
     @pyqtSlot()
     def paneOpened(self) -> None:
@@ -389,6 +477,7 @@ class ProceduresController(QObject):
         self._current_index = index
         self._set_status(STATUS_IDLE)
         self._set_prompt("")
+        self.overrideChanged.emit()   # currentProcedureSupportsOverride
 
     @pyqtSlot(int)
     def startProcedure(self, index: int) -> None:
@@ -403,12 +492,21 @@ class ProceduresController(QObject):
             self._log(f"! cannot start: {proc['missing']}")
             self._set_status(STATUS_FAIL)
             return
-
         self._lines.clear()
         self._linebuf = ""
         self.logCleared.emit()
         self._stop_requested = False
         self._log(f"=== {proc['name']} ===")
+        if self._override_armed:
+            if proc.get("override"):
+                self._log(
+                    "Override mode is ARMED for this run: the procedure asks "
+                    "for the override password first, then for the "
+                    "acceptance values, and asks again before writing "
+                    "anything outside the factory limits.")
+            else:
+                self._log("! override mode is not available for this "
+                          "procedure - running it normally")
         self._log("Preparing to start ...")
         self._set_status(STATUS_RUNNING)
 
@@ -481,12 +579,13 @@ class ProceduresController(QObject):
         self._process.finished.connect(self._on_finished)
         self._process.errorOccurred.connect(self._on_error)
 
-        self._detail(f"launching: {proc['program']} {' '.join(proc['args'])}")
+        args = [*proc["args"], *self._override_launch_args(proc)]
+        self._detail(f"launching: {proc['program']} {' '.join(args)}")
         # Provenance belongs in the audit log, not on the operator terminal.
         logger.info("procedure source: %s",
                     proc.get("source") or "interpreter's installed package")
         self._set_status(STATUS_RUNNING)
-        self._process.start(proc["program"], proc["args"])
+        self._process.start(proc["program"], args)
 
     @pyqtSlot()
     def stopProcedure(self) -> None:
@@ -505,7 +604,9 @@ class ProceduresController(QObject):
     def answerPrompt(self, text: str) -> None:
         if self._process is None:
             return
-        self._log(f"[operator] {text}")
+        # A password answer never reaches the terminal or the audit log.
+        self._log("[operator] ********" if self._prompt == "password"
+                  else f"[operator] {text}")
         self._process.write((text + "\n").encode("utf-8"))
         self._set_prompt("")
 
@@ -537,7 +638,8 @@ class ProceduresController(QObject):
         prompt = self._linebuf
         self._emit_line(prompt, force_show=True)
         self._linebuf = ""
-        self._set_prompt("text", options=_prompt_options(prompt))
+        self._set_prompt("password" if _is_password_prompt(prompt) else "text",
+                         options=_prompt_options(prompt))
 
     def _emit_line(self, line: str, force_show: bool = False) -> None:
         self._lines.append(line)
@@ -574,10 +676,19 @@ class ProceduresController(QObject):
         elif exit_code == 0:
             self._log("Final result: PASS")
             self._set_status(STATUS_PASS)
+        elif exit_code == _EXIT_OVERRIDE:
+            self._detail(f"procedure exit code {exit_code}")
+            self._log("Final result: OVERRIDE")
+            self._set_status(STATUS_OVERRIDE)
         else:
             self._detail(f"procedure exit code {exit_code}")
             self._log("Final result: FAIL")
             self._set_status(STATUS_FAIL)
+        # Override is a per-run decision: it never carries over to the next
+        # Start, whatever this run's verdict was.
+        if self._override_armed:
+            self._detail("override disarmed - arm it again for another run")
+        self._set_override_armed(False)
         self._reacquire_devices()
 
     def _reacquire_devices(self) -> None:

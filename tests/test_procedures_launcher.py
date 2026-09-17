@@ -13,6 +13,7 @@ constructed.
 import logging
 import os
 import sys
+from types import SimpleNamespace
 
 import procedures_controller as pc
 from utils import procedure_runner
@@ -337,3 +338,170 @@ def test_evidence_root_is_the_checkout_when_run_from_source(monkeypatch):
     monkeypatch.delattr(pc.sys, "frozen", raising=False)
 
     assert pc._app_dir() == os.path.dirname(os.path.abspath(pc.__file__))
+
+
+# ------------------------------------------------------------ override mode
+#
+# Password-protected, per-run override of the calibration acceptance criteria
+# (epic bloodflow-app#482). The pane only arms it and renders the verdict; the
+# SDK script does the password check and the consent question itself.
+
+def _controller(monkeypatch, procedures):
+    from PyQt6.QtCore import QCoreApplication
+
+    QCoreApplication.instance() or QCoreApplication([])
+    monkeypatch.setattr(pc, "_build_procedures", lambda: procedures)
+    controller = pc.ProceduresController()
+    monkeypatch.setattr(controller, "_reacquire_devices", lambda: None)
+    return controller
+
+
+def test_registry_declares_which_procedures_honour_override(monkeypatch):
+    monkeypatch.setattr(pc, "_operator_prefill_args", lambda: [])
+    monkeypatch.delattr(pc.sys, "frozen", raising=False)
+    monkeypatch.setattr(pc, "_has_module", lambda module: True)
+
+    kinds = {e["name"]: e["override"] for e in pc._build_procedures()}
+
+    assert kinds == {
+        "Single-Sensor Laser Calibration": True,
+        "Dual-Sensor Laser Calibration": True,
+        "Safety Calibration": False,
+        "Measurement Calibration (one sensor)": True,
+    }
+
+
+def test_override_flag_only_when_armed_and_supported():
+    """Only --allow-override is ever passed: the acceptance values are typed
+    in the terminal when the script asks, never built into the command."""
+    assert pc._override_args({"override": True}, armed=False) == []
+    assert pc._override_args({"override": False}, armed=True) == []
+    assert pc._override_args({}, armed=True) == []
+    assert pc._override_args({"override": True}, armed=True) == ["--allow-override"]
+
+
+def test_override_exit_code_is_an_amber_verdict_and_disarms(monkeypatch, caplog):
+    controller = _controller(monkeypatch, [{"name": "Demo", "override": True}])
+    controller.overrideArmed = True
+
+    with caplog.at_level(logging.INFO, logger="procedures_controller"):
+        controller._on_finished(pc._EXIT_OVERRIDE, None)
+
+    assert controller.status == pc.STATUS_OVERRIDE
+    assert "Final result: OVERRIDE" in caplog.text
+    assert f"# procedure exit code {pc._EXIT_OVERRIDE}" in caplog.text
+    assert controller.overrideArmed is False
+
+
+def test_override_never_carries_over_to_the_next_run(monkeypatch):
+    controller = _controller(monkeypatch, [{"name": "Demo", "override": True}])
+    for code in (0, 1):
+        controller.overrideArmed = True
+        controller._on_finished(code, None)
+        assert controller.overrideArmed is False
+
+
+def test_armed_start_announces_the_password_and_value_prompts(monkeypatch, caplog):
+    """The pane only arms override; the script asks for the password and
+    the acceptance values itself, so the operator is told to expect both."""
+    controller = _controller(
+        monkeypatch, [{"name": "Demo", "override": True, "missing": None}])
+    controller.overrideArmed = True
+    started = []
+
+    class FakeThread:
+        def __init__(self, **kwargs):
+            started.append(kwargs)
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(pc, "threading", SimpleNamespace(Thread=FakeThread))
+
+    with caplog.at_level(logging.INFO, logger="procedures_controller"):
+        controller.startProcedure(0)
+
+    assert len(started) == 1
+    assert controller.status == pc.STATUS_RUNNING
+    assert "Override mode is ARMED for this run" in caplog.text
+    assert "acceptance values" in caplog.text
+
+
+def test_password_prompt_is_masked_and_never_logged(monkeypatch, caplog):
+    controller = _controller(monkeypatch, [{"name": "Demo"}])
+    written = []
+    controller._process = SimpleNamespace(write=written.append)
+    controller._linebuf = "Override password: "
+
+    with caplog.at_level(logging.INFO, logger="procedures_controller"):
+        controller._flush_prompt_tail()
+        assert controller.promptType == "password"
+        assert controller.promptOptions == []
+        controller.answerPrompt("s3cret")
+
+    assert written == [b"s3cret\n"]
+    assert "s3cret" not in caplog.text
+    assert "[operator] ********" in caplog.text
+    assert controller.promptType == ""
+
+
+def test_ordinary_prompts_still_arm_text_input(monkeypatch):
+    controller = _controller(monkeypatch, [{"name": "Demo"}])
+    controller._process = SimpleNamespace(write=lambda data: None)
+    controller._linebuf = "Is left correct? (yes/no): "
+
+    controller._flush_prompt_tail()
+
+    assert controller.promptType == "text"
+    assert controller.promptOptions == ["yes", "no"]
+
+
+def test_launch_appends_override_flags_only_for_the_armed_run(monkeypatch):
+    """The command line is byte-identical to a normal run unless override is
+    armed, so an SDK predating override mode never sees flags it rejects."""
+    proc = {"name": "Demo", "program": "python", "args": ["-m", "demo"],
+            "override": True, "missing": None}
+    controller = _controller(monkeypatch, [proc])
+    starts = []
+
+    class FakeProcess:
+        ProcessChannelMode = SimpleNamespace(MergedChannels=0)
+        readyReadStandardOutput = SimpleNamespace(connect=lambda fn: None)
+        finished = SimpleNamespace(connect=lambda fn: None)
+        errorOccurred = SimpleNamespace(connect=lambda fn: None)
+
+        def __init__(self, parent=None):
+            pass
+
+        def setProcessChannelMode(self, mode):
+            pass
+
+        def setProcessEnvironment(self, env):
+            pass
+
+        def setWorkingDirectory(self, cwd):
+            pass
+
+        def start(self, program, args):
+            starts.append((program, list(args)))
+
+    monkeypatch.setattr(pc, "QProcess", FakeProcess)
+
+    controller._spawn_procedure(0)
+    controller._process = None
+    controller.overrideArmed = True
+    controller._spawn_procedure(0)
+
+    assert starts[0] == ("python", ["-m", "demo"])
+    assert starts[1] == ("python", ["-m", "demo", "--allow-override"])
+
+
+def test_current_procedure_override_support_follows_the_selection(monkeypatch):
+    controller = _controller(monkeypatch, [
+        {"name": "Laser", "override": True},
+        {"name": "Safety", "override": False},
+    ])
+
+    assert controller.currentProcedureSupportsOverride is True
+    controller.selectProcedure(1)
+    assert controller.currentProcedureSupportsOverride is False

@@ -1151,11 +1151,13 @@ Rectangle {
                             // Fallback: if you don’t have safetyStack, do an initial refresh when created
                             Component.onCompleted: {
                                 try{
-                                    MOTIONInterface.tec_status();
                                     // Only meaningful once connected; the real
-                                    // read happens on connect (consoleUpdateTimer)
-                                    // and on TEC CTRL tab selection.
+                                    // reads happen on connect (ConsoleStatusThread
+                                    // polls tec_status at ~1 Hz, consoleUpdateTimer)
+                                    // and on TEC CTRL tab selection. Calling
+                                    // tec_status() at boot logs a spurious ERROR (#126).
                                     if (MOTIONInterface.consoleConnected) {
+                                        MOTIONInterface.tec_status();
                                         MOTIONInterface.queryTecTripValue();
                                     }
                                 }catch(e){

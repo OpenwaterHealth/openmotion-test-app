@@ -34,6 +34,7 @@ python -m PyInstaller -y openwater.spec  # package .exe
 | `utils/procedure_runner.py` | The `--run-procedure` hook: turns the app exe into a runner for a bundled `omotion.scripts.*` module. |
 | `version.py` | Version string; updated from git tag in CI. |
 | `rthook_libusb_paths.py` | PyInstaller runtime hook — points the bundle at vendored libusb DLLs at exe launch. |
+| `dfu_driver.py` | ~170 lines. Windows DFU-driver preflight (#94): reads `HKLM\...\Enum\USB\VID_0483&PID_DF11` to verify a usable driver (WinUSB/libusbK) is recorded before any DFU entry. Blocks only on a positively-bad state; never-seen and unreadable instances pass, and driverless records pass as stale when the driver store (`DriverDatabase\DeviceIds\USB\VID_0483&PID_DF11`) holds a DF11 INF. |
 | `pages/Procedures.qml` | Procedures pane — procedure picker, Start/Stop, status pill, terminal, operator prompt row. |
 | `pages/Demo.qml` | **2242 lines.** Live monitoring — PDC tracking chart, per-camera telemetry, console updates. |
 | `pages/Sensor.qml` | 1653 lines. Sensor telemetry, camera power, IMU/accel display. |
@@ -146,6 +147,7 @@ To add or change a register:
 - **`histogram_classifier.py` thresholds are hardcoded** (351 lines, no visible config). Inspect before trusting outputs for new conditions.
 - **Single TODO** in `motion_connector.py` (~line 2985): "replace stub with actual SDK query when available" — flag if you hit it.
 - **Windows libusb** must be reachable at runtime; PyInstaller bundles it via `rthook_libusb_paths.py`. If exe enumeration fails, check the hook.
+- **DFU driver preflight can refuse a flash before DFU entry** (#94). `startConsoleFirmwareUpdate` and `_start_bootloader_thread` call `dfu_driver.dfu_driver_issue()` and emit the existing error signals with an "install WinUSB via Zadig (Device > Create New Device, 0483 DF11)" message if Windows records the DFU device (0483:DF11) bound to an unusable driver, or bound to none while the driver store has no DF11 INF (driverless records alongside a store INF are treated as stale and pass). A machine that has never seen a DFU device passes the preflight — first-flash failures there still surface the old way (SDK-side, after DFU entry).
 
 ## Differences vs `openmotion-bloodflow-app`
 

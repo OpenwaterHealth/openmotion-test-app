@@ -1,7 +1,7 @@
 import QtQuick 6.0
 import QtQuick.Controls 6.0
 import QtQuick.Layouts 6.0
-import QtQuick.Dialogs 6.2
+import QtQuick.Dialogs 6.3
 import OpenMotion 1.0
 
 import "../components"
@@ -72,13 +72,16 @@ Rectangle {
     property string blInstallLocalPath: ""
     // Target used when opening the production-image upload dialog
     property string blUploadTarget: ""
-    // Pending bootloader upgrade (old bootloader -> 1.2.0), set by a right-click
-    // on a lock button and consumed by bootloaderUpgradeDialog. Two local
-    // files: the signed updater image and
-    // the signed application to install afterwards.
-    property string blUpgradeTarget: ""
-    property string blUpgradeUpdaterPath: ""
-    property string blUpgradeAppPath: ""
+    // Pending "update from release folder", set by the folder buttons and
+    // consumed by releaseFolderUpdateDialog. rfSummary is what the connector
+    // found in the folder, for the operator to read before confirming.
+    property string rfTarget: ""
+    property string rfFolder: ""
+    property string rfSummary: ""
+    // fwResultDialog titles for whatever reports through
+    // bootloaderInstallFinished: a bootloader install or a release-folder update.
+    property string blResultOkTitle: "Bootloader Installed"
+    property string blResultFailTitle: "Bootloader Install Failed"
     // Bumped whenever a boot mode is observed, so the Install Bootloader
     // visibility bindings re-evaluate (the backing call is a slot, not a
     // notifying property).
@@ -171,14 +174,57 @@ Rectangle {
         bootloaderWarningDialog.open()
     }
 
-    // Right-click on a lock button. Replacing an old bootloader needs two local
-    // images, picked one after the other; both are checked before the
-    // irreversible-upgrade confirmation is shown.
-    function _startBootloaderUpgrade(target) {
-        blUpgradeTarget = target
-        blUpgradeUpdaterPath = ""
-        blUpgradeAppPath = ""
-        blUpdaterDialog.open()
+    // The folder button of a device. The connector picks the device's images
+    // out of the folder and checks them; the operator confirms what it found.
+    function _startReleaseFolderUpdate(target) {
+        rfTarget = target
+        releaseFolderDialog.open()
+    }
+
+    function _localPathFromUrl(url) {
+        var s = url ? url.toString() : ""
+        if (s.indexOf("file://") === 0) {
+            s = decodeURIComponent(s.replace(/^file:\/\//, ""))
+            // Windows paths arrive as /C:/... -- drop the leading slash.
+            if (s.length > 2 && s[0] === '/' && s[2] === ':') s = s.substring(1)
+        }
+        return s
+    }
+
+    // "Update from release folder..." -- one per device, next to its lock
+    // button. An inline component cannot see this page's ids, so it reports
+    // the click and the page starts the flow.
+    component ReleaseFolderButton: Rectangle {
+        id: rfButton
+        property string target: ""
+        property bool busy: MOTIONInterface.consoleFirmwareUpdateBusy
+        signal activated(string target)
+        width: 30
+        height: 30
+        radius: 15
+        color: busy ? "#7F8C8D" : (rfButtonMouseArea.containsMouse ? "#34495E" : "#2C3E50")
+
+        Text {
+            text: "📁"
+            anchors.centerIn: parent
+            font.pixelSize: 14
+            color: "white"
+        }
+
+        MouseArea {
+            id: rfButtonMouseArea
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: rfButton.busy ? Qt.ArrowCursor : Qt.PointingHandCursor
+            onClicked: {
+                if (!rfButton.busy)
+                    rfButton.activated(rfButton.target)
+            }
+        }
+
+        ToolTip.visible: rfButtonMouseArea.containsMouse
+        ToolTip.text: "Update from release folder — installs or upgrades the bootloader if the device needs it (irreversible)"
+        ToolTip.delay: 400
     }
 
     // Modal dialog styling (firmware update)
@@ -436,7 +482,7 @@ Rectangle {
         function onBootloaderInstallFinished(target, success, message) {
             fwUpdateTarget = target
             fwProgressDialog.close()
-            fwResultDialog.title = success ? "Bootloader Installed" : "Bootloader Install Failed"
+            fwResultDialog.title = success ? blResultOkTitle : blResultFailTitle
             var prefix = (target === "console") ? "Console: " : (target === "left") ? "Left sensor: " : "Right sensor: "
             fwResultDialog.message = prefix + message
             fwResultDialog.open()
@@ -745,38 +791,24 @@ Rectangle {
         }
     }
 
-    FileDialog {
-        id: blUpdaterDialog
-        title: "Select bootloader updater image (signed for the old bootloader)"
-        nameFilters: ["Updater images (*.bin)"]
+    FolderDialog {
+        id: releaseFolderDialog
+        title: "Select the firmware release folder"
         onAccepted: {
-            var file = _localPathFromDialog(blUpdaterDialog)
-            if (!file) return
-            blUpgradeUpdaterPath = file
-            // Opened after this dialog has finished closing.
-            Qt.callLater(function() { blUpgradeAppDialog.open() })
-        }
-    }
+            var folder = _localPathFromUrl(releaseFolderDialog.selectedFolder)
+            if (!folder) return
 
-    FileDialog {
-        id: blUpgradeAppDialog
-        title: "Select signed application image (for bootloader 1.2.0)"
-        nameFilters: ["Signed images (*.bin)"]
-        onAccepted: {
-            var file = _localPathFromDialog(blUpgradeAppDialog)
-            if (!file) return
-
-            // Reject a wrong-device or wrongly-signed pair here, before the
-            // irreversible-upgrade confirmation is shown.
-            var err = MOTIONInterface.validateBootloaderUpgrade(
-                        blUpgradeTarget, blUpgradeUpdaterPath, file)
-            if (err !== "") {
-                fwErrorDialog.message = err
+            // Pick and verify the images here, before the confirmation is
+            // shown: a wrong-device or damaged image is refused now.
+            var plan = JSON.parse(MOTIONInterface.describeReleaseFolder(rfTarget, folder))
+            if (plan.error !== "") {
+                fwErrorDialog.message = plan.error
                 fwErrorDialog.open()
                 return
             }
-            blUpgradeAppPath = file
-            bootloaderUpgradeDialog.open()
+            rfFolder = folder
+            rfSummary = plan.summary
+            releaseFolderUpdateDialog.open()
         }
     }
 
@@ -1772,15 +1804,7 @@ Rectangle {
                                         anchors.fill: parent
                                         hoverEnabled: true
                                         cursorShape: blConsoleLockBtn.actionable ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                        acceptedButtons: Qt.LeftButton | Qt.RightButton
-                                        onClicked: (mouse) => {
-                                            // Right button: upgrade an old bootloader. Offered whatever the
-                                            // icon shows, because not every firmware reports its boot mode.
-                                            if (mouse.button === Qt.RightButton) {
-                                                if (!blConsoleLockBtn.busy)
-                                                    _startBootloaderUpgrade("console")
-                                                return
-                                            }
+                                        onClicked: {
                                             if (!blConsoleLockBtn.actionable)
                                                 return
                                             var tag = consoleLatestCombo.currentText
@@ -1794,9 +1818,15 @@ Rectangle {
 
                                     ToolTip.visible: installBlConsoleMouseArea.containsMouse
                                     ToolTip.text: blConsoleLockBtn.locked
-                                        ? "Bootloader installed — device is locked (irreversible over USB). Right-click: upgrade an old bootloader to 1.2.0"
-                                        : "Install bootloader — locks this device (irreversible). Right-click: upgrade an old bootloader to 1.2.0"
+                                        ? "Bootloader installed — device is locked (irreversible over USB)"
+                                        : "Install bootloader — locks this device (irreversible)"
                                     ToolTip.delay: 400
+                                }
+
+                                ReleaseFolderButton {
+                                    target: "console"
+                                    visible: MOTIONInterface.consoleConnected
+                                    onActivated: (target) => _startReleaseFolderUpdate(target)
                                 }
 
                                 Rectangle {
@@ -1981,15 +2011,7 @@ Rectangle {
                                         anchors.fill: parent
                                         hoverEnabled: true
                                         cursorShape: blLeftLockBtn.actionable ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                        acceptedButtons: Qt.LeftButton | Qt.RightButton
-                                        onClicked: (mouse) => {
-                                            // Right button: upgrade an old bootloader. Offered whatever the
-                                            // icon shows, because not every firmware reports its boot mode.
-                                            if (mouse.button === Qt.RightButton) {
-                                                if (!blLeftLockBtn.busy)
-                                                    _startBootloaderUpgrade("left")
-                                                return
-                                            }
+                                        onClicked: {
                                             if (!blLeftLockBtn.actionable)
                                                 return
                                             var tag = leftLatestCombo.currentText
@@ -2003,9 +2025,15 @@ Rectangle {
 
                                     ToolTip.visible: installBlLeftMouseArea.containsMouse
                                     ToolTip.text: blLeftLockBtn.locked
-                                        ? "Bootloader installed — device is locked (irreversible over USB). Right-click: upgrade an old bootloader to 1.2.0"
-                                        : "Install bootloader — locks this device (irreversible). Right-click: upgrade an old bootloader to 1.2.0"
+                                        ? "Bootloader installed — device is locked (irreversible over USB)"
+                                        : "Install bootloader — locks this device (irreversible)"
                                     ToolTip.delay: 400
+                                }
+
+                                ReleaseFolderButton {
+                                    target: "left"
+                                    visible: MOTIONInterface.leftSensorConnected
+                                    onActivated: (target) => _startReleaseFolderUpdate(target)
                                 }
 
                                 Rectangle {
@@ -2185,15 +2213,7 @@ Rectangle {
                                         anchors.fill: parent
                                         hoverEnabled: true
                                         cursorShape: blRightLockBtn.actionable ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                        acceptedButtons: Qt.LeftButton | Qt.RightButton
-                                        onClicked: (mouse) => {
-                                            // Right button: upgrade an old bootloader. Offered whatever the
-                                            // icon shows, because not every firmware reports its boot mode.
-                                            if (mouse.button === Qt.RightButton) {
-                                                if (!blRightLockBtn.busy)
-                                                    _startBootloaderUpgrade("right")
-                                                return
-                                            }
+                                        onClicked: {
                                             if (!blRightLockBtn.actionable)
                                                 return
                                             var tag = rightLatestCombo.currentText
@@ -2207,9 +2227,15 @@ Rectangle {
 
                                     ToolTip.visible: installBlRightMouseArea.containsMouse
                                     ToolTip.text: blRightLockBtn.locked
-                                        ? "Bootloader installed — device is locked (irreversible over USB). Right-click: upgrade an old bootloader to 1.2.0"
-                                        : "Install bootloader — locks this device (irreversible). Right-click: upgrade an old bootloader to 1.2.0"
+                                        ? "Bootloader installed — device is locked (irreversible over USB)"
+                                        : "Install bootloader — locks this device (irreversible)"
                                     ToolTip.delay: 400
+                                }
+
+                                ReleaseFolderButton {
+                                    target: "right"
+                                    visible: MOTIONInterface.rightSensorConnected
+                                    onActivated: (target) => _startReleaseFolderUpdate(target)
                                 }
 
                                 Rectangle {
@@ -2396,6 +2422,8 @@ Rectangle {
             consoleFwPercent = -1
             consoleFwMessage = ""
             consoleFwStageText = "Starting…"
+            blResultOkTitle = "Bootloader Installed"
+            blResultFailTitle = "Bootloader Install Failed"
             fwProgressDialog.open()
             if (blInstallLocalPath !== "")
                 MOTIONInterface.installBootloaderFromLocal(blInstallTarget, blInstallLocalPath)
@@ -2404,30 +2432,29 @@ Rectangle {
         }
     }
 
-    // Bootloader upgrade (old bootloader -> 1.2.0). As blunt as the install
-    // dialog above, and for the same reason.
+    // Update from a release folder. The connector has already picked and
+    // verified the images; this states what may happen to the device.
     ConfirmDialog {
-        id: bootloaderUpgradeDialog
-        title: "Upgrade Bootloader — Irreversible"
-        warningText: "This replaces the bootloader of the " + blUpgradeTarget +
-                     " with version 1.2.0 and then installs the application. It " +
-                     "CANNOT be undone over USB. Afterwards the device only accepts " +
-                     "firmware signed for the new bootloader, and its bootloader can " +
-                     "only be changed again on the bench. DO NOT power off or unplug " +
-                     "the device until the upgrade has finished: an interruption while " +
-                     "the bootloader is rewritten needs an ST-LINK/SWD debugger to " +
-                     "recover. A device already on 1.2.0 only gets the application."
-        questionText: "Upgrade using\n" + blUpgradeUpdaterPath +
-                      "\nand install\n" + blUpgradeAppPath + "?"
-        confirmText: "Upgrade Bootloader"
+        id: releaseFolderUpdateDialog
+        title: "Update From Release Folder"
+        warningText: "The " + rfTarget + " will be brought to the firmware in this " +
+                     "folder, whatever it is running now. If it has no bootloader, or " +
+                     "one older than 1.2.0, the bootloader is installed or replaced " +
+                     "first. That CANNOT be undone over USB: afterwards the device only " +
+                     "accepts firmware signed for the new bootloader, and its bootloader " +
+                     "can only be changed again on the bench. DO NOT power off or unplug " +
+                     "the device until the update has finished."
+        questionText: rfFolder + "\n\n" + rfSummary + "\n\nUpdate the " + rfTarget + "?"
+        confirmText: "Update"
         declineText: "Cancel"
         onConfirmed: {
             consoleFwPercent = -1
             consoleFwMessage = ""
             consoleFwStageText = "Starting…"
+            blResultOkTitle = "Firmware Update Complete"
+            blResultFailTitle = "Firmware Update Failed"
             fwProgressDialog.open()
-            MOTIONInterface.upgradeBootloaderFromLocal(
-                        blUpgradeTarget, blUpgradeUpdaterPath, blUpgradeAppPath)
+            MOTIONInterface.updateFromReleaseFolder(rfTarget, rfFolder)
         }
     }
 

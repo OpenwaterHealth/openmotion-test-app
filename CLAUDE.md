@@ -98,17 +98,25 @@ SDK wheel will fail this until an SDK release includes them; the workflow's
 - `--no-github` disables the firmware-release dropdowns, leaving `Upload File...` as the only entry (useful when network is locked down or you're on a factory floor without internet). All three flashing paths work from a local file in this mode: application firmware, FPGA `.jed`, and bootloader install from a `motion-*-production.bin` (#83). The production image is validated against the selected target first, by filename; the SDK then verifies the signed application inside it against that product's bootloader key before anything is written.
 - For full mock-mode equivalent to bloodflow-app, point this app at a mocked SDK (the SDK exposes `OPENMOTION_DEMO=1` and `cameraFakeData` debug-flag pathways).
 
-## Firmware update, bootloader install and bootloader upgrade
+## Firmware update, bootloader install, update from release folder
 
 All three go through `omotion.FirmwareUpdater.update()` (pure-Python DFU, no `dfu-util`); the SDK decides what the device is running once it is in DFU. What differs is what each thread in `motion_connector.py` is allowed to ask for:
 
 | Path | Thread | Passes to `update()` |
 |---|---|---|
 | Firmware update (release or `Upload File...`) | `_DeviceFirmwareFlashThread` | the application only. Never `acknowledge_irreversible`, so it can never touch a bootloader; a unit that needs one changed fails with the SDK's explanation. |
-| Install bootloader (lock button, left click) | `_BootloaderInstallThread` | `production_image` + `acknowledge_irreversible=True`. For a unit with no bootloader; refused without writing if one is present. |
-| Upgrade bootloader (lock button, **right click**) | `_BootloaderUpgradeThread` | `updater_image` + signed application + `acknowledge_irreversible=True`. For a unit on bootloader 1.0.0/1.1.0; a unit already on 1.2.0 just gets the application. |
+| Install bootloader (lock button) | `_BootloaderInstallThread` | `production_image` + `acknowledge_irreversible=True`. For a unit with no bootloader; refused without writing if one is present. |
+| Update from release folder (folder button next to the lock) | `_ReleaseFolderUpdateThread` | the signed application, `updater_image`, `production_image` and `acknowledge_irreversible=True`: one call that serves any starting state. |
 
-The upgrade is on the right mouse button because the lock icon cannot be trusted to know: console firmware does not report its boot mode yet (#73). Both files are local picks (`blUpdaterDialog`, `blUpgradeAppDialog`) and are verified against the product's keys (`validateBootloaderUpgrade`) before `bootloaderUpgradeDialog` asks for confirmation. The updater image is not in the firmware releases; for the console the `1.8.99` build in the artifact bucket is broken, use `1.8.98`. The device must not lose power or USB during an upgrade.
+**Update from release folder** is the app's counterpart of the SDK's `scripts/update_firmware.py` and makes the same call. The operator picks a folder; `_release_folder_plan` picks the device's images by name (`omotion.firmware_update.find_release_images`: product plus `signed` / `updater` / `production`), verifies them against the product's keys (`describe_images`) and refuses if an ST-LINK is on USB. `releaseFolderUpdateDialog` then shows what was found and asks once. The SDK does:
+
+| Device has | Result |
+|---|---|
+| Bootloader 1.2.0 or newer | signed application only |
+| Bootloader 1.0.0 / 1.1.0 | bootloader updater, then the signed application (irreversible) |
+| No bootloader | production image: bootloader + application (irreversible) |
+
+A folder may lack the updater or the production image; the confirmation says which starting state it then cannot serve. The device must not lose power or USB during an update that changes the bootloader.
 
 ## Un-bootloadering a device (test loop)
 
@@ -193,4 +201,4 @@ Both use the same `motion_connector.py` pattern, but expose different surfaces:
 | Tune a histogram classifier threshold | `histogram_classifier.py` — currently hardcoded; consider moving to config. |
 | Add a CLI flag | `main.py` — argparse in `main()`. Anything that must run before Qt and before the SDK singleton (as `--run-procedure` does) goes above the imports instead. |
 | Add a procedure to the pane | Append a `_sdk_module_procedure(...)` entry in `procedures_controller._build_procedures`. Nothing else — the pane is procedure-agnostic. |
-| Trigger firmware update | `motion_connector.py` `beginFpgaFirmwareUpdate` / sensor DFU path. **No confirmation UI** — wrap in a dialog if you're worried about misclicks. Bootloader install and upgrade are the exceptions: `installBootloader` (release tag) and `installBootloaderFromLocal` (browsed `motion-*-production.bin`) gate behind `bootloaderWarningDialog`, `upgradeBootloaderFromLocal` behind `bootloaderUpgradeDialog`. |
+| Trigger firmware update | `motion_connector.py` `beginFpgaFirmwareUpdate` / sensor DFU path. **No confirmation UI** — wrap in a dialog if you're worried about misclicks. Bootloader install and the release-folder update are the exceptions: `installBootloader` (release tag) and `installBootloaderFromLocal` (browsed `motion-*-production.bin`) gate behind `bootloaderWarningDialog`, `updateFromReleaseFolder` behind `releaseFolderUpdateDialog`. |

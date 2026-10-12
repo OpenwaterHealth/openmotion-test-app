@@ -64,14 +64,19 @@ except Exception:  # pragma: no cover
     production_asset = None
     register_download = None
 
-# Host-side check of signed images, so a wrong file is refused in the file
-# dialog instead of after the operator has confirmed an irreversible step.
+# One update's images, picked out of a release folder and checked on the host
+# before the operator is asked to confirm. Same picking and same checks as the
+# SDK's scripts/update_firmware.py.
 try:
-    from omotion.dfu import ImageVerificationError, public_key_pem, verify_image
+    from omotion.firmware_update import (
+        describe_images,
+        find_release_images,
+        stlink_probes,
+    )
 except Exception:  # pragma: no cover
-    ImageVerificationError = None
-    public_key_pem = None
-    verify_image = None
+    describe_images = None
+    find_release_images = None
+    stlink_probes = None
 
 from dfu_driver import dfu_driver_issue
 
@@ -132,37 +137,74 @@ def _validate_production_image(target: str, local_path: str) -> str:
     return ""
 
 
-def _validate_bootloader_upgrade(target: str, updater_path: str, app_path: str) -> str:
-    """Vet the two files of a bootloader upgrade. Returns "" if usable.
+# What each image in a release folder is for, when the folder lacks it.
+_RELEASE_ROLE_NOTES = (
+    ("app", "Application", ""),
+    ("updater", "Bootloader updater",
+     "not in this folder (a device on a bootloader older than 1.2.0 cannot be updated)"),
+    ("production", "Production image",
+     "not in this folder (a device with no bootloader cannot be updated)"),
+)
 
-    The updater must carry the signature the OLD bootloader trusts (that is how
-    it gets to run), the application the one bootloader 1.2.0 trusts. Both keys
-    differ per product, so this also catches a console file picked for a sensor.
-    The SDK repeats these checks before it writes; doing them here keeps a bad
-    pick from ever reaching the irreversible-upgrade confirmation.
+
+def _release_folder_plan(target: str, folder: str) -> dict:
+    """What "Update from release folder" would use for ``target``.
+
+    Returns ``{"error", "summary", "images"}``: ``error`` is "" when the folder
+    is usable, ``summary`` is the text for the confirmation dialog, ``images``
+    maps app / updater / production to paths. Touches no device: every image is
+    picked by name and verified against the product's keys here, so a wrong or
+    damaged file is refused before the operator is asked to confirm a step that
+    may not be undoable.
     """
+    def refuse(msg: str) -> dict:
+        return {"error": msg, "summary": "", "images": {}}
+
     if target not in _PRODUCTION_KIND_TOKENS:
-        return "Invalid update target."
+        return refuse("Invalid update target.")
     kind = _firmware_kind(target)
-    if verify_image is None or kind is None:
-        return (
-            "Bootloader upgrade is unavailable (omotion SDK not found, or too "
-            "old to support it)."
+    if find_release_images is None or kind is None:
+        return refuse(
+            "Updating from a release folder is unavailable (omotion SDK not "
+            "found, or too old to support it)."
+        )
+    directory = Path(folder)
+    if not directory.is_dir():
+        return refuse(f"Not a folder: {folder}")
+
+    try:
+        images = find_release_images(directory, kind)
+    except ValueError as exc:
+        return refuse(str(exc))
+    if "app" not in images:
+        return refuse(
+            f"No signed {kind.value} application image in {directory} (looked for "
+            f"a .bin with '{kind.value}' and 'signed' in its name)."
+        )
+    try:
+        described = describe_images(
+            kind, images["app"],
+            updater=images.get("updater"), production=images.get("production"),
+        )
+    except Exception as exc:
+        return refuse(str(exc))
+    if stlink_probes():
+        return refuse(
+            "An ST-LINK probe is on USB. Unplug it before updating: a bootloader "
+            "must not be installed or replaced with a debug probe attached."
         )
 
-    checks = (
-        (updater_path, True, f"a {kind.value} bootloader updater"),
-        (app_path, False, f"a signed {kind.value} application for bootloader 1.2.0"),
-    )
-    for path, legacy, what in checks:
-        p = Path(path)
-        if not p.is_file():
-            return f"Selected file does not exist: {p.name}"
-        try:
-            verify_image(p.read_bytes(), public_key_pem(kind, legacy=legacy))
-        except ImageVerificationError as exc:
-            return f"{p.name} is not {what}: {exc}"
-    return ""
+    lines = []
+    for role, title, absent in _RELEASE_ROLE_NOTES:
+        if role in images:
+            lines.append(f"{title}: {images[role].name}\n    {described[role]}")
+        else:
+            lines.append(f"{title}: {absent}")
+    return {
+        "error": "",
+        "summary": "\n".join(lines),
+        "images": {role: str(path) for role, path in images.items()},
+    }
 
 
 class _MutexedDfuHandle:
@@ -555,7 +597,7 @@ class _DeviceFirmwareFlashThread(QThread):
             # image to a converted device gets the signed sibling flashed into
             # the slot instead, and vice versa. It never installs or replaces a
             # bootloader here: that needs acknowledge_irreversible, which only
-            # the bootloader threads below pass.
+            # the install and release-folder threads below pass.
             result = updater.update(
                 _MutexedDfuHandle(self._connector, self._target),
                 Path(self._bin_path),
@@ -729,54 +771,64 @@ class _BootloaderInstallThread(QThread):
             self.failed.emit(_with_dfu_hint(str(exc)))
 
 
-class _BootloaderUpgradeThread(QThread):
-    """Replace an old bootloader with 1.2.0, then install the application.
+class _ReleaseFolderUpdateThread(QThread):
+    """Bring a device to the firmware in a release folder, whatever it runs now.
 
-    For units fielded with bootloader 1.0.0 (console) or 1.0.0/1.1.0 (sensor).
-    The SDK flashes the signed updater image, which rewrites the bootloader
-    sector and resets into the new bootloader's DFU, then installs the signed
-    application. Irreversible, and the device must not lose power or USB while
-    it runs: a failure while the bootloader sector is rewritten needs bench
-    recovery over SWD. A device already on 1.2.0 just gets the application.
+    One SDK call with everything the folder holds and the acknowledgement; the
+    SDK picks the path once the device is in DFU:
+
+      bootloader 1.2.0 or newer   the signed application
+      older bootloader            the bootloader updater, then the application
+      no bootloader               the production image (bootloader + application)
+
+    The last two are irreversible, and the device must not lose power or USB
+    while they run: a failure while the bootloader sector is rewritten needs
+    bench recovery over SWD. Same call as the SDK's scripts/update_firmware.py.
     """
 
     progress = pyqtSignal(int, str)
     failed = pyqtSignal(str)
     finished_ok = pyqtSignal()
 
-    def __init__(self, connector: "MOTIONConnector", target: str,
-                 updater_path: str, app_path: str):
+    def __init__(self, connector: "MOTIONConnector", target: str, images: dict):
         super().__init__()
         self._connector = connector
         self._target = target
-        self._updater_path = updater_path
-        self._app_path = app_path
+        self._images = images
         self.result_message = ""
 
     def run(self):
         if FirmwareUpdater is None:
             self.failed.emit(
-                "Bootloader upgrade is unavailable (omotion SDK not found, "
-                "or too old to support it)."
+                "Firmware update is unavailable (omotion SDK not found, or too "
+                "old to support it)."
             )
             return
 
         self.progress.emit(-1, "Requesting DFU mode…")
 
         def on_progress(p):
-            self.progress.emit(*_progress_for_ui(p, "Upgrading bootloader…"))
+            self.progress.emit(*_progress_for_ui(p, "Updating…"))
+
+        def image(role):
+            path = self._images.get(role)
+            return Path(path) if path else None
 
         updater = FirmwareUpdater(dfu_wait_timeout_s=30.0)
         try:
             result = updater.update(
                 _MutexedDfuHandle(self._connector, self._target),
-                Path(self._app_path),
+                image("app"),
                 progress_cb=on_progress,
                 kind=_firmware_kind(self._target),
-                updater_image=Path(self._updater_path),
+                updater_image=image("updater"),
+                production_image=image("production"),
                 acknowledge_irreversible=True,
             )
-            self.result_message = result.message[:1].upper() + result.message[1:] + "."
+            message = result.message[:1].upper() + result.message[1:] + "."
+            if result.needs_power_cycle:
+                message += " Power-cycle the device to start it."
+            self.result_message = message
             self._connector._note_boot_mode(self._target, updater.last_boot_mode)
             self.progress.emit(100, "Done")
             self.finished_ok.emit()
@@ -1530,7 +1582,7 @@ class MOTIONConnector(QObject):
         )
 
     def _run_bootloader_thread(self, target: str, make_thread) -> None:
-        """Start an install or upgrade thread and report through
+        """Start an install or release-folder update thread and report through
         bootloaderInstallFinished. ``make_thread`` builds it only once the
         driver preflight has passed."""
         # Same preflight as startConsoleFirmwareUpdate: entering DFU without a
@@ -1565,28 +1617,22 @@ class MOTIONConnector(QObject):
         )
         thread.start()
 
-    @pyqtSlot(str, str, str, result=str)
-    def validateBootloaderUpgrade(
-        self, target: str, updater_path: str, app_path: str
-    ) -> str:
-        """Vet the updater and application picked for a bootloader upgrade.
-        "" means usable. Called from the file dialogs, before the confirmation."""
-        return _validate_bootloader_upgrade(target, updater_path, app_path)
+    @pyqtSlot(str, str, result=str)
+    def describeReleaseFolder(self, target: str, folder: str) -> str:
+        """What "Update from release folder" would use, as JSON for QML:
+        ``{"error": ..., "summary": ...}``. Called from the folder dialog, so a
+        bad folder is rejected before the confirmation appears."""
+        plan = _release_folder_plan(target, folder)
+        return json.dumps({"error": plan["error"], "summary": plan["summary"]})
 
-    @pyqtSlot(str, str, str)
-    def upgradeBootloaderFromLocal(
-        self, target: str, updater_path: str, app_path: str
-    ) -> None:
-        """Replace an old bootloader with 1.2.0 and install the application.
-
-        Irreversible; QML gates it behind bootloaderUpgradeDialog. The files are
-        validated here as well, because by the time the thread runs the operator
-        has already confirmed.
+    @pyqtSlot(str, str)
+    def updateFromReleaseFolder(self, target: str, folder: str) -> None:
+        """Update a device from a release folder, installing or replacing its
+        bootloader if it needs that. May be irreversible; QML gates it behind
+        releaseFolderUpdateDialog. The folder is vetted again here, because by
+        the time the thread runs the operator has already confirmed.
         """
-        logger.info(
-            f"upgradeBootloaderFromLocal target={target} updater={updater_path} "
-            f"app={app_path}"
-        )
+        logger.info(f"updateFromReleaseFolder target={target} folder={folder}")
         if target not in ("console", "left", "right"):
             self.bootloaderInstallFinished.emit(target, False, "Invalid target.")
             return
@@ -1595,14 +1641,15 @@ class MOTIONConnector(QObject):
                 target, False, "A firmware operation is already in progress."
             )
             return
-        err = _validate_bootloader_upgrade(target, updater_path, app_path)
-        if err:
-            self.bootloaderInstallFinished.emit(target, False, err)
+        plan = _release_folder_plan(target, folder)
+        if plan["error"]:
+            self.bootloaderInstallFinished.emit(target, False, plan["error"])
             return
 
+        images = plan["images"]
         self._run_bootloader_thread(
             target,
-            lambda: _BootloaderUpgradeThread(self, target, updater_path, app_path),
+            lambda: _ReleaseFolderUpdateThread(self, target, images),
         )
 
     @pyqtSlot(str, str, result=str)

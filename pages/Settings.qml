@@ -72,6 +72,13 @@ Rectangle {
     property string blInstallLocalPath: ""
     // Target used when opening the production-image upload dialog
     property string blUploadTarget: ""
+    // Pending bootloader upgrade (old bootloader -> 1.2.0), set by a right-click
+    // on a lock button and consumed by bootloaderUpgradeDialog. Two local
+    // files: the signed updater image and
+    // the signed application to install afterwards.
+    property string blUpgradeTarget: ""
+    property string blUpgradeUpdaterPath: ""
+    property string blUpgradeAppPath: ""
     // Bumped whenever a boot mode is observed, so the Install Bootloader
     // visibility bindings re-evaluate (the backing call is a slot, not a
     // notifying property).
@@ -162,6 +169,16 @@ Rectangle {
         blInstallTag = tag
         blInstallLocalPath = ""
         bootloaderWarningDialog.open()
+    }
+
+    // Right-click on a lock button. Replacing an old bootloader needs two local
+    // images, picked one after the other; both are checked before the
+    // irreversible-upgrade confirmation is shown.
+    function _startBootloaderUpgrade(target) {
+        blUpgradeTarget = target
+        blUpgradeUpdaterPath = ""
+        blUpgradeAppPath = ""
+        blUpdaterDialog.open()
     }
 
     // Modal dialog styling (firmware update)
@@ -725,6 +742,41 @@ Rectangle {
             blInstallTag = fname
             blInstallLocalPath = file
             bootloaderWarningDialog.open()
+        }
+    }
+
+    FileDialog {
+        id: blUpdaterDialog
+        title: "Select bootloader updater image (signed for the old bootloader)"
+        nameFilters: ["Updater images (*.bin)"]
+        onAccepted: {
+            var file = _localPathFromDialog(blUpdaterDialog)
+            if (!file) return
+            blUpgradeUpdaterPath = file
+            // Opened after this dialog has finished closing.
+            Qt.callLater(function() { blUpgradeAppDialog.open() })
+        }
+    }
+
+    FileDialog {
+        id: blUpgradeAppDialog
+        title: "Select signed application image (for bootloader 1.2.0)"
+        nameFilters: ["Signed images (*.bin)"]
+        onAccepted: {
+            var file = _localPathFromDialog(blUpgradeAppDialog)
+            if (!file) return
+
+            // Reject a wrong-device or wrongly-signed pair here, before the
+            // irreversible-upgrade confirmation is shown.
+            var err = MOTIONInterface.validateBootloaderUpgrade(
+                        blUpgradeTarget, blUpgradeUpdaterPath, file)
+            if (err !== "") {
+                fwErrorDialog.message = err
+                fwErrorDialog.open()
+                return
+            }
+            blUpgradeAppPath = file
+            bootloaderUpgradeDialog.open()
         }
     }
 
@@ -1720,7 +1772,15 @@ Rectangle {
                                         anchors.fill: parent
                                         hoverEnabled: true
                                         cursorShape: blConsoleLockBtn.actionable ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                        onClicked: {
+                                        acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                        onClicked: (mouse) => {
+                                            // Right button: upgrade an old bootloader. Offered whatever the
+                                            // icon shows, because not every firmware reports its boot mode.
+                                            if (mouse.button === Qt.RightButton) {
+                                                if (!blConsoleLockBtn.busy)
+                                                    _startBootloaderUpgrade("console")
+                                                return
+                                            }
                                             if (!blConsoleLockBtn.actionable)
                                                 return
                                             var tag = consoleLatestCombo.currentText
@@ -1734,8 +1794,8 @@ Rectangle {
 
                                     ToolTip.visible: installBlConsoleMouseArea.containsMouse
                                     ToolTip.text: blConsoleLockBtn.locked
-                                        ? "Bootloader installed — device is locked (irreversible over USB)"
-                                        : "Install bootloader — locks this device (irreversible)"
+                                        ? "Bootloader installed — device is locked (irreversible over USB). Right-click: upgrade an old bootloader to 1.2.0"
+                                        : "Install bootloader — locks this device (irreversible). Right-click: upgrade an old bootloader to 1.2.0"
                                     ToolTip.delay: 400
                                 }
 
@@ -1921,7 +1981,15 @@ Rectangle {
                                         anchors.fill: parent
                                         hoverEnabled: true
                                         cursorShape: blLeftLockBtn.actionable ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                        onClicked: {
+                                        acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                        onClicked: (mouse) => {
+                                            // Right button: upgrade an old bootloader. Offered whatever the
+                                            // icon shows, because not every firmware reports its boot mode.
+                                            if (mouse.button === Qt.RightButton) {
+                                                if (!blLeftLockBtn.busy)
+                                                    _startBootloaderUpgrade("left")
+                                                return
+                                            }
                                             if (!blLeftLockBtn.actionable)
                                                 return
                                             var tag = leftLatestCombo.currentText
@@ -1935,8 +2003,8 @@ Rectangle {
 
                                     ToolTip.visible: installBlLeftMouseArea.containsMouse
                                     ToolTip.text: blLeftLockBtn.locked
-                                        ? "Bootloader installed — device is locked (irreversible over USB)"
-                                        : "Install bootloader — locks this device (irreversible)"
+                                        ? "Bootloader installed — device is locked (irreversible over USB). Right-click: upgrade an old bootloader to 1.2.0"
+                                        : "Install bootloader — locks this device (irreversible). Right-click: upgrade an old bootloader to 1.2.0"
                                     ToolTip.delay: 400
                                 }
 
@@ -2117,7 +2185,15 @@ Rectangle {
                                         anchors.fill: parent
                                         hoverEnabled: true
                                         cursorShape: blRightLockBtn.actionable ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                        onClicked: {
+                                        acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                        onClicked: (mouse) => {
+                                            // Right button: upgrade an old bootloader. Offered whatever the
+                                            // icon shows, because not every firmware reports its boot mode.
+                                            if (mouse.button === Qt.RightButton) {
+                                                if (!blRightLockBtn.busy)
+                                                    _startBootloaderUpgrade("right")
+                                                return
+                                            }
                                             if (!blRightLockBtn.actionable)
                                                 return
                                             var tag = rightLatestCombo.currentText
@@ -2131,8 +2207,8 @@ Rectangle {
 
                                     ToolTip.visible: installBlRightMouseArea.containsMouse
                                     ToolTip.text: blRightLockBtn.locked
-                                        ? "Bootloader installed — device is locked (irreversible over USB)"
-                                        : "Install bootloader — locks this device (irreversible)"
+                                        ? "Bootloader installed — device is locked (irreversible over USB). Right-click: upgrade an old bootloader to 1.2.0"
+                                        : "Install bootloader — locks this device (irreversible). Right-click: upgrade an old bootloader to 1.2.0"
                                     ToolTip.delay: 400
                                 }
 
@@ -2325,6 +2401,33 @@ Rectangle {
                 MOTIONInterface.installBootloaderFromLocal(blInstallTarget, blInstallLocalPath)
             else
                 MOTIONInterface.installBootloader(blInstallTarget, blInstallTag)
+        }
+    }
+
+    // Bootloader upgrade (old bootloader -> 1.2.0). As blunt as the install
+    // dialog above, and for the same reason.
+    ConfirmDialog {
+        id: bootloaderUpgradeDialog
+        title: "Upgrade Bootloader — Irreversible"
+        warningText: "This replaces the bootloader of the " + blUpgradeTarget +
+                     " with version 1.2.0 and then installs the application. It " +
+                     "CANNOT be undone over USB. Afterwards the device only accepts " +
+                     "firmware signed for the new bootloader, and its bootloader can " +
+                     "only be changed again on the bench. DO NOT power off or unplug " +
+                     "the device until the upgrade has finished: an interruption while " +
+                     "the bootloader is rewritten needs an ST-LINK/SWD debugger to " +
+                     "recover. A device already on 1.2.0 only gets the application."
+        questionText: "Upgrade using\n" + blUpgradeUpdaterPath +
+                      "\nand install\n" + blUpgradeAppPath + "?"
+        confirmText: "Upgrade Bootloader"
+        declineText: "Cancel"
+        onConfirmed: {
+            consoleFwPercent = -1
+            consoleFwMessage = ""
+            consoleFwStageText = "Starting…"
+            fwProgressDialog.open()
+            MOTIONInterface.upgradeBootloaderFromLocal(
+                        blUpgradeTarget, blUpgradeUpdaterPath, blUpgradeAppPath)
         }
     }
 

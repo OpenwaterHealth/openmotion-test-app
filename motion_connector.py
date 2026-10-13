@@ -830,10 +830,14 @@ class _ReleaseFolderUpdateThread(QThread):
                 message += " Power-cycle the device to start it."
             self.result_message = message
             self._connector._note_boot_mode(self._target, updater.last_boot_mode)
+            logging.getLogger("ow-testapp").info(
+                f"Release folder update target={self._target}: {message}")
             self.progress.emit(100, "Done")
             self.finished_ok.emit()
         except Exception as exc:
             self._connector._note_boot_mode(self._target, updater.last_boot_mode)
+            logging.getLogger("ow-testapp").error(
+                f"Release folder update failed target={self._target}: {exc}")
             self.failed.emit(_with_dfu_hint(str(exc)))
 
 

@@ -356,3 +356,23 @@ def test_folder_update_failure_carries_the_power_cycle_hint(sdk, release):
 
     (msg,), _ = t.failed.emit.call_args
     assert "refused the updater" in msg and _DFU_STRANDED_HINT in msg
+def test_ordinary_update_reports_what_the_sdk_did(sdk, release):
+    t = _bare(_DeviceFirmwareFlashThread,
+              _bin_path=str(release / "openmotion-console-fw-signed.bin"), _target="console",
+              result_message="")
+    t.run()
+    assert t.result_message == "Application installed."
+    t.finished_ok.emit.assert_called_once()
+
+
+def test_ordinary_sensor_update_tells_the_operator_to_power_cycle_when_needed(sdk, release):
+    sdk.needs_power_cycle = True
+    t = _bare(_DeviceFirmwareFlashThread,
+              _bin_path=str(release / "openmotion-sensor-fw-signed.bin"), _target="right",
+              result_message="")
+    t.run()
+    # The SDK's message (here the fake's) is kept, and the sensor-specific hint
+    # follows it: the operator must know the unit is sitting dead on USB.
+    assert t.result_message.startswith("Application installed.")
+    assert "console power cycle restarts both sensors" in t.result_message
+    t.finished_ok.emit.assert_called_once()

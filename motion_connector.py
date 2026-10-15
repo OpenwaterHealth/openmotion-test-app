@@ -577,6 +577,9 @@ class _DeviceFirmwareFlashThread(QThread):
         self._connector = connector
         self._bin_path = bin_path
         self._target = target
+        # What the SDK reported, for the result dialog (read by the connector
+        # on finished_ok, like the bootloader threads' result_message).
+        self.result_message = ""
 
     def run(self):
         if FirmwareUpdater is None:
@@ -605,13 +608,28 @@ class _DeviceFirmwareFlashThread(QThread):
                 kind=_firmware_kind(self._target),
             )
             self._connector._note_boot_mode(self._target, updater.last_boot_mode)
-            if result.needs_power_cycle:
-                self.progress.emit(-1, "Power-cycle the device to start the new firmware.")
+            # The SDK's own words: "bare-metal application installed", or, when
+            # the unit left USB and never restarted (the sensor modules after a
+            # ROM-loader flash), the instruction to power-cycle it. Dropping that
+            # for a fixed "updated successfully" hid the power cycle the operator
+            # still had to do.
+            message = result.message[:1].upper() + result.message[1:] + "."
+            if result.needs_power_cycle and self._target != "console":
+                message += " A console power cycle restarts both sensors."
+            self.result_message = message
+            logging.getLogger("ow-testapp").info(
+                f"Firmware update target={self._target} "
+                f"image={Path(self._bin_path).name}: {message}"
+            )
             self.progress.emit(100, "Flash complete")
             self.finished_ok.emit()
         except Exception as exc:
             # A refusal still tells us what the device is.
             self._connector._note_boot_mode(self._target, updater.last_boot_mode)
+            logging.getLogger("ow-testapp").error(
+                f"Firmware update failed target={self._target} "
+                f"image={Path(self._bin_path).name}: {exc}"
+            )
             self.failed.emit(_with_dfu_hint(str(exc)))
 
 
@@ -1993,7 +2011,8 @@ class MOTIONConnector(QObject):
             self._cleanup_fw_token(token)
             self._set_console_fw_busy(False)
             return
-        self._fw_flash_thread = _DeviceFirmwareFlashThread(self, bin_path, target)
+        thread = _DeviceFirmwareFlashThread(self, bin_path, target)
+        self._fw_flash_thread = thread
         self._fw_flash_thread.progress.connect(
             lambda pct, msg: self.consoleFirmwareUpdateProgress.emit(
                 target, "flash", int(pct), str(msg)
@@ -2001,7 +2020,10 @@ class MOTIONConnector(QObject):
         )
         self._fw_flash_thread.finished_ok.connect(
             lambda: self._on_console_fw_finished(
-                token, True, "Firmware updated successfully.", target
+                token,
+                True,
+                thread.result_message or "Firmware updated successfully.",
+                target,
             )
         )
         self._fw_flash_thread.failed.connect(

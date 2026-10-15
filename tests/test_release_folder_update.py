@@ -376,3 +376,32 @@ def test_ordinary_sensor_update_tells_the_operator_to_power_cycle_when_needed(sd
     assert t.result_message.startswith("Application installed.")
     assert "console power cycle restarts both sensors" in t.result_message
     t.finished_ok.emit.assert_called_once()
+
+
+class _WaitRecordingUpdater(_FakeUpdater):
+    """Records the application wait each thread leaves on its updater."""
+    waits = []
+
+    def update(self, handle, bin_path, progress_cb=None, **kwargs):
+        _WaitRecordingUpdater.waits.append(getattr(self, "app_wait_timeout_s", None))
+        return super().update(handle, bin_path, progress_cb, **kwargs)
+
+
+def test_ordinary_update_asks_for_a_power_cycle_after_45_s(sdk, release, monkeypatch):
+    monkeypatch.setattr(mc, "FirmwareUpdater", _WaitRecordingUpdater)
+    _WaitRecordingUpdater.waits = []
+    t = _bare(_DeviceFirmwareFlashThread,
+              _bin_path=str(release / "openmotion-sensor-fw-signed.bin"), _target="right",
+              result_message="")
+    t.run()
+    assert _WaitRecordingUpdater.waits == [45.0]
+
+
+def test_folder_update_keeps_the_sdk_application_wait(sdk, release, monkeypatch):
+    # It can include the bootloader's first boot: no shorter wait there.
+    monkeypatch.setattr(mc, "FirmwareUpdater", _WaitRecordingUpdater)
+    _WaitRecordingUpdater.waits = []
+    images = _release_folder_plan("left", str(release))["images"]
+    t = _bare(_ReleaseFolderUpdateThread, _target="left", _images=images, result_message="")
+    t.run()
+    assert _WaitRecordingUpdater.waits == [None]

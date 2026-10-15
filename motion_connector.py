@@ -567,6 +567,16 @@ def _progress_for_ui(p, default: str) -> tuple[int, str]:
     return pct, text
 
 
+#: How long an ordinary firmware update waits for the application to come back
+#: before the operator is told to power-cycle the unit (SDK default: 90 s). An
+#: application-only install restarts in a few seconds, and a sensor flashed
+#: through the ROM loader by firmware without the #155 fix never restarts on
+#: its own, so 90 s only kept the operator waiting. The SDK still waits for the
+#: unit to return after the prompt. The bootloader install and release-folder
+#: threads keep the SDK default: they include the bootloader's first boot.
+FIRMWARE_UPDATE_APP_WAIT_S = 45.0
+
+
 class _DeviceFirmwareFlashThread(QThread):
     progress = pyqtSignal(int, str)  # percent (0-100, -1 indeterminate), message
     failed = pyqtSignal(str)
@@ -589,6 +599,7 @@ class _DeviceFirmwareFlashThread(QThread):
             return
 
         updater = FirmwareUpdater(dfu_wait_timeout_s=30.0)
+        updater.app_wait_timeout_s = FIRMWARE_UPDATE_APP_WAIT_S
         try:
             self.progress.emit(-1, "Requesting DFU mode…")
 

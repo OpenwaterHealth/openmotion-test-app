@@ -51,7 +51,7 @@ def test_unknown_driver_store_does_not_block_driverless_records():
 
 
 def test_wrong_driver_blocks_even_with_df11_inf_in_store():
-    # An existing binding wins over a store INF; dfu-util still fails.
+    # An existing binding wins over a store INF; the update still fails.
     assert "STTub30" in _evaluate(["STTub30"], store_has_inf=True)
 
 

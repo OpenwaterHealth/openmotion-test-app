@@ -35,18 +35,14 @@ from fpga_laser_config import (
     load_laser_params,
 )
 
-try:
-    from omotion.DFUProgrammer import DFUProgrammer, DFUProgress
-except Exception:  # pragma: no cover
-    DFUProgrammer = None
-    DFUProgress = None
-
-# Bootloader-aware flashing. All of the policy — which asset suits which boot
-# mode, and what address it goes to — lives in the SDK; this app only supplies
-# buttons and shows what comes back. See openmotion-sdk#173.
+# Firmware update. All of the policy -- what the device is running, which image
+# suits it and where it goes -- lives in the SDK (omotion.firmware_update, over
+# the pure-Python DFU in omotion.dfu); this app only supplies buttons and shows
+# what comes back. See openmotion-sdk#173.
 try:
     from omotion.boot_mode import BootMode
     from omotion.firmware_update import (
+        BootloaderChangeRequired,
         FirmwareKind,
         FirmwareUpdateError,
         FirmwareUpdater,
@@ -58,6 +54,7 @@ try:
     )
 except Exception:  # pragma: no cover
     BootMode = None
+    BootloaderChangeRequired = None
     FirmwareKind = None
     FirmwareUpdateError = None
     FirmwareUpdater = None
@@ -67,14 +64,19 @@ except Exception:  # pragma: no cover
     production_asset = None
     register_download = None
 
-# Converting a device to bootloader mode is irreversible over USB, so the SDK
-# keeps this out of `from omotion import ...` on purpose. Reaching it is a
-# deliberate submodule import — which is exactly what this line is.
+# One update's images, picked out of a release folder and checked on the host
+# before the operator is asked to confirm. Same picking and same checks as the
+# SDK's scripts/update_firmware.py.
 try:
-    from omotion.bootloader_install import BootloaderInstallError, install_bootloader
+    from omotion.firmware_update import (
+        describe_images,
+        find_release_images,
+        stlink_probes,
+    )
 except Exception:  # pragma: no cover
-    BootloaderInstallError = None
-    install_bootloader = None
+    describe_images = None
+    find_release_images = None
+    stlink_probes = None
 
 from dfu_driver import dfu_driver_issue
 
@@ -135,6 +137,76 @@ def _validate_production_image(target: str, local_path: str) -> str:
     return ""
 
 
+# What each image in a release folder is for, when the folder lacks it.
+_RELEASE_ROLE_NOTES = (
+    ("app", "Application", ""),
+    ("updater", "Bootloader updater",
+     "not in this folder (a device on a bootloader older than 1.2.0 cannot be updated)"),
+    ("production", "Production image",
+     "not in this folder (a device with no bootloader cannot be updated)"),
+)
+
+
+def _release_folder_plan(target: str, folder: str) -> dict:
+    """What "Update from release folder" would use for ``target``.
+
+    Returns ``{"error", "summary", "images"}``: ``error`` is "" when the folder
+    is usable, ``summary`` is the text for the confirmation dialog, ``images``
+    maps app / updater / production to paths. Touches no device: every image is
+    picked by name and verified against the product's keys here, so a wrong or
+    damaged file is refused before the operator is asked to confirm a step that
+    may not be undoable.
+    """
+    def refuse(msg: str) -> dict:
+        return {"error": msg, "summary": "", "images": {}}
+
+    if target not in _PRODUCTION_KIND_TOKENS:
+        return refuse("Invalid update target.")
+    kind = _firmware_kind(target)
+    if find_release_images is None or kind is None:
+        return refuse(
+            "Updating from a release folder is unavailable (omotion SDK not "
+            "found, or too old to support it)."
+        )
+    directory = Path(folder)
+    if not directory.is_dir():
+        return refuse(f"Not a folder: {folder}")
+
+    try:
+        images = find_release_images(directory, kind)
+    except ValueError as exc:
+        return refuse(str(exc))
+    if "app" not in images:
+        return refuse(
+            f"No signed {kind.value} application image in {directory} (looked for "
+            f"a .bin with '{kind.value}' and 'signed' in its name)."
+        )
+    try:
+        described = describe_images(
+            kind, images["app"],
+            updater=images.get("updater"), production=images.get("production"),
+        )
+    except Exception as exc:
+        return refuse(str(exc))
+    if stlink_probes():
+        return refuse(
+            "An ST-LINK probe is on USB. Unplug it before updating: a bootloader "
+            "must not be installed or replaced with a debug probe attached."
+        )
+
+    lines = []
+    for role, title, absent in _RELEASE_ROLE_NOTES:
+        if role in images:
+            lines.append(f"{title}: {images[role].name}\n    {described[role]}")
+        else:
+            lines.append(f"{title}: {absent}")
+    return {
+        "error": "",
+        "summary": "\n".join(lines),
+        "images": {role: str(path) for role, path in images.items()},
+    }
+
+
 class _MutexedDfuHandle:
     """Adapts a device module to the SDK's ``enter_dfu()`` handle protocol.
 
@@ -150,6 +222,12 @@ class _MutexedDfuHandle:
     def __init__(self, connector: "MOTIONConnector", target: str):
         self._connector = connector
         self._target = target
+        # The SDK tells the two sensors apart by hub port when it waits for the
+        # flashed one to come back on USB.
+        self._port_suffix = (
+            None if target == "console"
+            else getattr(getattr(motion_interface, target, None), "_port_suffix", None)
+        )
 
     def enter_dfu(self) -> bool:
         if self._target == "console":
@@ -470,84 +548,33 @@ class _ConsoleFirmwareDownloadThread(QThread):
             self.failed.emit(str(exc))
 
 
-class _ConsoleFirmwareFlashThread(QThread):
-    progress = pyqtSignal(int, str)  # percent (0-100, -1 indeterminate), message
-    failed = pyqtSignal(str)
-    finished_ok = pyqtSignal()
+def _progress_for_ui(p, default: str) -> tuple[int, str]:
+    """(percent, message) for the progress signals, from an SDK DFUProgress."""
+    pct = -1
+    text = default
+    try:
+        if p.percent is not None:
+            pct = int(p.percent)
+        if p.phase in ("wait", "power_cycle") and p.message:
+            # An operator instruction ("do not power off", "power-cycle now").
+            text = p.message
+        elif p.phase == "erase":
+            text = "Erasing…"
+        elif p.phase == "download":
+            text = "Downloading…"
+    except Exception:
+        pass
+    return pct, text
 
-    def __init__(self, connector: "MOTIONConnector", bin_path: str):
-        super().__init__()
-        self._connector = connector
-        self._bin_path = bin_path
 
-    def run(self):
-        if DFUProgrammer is None:
-            self.failed.emit(
-                "DFUProgrammer is unavailable (omotion SDK not found in environment)."
-            )
-            return
-
-        try:
-            self.progress.emit(-1, "Requesting DFU mode…")
-            self._connector._console_mutex.lock()
-            try:
-                ok = motion_interface.console.enter_dfu()
-            finally:
-                self._connector._console_mutex.unlock()
-
-            if not ok:
-                self.failed.emit("Console refused DFU mode request.")
-                return
-
-            # Give the bootloader time to re-enumerate
-            time.sleep(5.0)
-
-            dfu = DFUProgrammer(vidpid="0483:df11")
-            self.progress.emit(-1, "Waiting for DFU device…")
-            if not dfu.wait_for_dfu_device(timeout_s=30.0):
-                self.failed.emit("DFU device did not appear (timeout).")
-                return
-
-            def on_progress(p):
-                phase = "Working"
-                try:
-                    if p.phase == "erase":
-                        phase = "Erasing"
-                    elif p.phase == "download":
-                        phase = "Downloading"
-                except Exception:
-                    pass
-
-                pct = -1
-                try:
-                    if p.percent is not None:
-                        pct = int(p.percent)
-                except Exception:
-                    pct = -1
-                self.progress.emit(pct, f"{phase}…")
-
-            self.progress.emit(0, "Flashing…")
-            result = dfu.flash_bin(
-                Path(self._bin_path),
-                address=DFUProgrammer.DEFAULT_ADDRESS,
-                alt=0,
-                verbose=0,
-                normalize_dfu_suffix=True,
-                progress=on_progress,
-                line_callback=None,
-                echo_output=False,
-                echo_progress_lines=False,
-            )
-
-            if not getattr(result, "success", False):
-                code = getattr(result, "returncode", "?")
-                self.failed.emit(f"Flash failed (dfu-util exit code {code}).")
-                return
-
-            self.progress.emit(100, "Flash complete")
-            self.finished_ok.emit()
-        except Exception as exc:
-            self.failed.emit(str(exc))
+#: How long an ordinary firmware update waits for the application to come back
+#: before the operator is told to power-cycle the unit (SDK default: 90 s). An
+#: application-only install restarts in a few seconds, and a sensor flashed
+#: through the ROM loader by firmware without the #155 fix never restarts on
+#: its own, so 90 s only kept the operator waiting. The SDK still waits for the
+#: unit to return after the prompt. The bootloader install and release-folder
+#: threads keep the SDK default: they include the bootloader's first boot.
+FIRMWARE_UPDATE_APP_WAIT_S = 45.0
 
 
 class _DeviceFirmwareFlashThread(QThread):
@@ -560,71 +587,73 @@ class _DeviceFirmwareFlashThread(QThread):
         self._connector = connector
         self._bin_path = bin_path
         self._target = target
+        # What the SDK reported, for the result dialog (read by the connector
+        # on finished_ok, like the bootloader threads' result_message).
+        self.result_message = ""
 
     def run(self):
-        if DFUProgrammer is None or FirmwareUpdater is None:
+        if FirmwareUpdater is None:
             self.failed.emit(
-                "DFUProgrammer is unavailable (omotion SDK not found in environment)."
+                "Firmware update is unavailable (omotion SDK not found in environment)."
             )
             return
 
+        updater = FirmwareUpdater(dfu_wait_timeout_s=30.0)
+        updater.app_wait_timeout_s = FIRMWARE_UPDATE_APP_WAIT_S
         try:
             self.progress.emit(-1, "Requesting DFU mode…")
 
             def on_progress(p):
-                phase = "Working"
-                try:
-                    if p.phase == "erase":
-                        phase = "Erasing"
-                    elif p.phase == "download":
-                        phase = "Downloading"
-                except Exception:
-                    pass
-
-                pct = -1
-                try:
-                    if p.percent is not None:
-                        pct = int(p.percent)
-                except Exception:
-                    pct = -1
-                self.progress.emit(pct, f"{phase}…")
+                self.progress.emit(*_progress_for_ui(p, "Working…"))
 
             # The SDK decides which image to flash and at which address, from
-            # the boot mode it detects once the device is in DFU. Passing the
-            # bare-metal image to a converted device gets the signed sibling
-            # flashed into the slot instead, and vice versa.
-            self.progress.emit(0, "Flashing…")
-            updater = FirmwareUpdater(
-                programmer=DFUProgrammer(vidpid="0483:df11"),
-                dfu_wait_timeout_s=30.0,
-            )
+            # what it finds once the device is in DFU. Passing the bare-metal
+            # image to a converted device gets the signed sibling flashed into
+            # the slot instead, and vice versa. It never installs or replaces a
+            # bootloader here: that needs acknowledge_irreversible, which only
+            # the install and release-folder threads below pass.
             result = updater.update(
                 _MutexedDfuHandle(self._connector, self._target),
                 Path(self._bin_path),
                 progress_cb=on_progress,
+                kind=_firmware_kind(self._target),
             )
-
-            if not getattr(result, "success", False):
-                code = getattr(result, "returncode", "?")
-                self.failed.emit(f"Flash failed (dfu-util exit code {code}).")
-                return
-
             self._connector._note_boot_mode(self._target, updater.last_boot_mode)
+            # The SDK's own words: "bare-metal application installed", or, when
+            # the unit left USB and never restarted (the sensor modules after a
+            # ROM-loader flash), the instruction to power-cycle it. Dropping that
+            # for a fixed "updated successfully" hid the power cycle the operator
+            # still had to do.
+            message = result.message[:1].upper() + result.message[1:] + "."
+            if result.needs_power_cycle and self._target != "console":
+                message += " A console power cycle restarts both sensors."
+            self.result_message = message
+            logging.getLogger("ow-testapp").info(
+                f"Firmware update target={self._target} "
+                f"image={Path(self._bin_path).name}: {message}"
+            )
             self.progress.emit(100, "Flash complete")
             self.finished_ok.emit()
         except Exception as exc:
-            self.failed.emit(str(exc))
+            # A refusal still tells us what the device is.
+            self._connector._note_boot_mode(self._target, updater.last_boot_mode)
+            logging.getLogger("ow-testapp").error(
+                f"Firmware update failed target={self._target} "
+                f"image={Path(self._bin_path).name}: {exc}"
+            )
+            self.failed.emit(_with_dfu_hint(str(exc)))
 
 
 class _BootloaderSourceError(RuntimeError):
     """Raised when a production image can't be resolved (local file or release)."""
 
 
-# install_bootloader enters DFU before it can detect that a device is already
-# converted, and it is flash_bin that passes ":leave" to dfu-util. So every
-# abort after enter_dfu() leaves the device sitting in DFU until it is
-# power-cycled. Exiting DFU programmatically would need a new DFUProgrammer
-# detach call -- an SDK change -- so the failure message says so instead.
+# The SDK can only classify a device once it is in DFU. When it then refuses
+# without writing, it restarts the application where it can (ROM loader,
+# bootloader 1.2.0 or newer); a bootloader older than 1.2.0 has no reset
+# request and stays in DFU until it is power-cycled. The hint is harmless when
+# the device did come back, so it is appended to every failure rather than
+# narrowed per exception.
 _DFU_STRANDED_HINT = "Power-cycle the device to bring it out of DFU."
 
 
@@ -657,6 +686,7 @@ class _BootloaderInstallThread(QThread):
         self._target = target
         self._tag = tag
         self._local_path = local_path
+        self.result_message = ""
 
     def _resolve_image(self, kind) -> Path:
         """Path to the production image, from disk or from a GitHub release.
@@ -721,7 +751,7 @@ class _BootloaderInstallThread(QThread):
         return Path(gh.download_asset(release, name, output_dir=dl_dir))
 
     def run(self):
-        if install_bootloader is None:
+        if FirmwareUpdater is None:
             self.failed.emit(
                 "Bootloader installation is unavailable (omotion SDK not found, "
                 "or too old to support it)."
@@ -739,43 +769,104 @@ class _BootloaderInstallThread(QThread):
         self.progress.emit(0, "Installing bootloader...")
 
         def on_progress(p):
-            pct = -1
-            try:
-                if p.percent is not None:
-                    pct = int(p.percent)
-            except Exception:
-                pct = -1
-            self.progress.emit(pct, "Installing bootloader...")
+            pct, text = _progress_for_ui(p, "Installing bootloader...")
+            if text in ("Erasing…", "Downloading…"):
+                text = "Installing bootloader..."
+            self.progress.emit(pct, text)
 
+        updater = FirmwareUpdater(dfu_wait_timeout_s=30.0)
         try:
-            result = install_bootloader(
+            # The production image is both arguments: there is no separate
+            # application here. On a device without a bootloader the SDK writes
+            # it at the base of flash; if a bootloader turns out to be present
+            # already it raises without writing -- the abort that makes this
+            # safe to offer while the boot mode is still unknown.
+            result = updater.update(
                 _MutexedDfuHandle(self._connector, self._target),
-                kind,
                 path,
-                acknowledge_irreversible=True,
-                programmer=DFUProgrammer(vidpid="0483:df11"),
-                dfu_wait_timeout_s=30.0,
                 progress_cb=on_progress,
+                kind=kind,
+                production_image=path,
+                acknowledge_irreversible=True,
             )
-            if not getattr(result, "success", False):
-                code = getattr(result, "returncode", "?")
-                self.failed.emit(
-                    _with_dfu_hint(f"Install failed (dfu-util exit code {code}).")
-                )
-                return
-
+            self.result_message = "Bootloader installed." + (
+                " Power-cycle the device to start it." if result.needs_power_cycle else ""
+            )
             self._connector._note_boot_mode(self._target, BootMode.BOOTLOADER)
             self.progress.emit(100, "Bootloader installed")
             self.finished_ok.emit()
         except Exception as exc:
-            # Includes BootloaderInstallError -- notably "already installed",
-            # which is the abort that makes this safe to offer unconditionally.
-            # Not everything here is downstream of enter_dfu(): install_bootloader
-            # raises before it for the acknowledge_irreversible, is_production_asset
-            # and is_file checks, and "device did not accept enter_dfu()" fires
-            # exactly when the device did NOT enter DFU. The power-cycle hint is
-            # harmless on those paths too, so it stays unconditional rather than
-            # trying to narrow it per exception.
+            self._connector._note_boot_mode(self._target, updater.last_boot_mode)
+            self.failed.emit(_with_dfu_hint(str(exc)))
+
+
+class _ReleaseFolderUpdateThread(QThread):
+    """Bring a device to the firmware in a release folder, whatever it runs now.
+
+    One SDK call with everything the folder holds and the acknowledgement; the
+    SDK picks the path once the device is in DFU:
+
+      bootloader 1.2.0 or newer   the signed application
+      older bootloader            the bootloader updater, then the application
+      no bootloader               the production image (bootloader + application)
+
+    The last two are irreversible, and the device must not lose power or USB
+    while they run: a failure while the bootloader sector is rewritten needs
+    bench recovery over SWD. Same call as the SDK's scripts/update_firmware.py.
+    """
+
+    progress = pyqtSignal(int, str)
+    failed = pyqtSignal(str)
+    finished_ok = pyqtSignal()
+
+    def __init__(self, connector: "MOTIONConnector", target: str, images: dict):
+        super().__init__()
+        self._connector = connector
+        self._target = target
+        self._images = images
+        self.result_message = ""
+
+    def run(self):
+        if FirmwareUpdater is None:
+            self.failed.emit(
+                "Firmware update is unavailable (omotion SDK not found, or too "
+                "old to support it)."
+            )
+            return
+
+        self.progress.emit(-1, "Requesting DFU mode…")
+
+        def on_progress(p):
+            self.progress.emit(*_progress_for_ui(p, "Updating…"))
+
+        def image(role):
+            path = self._images.get(role)
+            return Path(path) if path else None
+
+        updater = FirmwareUpdater(dfu_wait_timeout_s=30.0)
+        try:
+            result = updater.update(
+                _MutexedDfuHandle(self._connector, self._target),
+                image("app"),
+                progress_cb=on_progress,
+                kind=_firmware_kind(self._target),
+                updater_image=image("updater"),
+                production_image=image("production"),
+                acknowledge_irreversible=True,
+            )
+            message = result.message[:1].upper() + result.message[1:] + "."
+            if result.needs_power_cycle:
+                message += " Power-cycle the device to start it."
+            self.result_message = message
+            self._connector._note_boot_mode(self._target, updater.last_boot_mode)
+            logging.getLogger("ow-testapp").info(
+                f"Release folder update target={self._target}: {message}")
+            self.progress.emit(100, "Done")
+            self.finished_ok.emit()
+        except Exception as exc:
+            self._connector._note_boot_mode(self._target, updater.last_boot_mode)
+            logging.getLogger("ow-testapp").error(
+                f"Release folder update failed target={self._target}: {exc}")
             self.failed.emit(_with_dfu_hint(str(exc)))
 
 
@@ -1428,8 +1519,8 @@ class MOTIONConnector(QObject):
         # DFU, so this stays empty until an update or install has run once.
         self._boot_modes: dict[str, str] = {}
         self._fw_download_thread: _ConsoleFirmwareDownloadThread | None = None
-        self._bl_install_thread: _BootloaderInstallThread | None = None
-        self._fw_flash_thread: _ConsoleFirmwareFlashThread | None = None
+        self._bl_install_thread: QThread | None = None
+        self._fw_flash_thread: _DeviceFirmwareFlashThread | None = None
         self._fpga_fw_busy = False
         self._fpga_fw_verify = False
         self._fpga_update_thread: _ConsoleFpgaUpdateThread | None = None
@@ -1518,6 +1609,15 @@ class MOTIONConnector(QObject):
         (browsed file): only the image source differs, so the thread wiring and
         the finished/failed handling live here rather than in both slots.
         """
+        self._run_bootloader_thread(
+            target,
+            lambda: _BootloaderInstallThread(self, target, tag, local_path=local_path),
+        )
+
+    def _run_bootloader_thread(self, target: str, make_thread) -> None:
+        """Start an install or release-folder update thread and report through
+        bootloaderInstallFinished. ``make_thread`` builds it only once the
+        driver preflight has passed."""
         # Same preflight as startConsoleFirmwareUpdate: entering DFU without a
         # usable Windows driver on 0483:DF11 strands the device for nothing.
         issue = dfu_driver_issue()
@@ -1525,10 +1625,8 @@ class MOTIONConnector(QObject):
             self.bootloaderInstallFinished.emit(target, False, issue)
             return
         self._set_console_fw_busy(True)
-        self._bl_install_thread = _BootloaderInstallThread(
-            self, target, tag, local_path=local_path
-        )
-        self._bl_install_thread.progress.connect(
+        thread = self._bl_install_thread = make_thread()
+        thread.progress.connect(
             lambda pct, msg: self.consoleFirmwareUpdateProgress.emit(
                 target, "install", int(pct), str(msg)
             )
@@ -1538,19 +1636,54 @@ class MOTIONConnector(QObject):
             self._set_console_fw_busy(False)
             self.bootloaderInstallFinished.emit(
                 target, True,
-                "Bootloader installed. Power-cycle the device before using it.",
+                getattr(thread, "result_message", "") or "Bootloader installed.",
             )
 
         def _fail(msg: str) -> None:
             self._set_console_fw_busy(False)
             self.bootloaderInstallFinished.emit(target, False, str(msg))
 
-        self._bl_install_thread.finished_ok.connect(_ok)
-        self._bl_install_thread.failed.connect(_fail)
-        self._bl_install_thread.finished.connect(
+        thread.finished_ok.connect(_ok)
+        thread.failed.connect(_fail)
+        thread.finished.connect(
             lambda: setattr(self, "_bl_install_thread", None)
         )
-        self._bl_install_thread.start()
+        thread.start()
+
+    @pyqtSlot(str, str, result=str)
+    def describeReleaseFolder(self, target: str, folder: str) -> str:
+        """What "Update from release folder" would use, as JSON for QML:
+        ``{"error": ..., "summary": ...}``. Called from the folder dialog, so a
+        bad folder is rejected before the confirmation appears."""
+        plan = _release_folder_plan(target, folder)
+        return json.dumps({"error": plan["error"], "summary": plan["summary"]})
+
+    @pyqtSlot(str, str)
+    def updateFromReleaseFolder(self, target: str, folder: str) -> None:
+        """Update a device from a release folder, installing or replacing its
+        bootloader if it needs that. May be irreversible; QML gates it behind
+        releaseFolderUpdateDialog. The folder is vetted again here, because by
+        the time the thread runs the operator has already confirmed.
+        """
+        logger.info(f"updateFromReleaseFolder target={target} folder={folder}")
+        if target not in ("console", "left", "right"):
+            self.bootloaderInstallFinished.emit(target, False, "Invalid target.")
+            return
+        if self.consoleFirmwareUpdateBusy:
+            self.bootloaderInstallFinished.emit(
+                target, False, "A firmware operation is already in progress."
+            )
+            return
+        plan = _release_folder_plan(target, folder)
+        if plan["error"]:
+            self.bootloaderInstallFinished.emit(target, False, plan["error"])
+            return
+
+        images = plan["images"]
+        self._run_bootloader_thread(
+            target,
+            lambda: _ReleaseFolderUpdateThread(self, target, images),
+        )
 
     @pyqtSlot(str, str, result=str)
     def validateProductionImage(self, target: str, local_path: str) -> str:
@@ -1633,7 +1766,7 @@ class MOTIONConnector(QObject):
 
         Guessing "locked" instead would hide the install control on devices
         that may well be bare metal, and nothing is gained by guessing:
-        install_bootloader re-checks over DFU and aborts without writing if a
+        the SDK re-checks over DFU and aborts without writing if a
         bootloader is already present. Being wrong here costs a clear error
         message, not a device.
         """
@@ -1648,7 +1781,7 @@ class MOTIONConnector(QObject):
         if one is already present. All this does is hide the control once we
         have positively seen that the device is already converted.
         """
-        if install_bootloader is None:
+        if FirmwareUpdater is None:
             return False
         return self._boot_modes.get(target) != "Bootloader"
 
@@ -1889,7 +2022,8 @@ class MOTIONConnector(QObject):
             self._cleanup_fw_token(token)
             self._set_console_fw_busy(False)
             return
-        self._fw_flash_thread = _DeviceFirmwareFlashThread(self, bin_path, target)
+        thread = _DeviceFirmwareFlashThread(self, bin_path, target)
+        self._fw_flash_thread = thread
         self._fw_flash_thread.progress.connect(
             lambda pct, msg: self.consoleFirmwareUpdateProgress.emit(
                 target, "flash", int(pct), str(msg)
@@ -1897,7 +2031,10 @@ class MOTIONConnector(QObject):
         )
         self._fw_flash_thread.finished_ok.connect(
             lambda: self._on_console_fw_finished(
-                token, True, "Firmware updated successfully.", target
+                token,
+                True,
+                thread.result_message or "Firmware updated successfully.",
+                target,
             )
         )
         self._fw_flash_thread.failed.connect(

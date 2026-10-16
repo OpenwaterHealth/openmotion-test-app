@@ -53,8 +53,10 @@ hidden += procedure_modules
 print(f"[spec] Bundling {len(procedure_modules)} omotion.scripts module(s)")
 
 # Runtime deps of the PYTHONPATH-sourced omotion that static analysis can
-# miss (crcmod: wire-protocol CRC, found missing in the 2026-08-14 build).
-for _extra in ("crcmod",):
+# miss (crcmod: wire-protocol CRC, found missing in the 2026-08-14 build;
+# cryptography: imported inside omotion.dfu.image when a firmware image is
+# verified, with a compiled OpenSSL binding).
+for _extra in ("crcmod", "cryptography"):
     _e_datas, _e_bins, _e_hidden = collect_all(_extra)
     datas    += _e_datas
     binaries += _e_bins

@@ -1,7 +1,7 @@
 import QtQuick 6.0
 import QtQuick.Controls 6.0
 import QtQuick.Layouts 6.0
-import QtQuick.Dialogs 6.2
+import QtQuick.Dialogs 6.3
 import OpenMotion 1.0
 
 import "../components"
@@ -72,6 +72,16 @@ Rectangle {
     property string blInstallLocalPath: ""
     // Target used when opening the production-image upload dialog
     property string blUploadTarget: ""
+    // Pending "update from release folder", set by the folder buttons and
+    // consumed by releaseFolderUpdateDialog. rfSummary is what the connector
+    // found in the folder, for the operator to read before confirming.
+    property string rfTarget: ""
+    property string rfFolder: ""
+    property string rfSummary: ""
+    // fwResultDialog titles for whatever reports through
+    // bootloaderInstallFinished: a bootloader install or a release-folder update.
+    property string blResultOkTitle: "Bootloader Installed"
+    property string blResultFailTitle: "Bootloader Install Failed"
     // Bumped whenever a boot mode is observed, so the Install Bootloader
     // visibility bindings re-evaluate (the backing call is a slot, not a
     // notifying property).
@@ -162,6 +172,59 @@ Rectangle {
         blInstallTag = tag
         blInstallLocalPath = ""
         bootloaderWarningDialog.open()
+    }
+
+    // The folder button of a device. The connector picks the device's images
+    // out of the folder and checks them; the operator confirms what it found.
+    function _startReleaseFolderUpdate(target) {
+        rfTarget = target
+        releaseFolderDialog.open()
+    }
+
+    function _localPathFromUrl(url) {
+        var s = url ? url.toString() : ""
+        if (s.indexOf("file://") === 0) {
+            s = decodeURIComponent(s.replace(/^file:\/\//, ""))
+            // Windows paths arrive as /C:/... -- drop the leading slash.
+            if (s.length > 2 && s[0] === '/' && s[2] === ':') s = s.substring(1)
+        }
+        return s
+    }
+
+    // "Update from release folder..." -- one per device, next to its lock
+    // button. An inline component cannot see this page's ids, so it reports
+    // the click and the page starts the flow.
+    component ReleaseFolderButton: Rectangle {
+        id: rfButton
+        property string target: ""
+        property bool busy: MOTIONInterface.consoleFirmwareUpdateBusy
+        signal activated(string target)
+        width: 30
+        height: 30
+        radius: 15
+        color: busy ? "#7F8C8D" : (rfButtonMouseArea.containsMouse ? "#34495E" : "#2C3E50")
+
+        Text {
+            text: "📁"
+            anchors.centerIn: parent
+            font.pixelSize: 14
+            color: "white"
+        }
+
+        MouseArea {
+            id: rfButtonMouseArea
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: rfButton.busy ? Qt.ArrowCursor : Qt.PointingHandCursor
+            onClicked: {
+                if (!rfButton.busy)
+                    rfButton.activated(rfButton.target)
+            }
+        }
+
+        ToolTip.visible: rfButtonMouseArea.containsMouse
+        ToolTip.text: "Update from release folder — installs or upgrades the bootloader if the device needs it (irreversible)"
+        ToolTip.delay: 400
     }
 
     // Modal dialog styling (firmware update)
@@ -419,7 +482,7 @@ Rectangle {
         function onBootloaderInstallFinished(target, success, message) {
             fwUpdateTarget = target
             fwProgressDialog.close()
-            fwResultDialog.title = success ? "Bootloader Installed" : "Bootloader Install Failed"
+            fwResultDialog.title = success ? blResultOkTitle : blResultFailTitle
             var prefix = (target === "console") ? "Console: " : (target === "left") ? "Left sensor: " : "Right sensor: "
             fwResultDialog.message = prefix + message
             fwResultDialog.open()
@@ -725,6 +788,27 @@ Rectangle {
             blInstallTag = fname
             blInstallLocalPath = file
             bootloaderWarningDialog.open()
+        }
+    }
+
+    FolderDialog {
+        id: releaseFolderDialog
+        title: "Select the firmware release folder"
+        onAccepted: {
+            var folder = _localPathFromUrl(releaseFolderDialog.selectedFolder)
+            if (!folder) return
+
+            // Pick and verify the images here, before the confirmation is
+            // shown: a wrong-device or damaged image is refused now.
+            var plan = JSON.parse(MOTIONInterface.describeReleaseFolder(rfTarget, folder))
+            if (plan.error !== "") {
+                fwErrorDialog.message = plan.error
+                fwErrorDialog.open()
+                return
+            }
+            rfFolder = folder
+            rfSummary = plan.summary
+            releaseFolderUpdateDialog.open()
         }
     }
 
@@ -1739,6 +1823,12 @@ Rectangle {
                                     ToolTip.delay: 400
                                 }
 
+                                ReleaseFolderButton {
+                                    target: "console"
+                                    visible: MOTIONInterface.consoleConnected
+                                    onActivated: (target) => _startReleaseFolderUpdate(target)
+                                }
+
                                 Rectangle {
                                     width: 30
                                     height: 30
@@ -1940,6 +2030,12 @@ Rectangle {
                                     ToolTip.delay: 400
                                 }
 
+                                ReleaseFolderButton {
+                                    target: "left"
+                                    visible: MOTIONInterface.leftSensorConnected
+                                    onActivated: (target) => _startReleaseFolderUpdate(target)
+                                }
+
                                 Rectangle {
                                     width: 30
                                     height: 30
@@ -2136,6 +2232,12 @@ Rectangle {
                                     ToolTip.delay: 400
                                 }
 
+                                ReleaseFolderButton {
+                                    target: "right"
+                                    visible: MOTIONInterface.rightSensorConnected
+                                    onActivated: (target) => _startReleaseFolderUpdate(target)
+                                }
+
                                 Rectangle {
                                     width: 30
                                     height: 30
@@ -2320,11 +2422,39 @@ Rectangle {
             consoleFwPercent = -1
             consoleFwMessage = ""
             consoleFwStageText = "Starting…"
+            blResultOkTitle = "Bootloader Installed"
+            blResultFailTitle = "Bootloader Install Failed"
             fwProgressDialog.open()
             if (blInstallLocalPath !== "")
                 MOTIONInterface.installBootloaderFromLocal(blInstallTarget, blInstallLocalPath)
             else
                 MOTIONInterface.installBootloader(blInstallTarget, blInstallTag)
+        }
+    }
+
+    // Update from a release folder. The connector has already picked and
+    // verified the images; this states what may happen to the device.
+    ConfirmDialog {
+        id: releaseFolderUpdateDialog
+        title: "Update From Release Folder"
+        warningText: "The " + rfTarget + " will be brought to the firmware in this " +
+                     "folder, whatever it is running now. If it has no bootloader, or " +
+                     "one older than 1.2.0, the bootloader is installed or replaced " +
+                     "first. That CANNOT be undone over USB: afterwards the device only " +
+                     "accepts firmware signed for the new bootloader, and its bootloader " +
+                     "can only be changed again on the bench. DO NOT power off or unplug " +
+                     "the device until the update has finished."
+        questionText: rfFolder + "\n\n" + rfSummary + "\n\nUpdate the " + rfTarget + "?"
+        confirmText: "Update"
+        declineText: "Cancel"
+        onConfirmed: {
+            consoleFwPercent = -1
+            consoleFwMessage = ""
+            consoleFwStageText = "Starting…"
+            blResultOkTitle = "Firmware Update Complete"
+            blResultFailTitle = "Firmware Update Failed"
+            fwProgressDialog.open()
+            MOTIONInterface.updateFromReleaseFolder(rfTarget, rfFolder)
         }
     }
 

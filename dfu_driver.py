@@ -1,15 +1,15 @@
 """Preflight check for the STM32 DFU driver on Windows.
 
 Firmware updates and bootloader installs put the device into DFU mode
-(USB 0483:DF11) and then drive it with the SDK's bundled dfu-util, which
+(USB 0483:DF11) and then drive it through the SDK's libusb backend, which
 needs a libusb-compatible kernel driver (WinUSB / libusbK / libusb0) bound
 to that device. Windows records the binding per device instance under
 ``HKLM\\SYSTEM\\CurrentControlSet\\Enum\\USB\\VID_0483&PID_DF11`` and the
 binding persists across re-enumerations, so the state is checkable *before*
 entering DFU. The ordering matters: a missing driver does not fail cleanly —
 enter_dfu() strands the device in DFU (power-cycle to recover) and the update
-then times out or aborts with an unclassifiable device, because dfu-util can
-see the device but not read its alt-setting names. Field case 2026-08: days
+then times out or aborts with an unclassifiable device, because libusb can
+see the device but not open it or read its alt-setting names. Field case 2026-08: days
 were lost to "could not tell whether this device has the bootloader
 installed" halts whose actual cause was exactly this.
 
@@ -39,7 +39,7 @@ logger = logging.getLogger("ow-testapp")
 _DFU_ENUM_KEY = r"SYSTEM\CurrentControlSet\Enum\USB\VID_0483&PID_DF11"
 _DFU_DRIVER_DB_KEY = r"SYSTEM\DriverDatabase\DeviceIds\USB\VID_0483&PID_DF11"
 
-#: Kernel services libusb (and therefore dfu-util) can drive.
+#: Kernel services libusb (and therefore the SDK's DFU) can drive.
 _USABLE_SERVICES = {"winusb", "libusbk", "libusb0"}
 
 # Zadig's "Create New Device" installs the driver for a VID:PID without the
@@ -141,7 +141,7 @@ def _evaluate(services: list[str | None] | None, store_has_inf: bool | None = Fa
     if bound:
         return (
             f"The STM32 DFU device (USB 0483:DF11) on this PC is bound to "
-            f"{', '.join(bound)}, which dfu-util cannot use. The update would "
+            f"{', '.join(bound)}, which the firmware updater cannot use. The update would "
             "enter DFU mode and then fail, leaving the device in DFU until "
             "power-cycled. " + _ZADIG_FIX
         )

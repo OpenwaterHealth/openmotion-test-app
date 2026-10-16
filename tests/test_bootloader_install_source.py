@@ -5,9 +5,10 @@ These pin the two guards that used to run before any image resolution and so
 would have blocked the local path: the GitHubReleases availability check and
 the --no-github bail.
 
-Also covers the power-cycle hint. install_bootloader enters DFU before it can
-detect that a device is already converted, and only flash_bin passes :leave
-(omotion/DFUProgrammer.py), so an aborted install strands the device in DFU.
+Also covers the power-cycle hint. The SDK enters DFU before it can detect that
+a device is already converted. It restarts the application after a refusal
+where it can, but a bootloader older than 1.2.0 has no reset request, so an
+aborted install can strand the device in DFU.
 """
 from unittest.mock import MagicMock
 

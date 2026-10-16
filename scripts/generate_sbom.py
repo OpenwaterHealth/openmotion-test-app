@@ -18,7 +18,7 @@ PROJECT_DESCRIPTION = (
     "Qt/QML desktop hardware test application for Open-Motion blood flow volume "
     "and index measurement workflows."
 )
-PROJECT_LICENSE = "AGPL-3.0-only"
+PROJECT_LICENSE = "Apache-2.0"
 
 EXTERNAL_COMPONENTS = [
     {

@@ -34,6 +34,10 @@ Rectangle {
             Button {
                 id: startStopButton
                 text: ProceduresController.running ? "Stop" : "Start"
+                // A gated procedure (e.g. the safety-record commit) starts
+                // only after the run it depends on passed in this session.
+                enabled: ProceduresController.running
+                         || ProceduresController.currentProcedureReady
                 Material.background: ProceduresController.running
                     ? "#C0392B" : "#27AE60"
                 Material.foreground: "white"
@@ -125,6 +129,14 @@ Rectangle {
             }
 
             Item { Layout.fillWidth: true }
+
+            Label {
+                visible: !ProceduresController.running
+                         && ProceduresController.currentProcedureNote !== ""
+                text: ProceduresController.currentProcedureNote
+                color: "#F1C40F"
+                font.pixelSize: 14
+            }
 
             Label {
                 visible: ProceduresController.promptType !== ""

@@ -110,6 +110,10 @@ except Exception:
 # --allow-override.
 _OVERRIDE_MODULE = "omotion.calibration.override"
 
+# Procedure names other code refers to (registry gating).
+SAFETY_CALIBRATION = "Safety Calibration"
+COMMIT_SAFETY_RECORD = "Commit Safety Calibration to Unit"
+
 MAX_LOG_LINES = 5000
 
 # How long an unterminated stdout tail may sit before it is treated as an
@@ -273,6 +277,29 @@ def _sdk_module_procedure(name: str, module: str,
     }
 
 
+def _app_module_procedure(name: str, module: str,
+                          args: list[str] | None = None,
+                          *, requires_pass: str | None = None) -> dict:
+    """Registry entry for a procedure module that ships with this app.
+
+    Launched exactly like an SDK procedure (``_sdk_module_procedure``): from
+    the release's own bundle, or ``python -m`` from the checkout, which is
+    the child's working directory and so on its import path. Used for
+    procedures on their way into the SDK (``procedures/``).
+
+    ``requires_pass`` names a procedure that must have passed in this app
+    session before this one can start.
+    """
+    entry = _sdk_module_procedure(name, module, args)
+    if not getattr(sys, "frozen", False):
+        entry["source"] = _app_dir()
+        if entry["missing"]:
+            entry["missing"] = (f"{module} is not available - run the app "
+                                f"from its checkout ({_app_dir()})")
+    entry["requires_pass"] = requires_pass
+    return entry
+
+
 def _operator_prefill_args() -> list[str]:
     """Prefill the operator (logged-in username) so that prompt is skipped.
 
@@ -314,7 +341,7 @@ def _build_procedures() -> list[dict]:
         # gates are evidence checks, not an acceptance band. No override
         # (bloodflow-app#482, open decision 1).
         _sdk_module_procedure(
-            "Safety Calibration",
+            SAFETY_CALIBRATION,
             "omotion.scripts.wi15_safety_calibration",
             common,
         ),
@@ -323,6 +350,16 @@ def _build_procedures() -> list[dict]:
             "omotion.scripts.wi15_measurement_calibration",
             common,
             override=True,
+        ),
+        # Writes the passed Safety Calibration into the EE/OPT safety FPGA
+        # UFM records, so it survives the Release image (which drops the
+        # configuration's safety keys). Factory image only; app-local until
+        # the SDK carries it.
+        _app_module_procedure(
+            COMMIT_SAFETY_RECORD,
+            "procedures.wi15_commit_safety_record",
+            common,
+            requires_pass=SAFETY_CALIBRATION,
         ),
     ]
 
@@ -354,6 +391,7 @@ class ProceduresController(QObject):
     logCleared = pyqtSignal()
     verboseChanged = pyqtSignal()
     overrideChanged = pyqtSignal()
+    gateChanged = pyqtSignal()
     # Internal: device release finished on the worker thread; queued back to
     # the main thread, which owns QProcess creation.
     _releaseFinished = pyqtSignal(int)
@@ -376,6 +414,10 @@ class ProceduresController(QObject):
         self._verbose = False
         # Override mode is armed per run and never persisted.
         self._override_armed = False
+        # Procedures that passed in this app session (requires_pass gating).
+        # Session-only on purpose: a gated procedure follows the run it
+        # depends on, on the bench that ran it.
+        self._passed: set[str] = set()
         self._releaseFinished.connect(self._spawn_procedure)
         self._prompt_timer = QTimer(self)
         self._prompt_timer.setSingleShot(True)
@@ -429,6 +471,25 @@ class ProceduresController(QObject):
     verbose = pyqtProperty(bool, fget=_get_verbose, fset=_set_verbose,
                            notify=verboseChanged)
 
+    # ------------------------------------------------------------ gating
+    def _blocked_reason(self, index: int) -> str:
+        if not 0 <= index < len(self._procedures):
+            return ""
+        required = self._procedures[index].get("requires_pass")
+        if required and required not in self._passed:
+            return f"Run {required} to PASS first."
+        return ""
+
+    @pyqtProperty(bool, notify=gateChanged)
+    def currentProcedureReady(self) -> bool:
+        """Whether Start may launch the selected procedure."""
+        return not self._blocked_reason(self._current_index)
+
+    @pyqtProperty(str, notify=gateChanged)
+    def currentProcedureNote(self) -> str:
+        """Why the selected procedure cannot start yet, or ""."""
+        return self._blocked_reason(self._current_index)
+
     # -------------------------------------------------------- override mode
     @pyqtProperty(bool, constant=True)
     def overrideSupported(self) -> bool:
@@ -478,6 +539,7 @@ class ProceduresController(QObject):
         self._set_status(STATUS_IDLE)
         self._set_prompt("")
         self.overrideChanged.emit()   # currentProcedureSupportsOverride
+        self.gateChanged.emit()       # currentProcedureReady / Note
 
     @pyqtSlot(int)
     def startProcedure(self, index: int) -> None:
@@ -491,6 +553,10 @@ class ProceduresController(QObject):
         if proc.get("missing"):
             self._log(f"! cannot start: {proc['missing']}")
             self._set_status(STATUS_FAIL)
+            return
+        blocked = self._blocked_reason(index)
+        if blocked:
+            self._log(f"! cannot start: {blocked}")
             return
         self._lines.clear()
         self._linebuf = ""
@@ -674,6 +740,9 @@ class ProceduresController(QObject):
             self._log("procedure stopped by operator")
             self._set_status(STATUS_IDLE)
         elif exit_code == 0:
+            if 0 <= self._current_index < len(self._procedures):
+                self._passed.add(self._procedures[self._current_index]["name"])
+                self.gateChanged.emit()
             self._log("Final result: PASS")
             self._set_status(STATUS_PASS)
         elif exit_code == _EXIT_OVERRIDE:

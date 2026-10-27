@@ -291,6 +291,7 @@ def test_registry_uses_package_modules_and_shared_output_dir(monkeypatch):
         "omotion.scripts.wi15_dual_sensor_laser_calibration",
         "omotion.scripts.wi15_safety_calibration",
         "omotion.scripts.wi15_measurement_calibration",
+        "procedures.wi15_commit_safety_record",
     ]
     for entry in entries:
         i = entry["args"].index("--output-dir")
@@ -368,6 +369,7 @@ def test_registry_declares_which_procedures_honour_override(monkeypatch):
         "Dual-Sensor Laser Calibration": True,
         "Safety Calibration": False,
         "Measurement Calibration (one sensor)": True,
+        "Commit Safety Calibration to Unit": False,
     }
 
 
@@ -505,3 +507,70 @@ def test_current_procedure_override_support_follows_the_selection(monkeypatch):
     assert controller.currentProcedureSupportsOverride is True
     controller.selectProcedure(1)
     assert controller.currentProcedureSupportsOverride is False
+
+
+# ------------------------------------------------- gated procedures (commit)
+def test_the_safety_record_commit_follows_safety_calibration(monkeypatch):
+    monkeypatch.delattr(pc.sys, "frozen", raising=False)
+    monkeypatch.setattr(pc, "_has_module", lambda module: True)
+
+    entries = {e["name"]: e for e in pc._build_procedures()}
+    commit = entries[pc.COMMIT_SAFETY_RECORD]
+
+    assert commit["requires_pass"] == pc.SAFETY_CALIBRATION
+    assert pc.SAFETY_CALIBRATION in entries
+    # App-local procedure: from source it runs out of the app checkout.
+    assert commit["source"] == pc._app_dir()
+    assert all(e.get("requires_pass") is None
+               for name, e in entries.items() if name != pc.COMMIT_SAFETY_RECORD)
+
+
+def test_the_app_procedure_is_importable_from_the_checkout():
+    assert pc._has_module("procedures.wi15_commit_safety_record")
+
+
+def _gated_controller(monkeypatch):
+    return _controller(monkeypatch, [
+        {"name": pc.SAFETY_CALIBRATION, "missing": None},
+        {"name": pc.COMMIT_SAFETY_RECORD, "missing": None,
+         "requires_pass": pc.SAFETY_CALIBRATION},
+    ])
+
+
+def test_commit_cannot_start_until_safety_calibration_passed(monkeypatch, caplog):
+    controller = _gated_controller(monkeypatch)
+    released = []
+    monkeypatch.setattr(pc.threading, "Thread",
+                        lambda **kw: SimpleNamespace(start=lambda: released.append(kw)))
+
+    controller.selectProcedure(1)
+    assert controller.currentProcedureReady is False
+    assert "Safety Calibration" in controller.currentProcedureNote
+    with caplog.at_level(logging.INFO, logger="procedures_controller"):
+        controller.startProcedure(1)
+
+    assert released == []                       # devices never released
+    assert "cannot start: Run Safety Calibration to PASS first" in caplog.text
+    assert controller.status == pc.STATUS_IDLE
+
+
+def test_a_failed_safety_calibration_keeps_the_commit_blocked(monkeypatch):
+    controller = _gated_controller(monkeypatch)
+    controller._current_index = 0
+    controller._on_finished(1, None)
+    controller.selectProcedure(1)
+    assert controller.currentProcedureReady is False
+
+
+def test_a_passed_safety_calibration_unblocks_the_commit(monkeypatch):
+    controller = _gated_controller(monkeypatch)
+    changes = []
+    controller.gateChanged.connect(lambda: changes.append(1))
+
+    controller._current_index = 0
+    controller._on_finished(0, None)
+    controller.selectProcedure(1)
+
+    assert controller.currentProcedureReady is True
+    assert controller.currentProcedureNote == ""
+    assert changes                               # QML re-reads the gate

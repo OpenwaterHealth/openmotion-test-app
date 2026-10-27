@@ -31,6 +31,7 @@ python -m PyInstaller -y openwater.spec  # package .exe
 | `histogram_classifier.py` | 351 lines. Signal-processing for histogram analysis (thresholds appear hardcoded — inspect before relying on outputs). |
 | `motion_singleton.py` | Singleton wrapper for the SDK `MOTIONInterface`. |
 | `procedures_controller.py` | Procedures pane backend — resolves and spawns WI-00015 procedures, streams their stdout, answers their prompts. |
+| `procedures/` | App-local procedures on their way into the SDK (1.16.0): `safety_record.py` (EE/OPT UFM safety-record builder, mirrors console-fw `scripts/safety_ufm_record.py`) and `wi15_commit_safety_record.py` (writes a passed Safety Calibration into the safety FPGAs; Factory image only). |
 | `utils/procedure_runner.py` | The `--run-procedure` hook: turns the app exe into a runner for a bundled `omotion.scripts.*` module. |
 | `version.py` | Version string; updated from git tag in CI. |
 | `rthook_libusb_paths.py` | PyInstaller runtime hook — points the bundle at vendored libusb DLLs at exe launch. |
@@ -200,5 +201,5 @@ Both use the same `motion_connector.py` pattern, but expose different surfaces:
 | Add or change an FPGA register | `models/fpga_model.json` → slot in `motion_connector.py` → bind in `pages/Settings.qml`. |
 | Tune a histogram classifier threshold | `histogram_classifier.py` — currently hardcoded; consider moving to config. |
 | Add a CLI flag | `main.py` — argparse in `main()`. Anything that must run before Qt and before the SDK singleton (as `--run-procedure` does) goes above the imports instead. |
-| Add a procedure to the pane | Append a `_sdk_module_procedure(...)` entry in `procedures_controller._build_procedures`. Nothing else — the pane is procedure-agnostic. |
+| Add a procedure to the pane | Append a `_sdk_module_procedure(...)` entry in `procedures_controller._build_procedures`. Nothing else — the pane is procedure-agnostic. An app-local module under `procedures/` uses `_app_module_procedure(...)`; `requires_pass=` gates it on another procedure having passed in this session (Start stays disabled with a note). |
 | Trigger firmware update | `motion_connector.py` `beginFpgaFirmwareUpdate` / sensor DFU path. **No confirmation UI** — wrap in a dialog if you're worried about misclicks. Bootloader install and the release-folder update are the exceptions: `installBootloader` (release tag) and `installBootloaderFromLocal` (browsed `motion-*-production.bin`) gate behind `bootloaderWarningDialog`, `updateFromReleaseFolder` behind `releaseFolderUpdateDialog`. |

@@ -52,6 +52,15 @@ if not any(m.startswith("omotion.scripts.wi15") for m in procedure_modules):
 hidden += procedure_modules
 print(f"[spec] Bundling {len(procedure_modules)} omotion.scripts module(s)")
 
+# The app's own procedures (procedures/), run the same way by name. The spec
+# directory is the checkout; put it on the path so the package is found.
+if SPECPATH not in sys.path:
+    sys.path.insert(0, SPECPATH)
+app_procedure_modules = collect_submodules("procedures")
+if "procedures.wi15_commit_safety_record" not in app_procedure_modules:
+    raise SystemExit("[spec] procedures.wi15_commit_safety_record is missing from the build")
+hidden += app_procedure_modules
+
 # Runtime deps of the PYTHONPATH-sourced omotion that static analysis can
 # miss (crcmod: wire-protocol CRC, found missing in the 2026-08-14 build;
 # cryptography: imported inside omotion.dfu.image when a firmware image is

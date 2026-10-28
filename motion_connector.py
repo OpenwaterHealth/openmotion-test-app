@@ -79,6 +79,7 @@ except Exception:  # pragma: no cover
     stlink_probes = None
 
 from dfu_driver import dfu_driver_issue
+from safety_limits import build_view as build_safety_limits_view
 
 
 def _firmware_kind(target: str):
@@ -1418,6 +1419,8 @@ class MOTIONConnector(QObject):
 
     # Console odometer read (system uptime minutes, laser LSYNC pulses; -1 = n/a)
     consoleOdometerReceived = pyqtSignal(int, int)
+    # Safety Limits dialog: safety_limits.build_view() dict
+    safetyLimitsReceived = pyqtSignal("QVariant")
 
     tcmChanged = pyqtSignal()
     tclChanged = pyqtSignal()
@@ -3875,6 +3878,57 @@ class MOTIONConnector(QObject):
             logger.error(f"Error Sending Software Reset: {e}")
         finally:
             self._console_mutex.unlock()
+
+    @pyqtSlot()
+    def querySafetyLimits(self) -> None:
+        """Read the EE/OPT limit registers, the TA setpoints, the attestation
+        report and the interlocks, and emit safetyLimitsReceived. Read only;
+        runs on a worker thread so the UI stays responsive."""
+        import threading
+
+        threading.Thread(target=self._do_query_safety_limits, daemon=True).start()
+
+    def _read_register_raw(self, friendly_name: str):
+        """(raw, scale, unit) of one FPGA register from fpga_model.json, or None."""
+        entry = self._fpga.get_entry_by_friendly_name(friendly_name)
+        if entry is None:
+            return None
+        length = int(str(entry["data_size"]).rstrip("B")) // 8
+        try:
+            data, data_len = motion_interface.console.read_i2c_packet(
+                mux_index=entry["mux_idx"],
+                channel=entry["channel"],
+                device_addr=entry["i2c_addr"],
+                reg_addr=entry["start_address"],
+                read_len=length,
+            )
+        except Exception as e:
+            logger.error(f"Read of {friendly_name} failed: {e}")
+            return None
+        if data is None or data_len != length:
+            return None
+        order = "big" if entry["isMsbFirst"] else "little"
+        unit = next((fn.get("unit", "") for fpga in self._fpga.model
+                     for fn in fpga.get("functions", [])
+                     if fn.get("friendlyName") == friendly_name), "")
+        return int.from_bytes(bytes(data[:length]), order), entry["scale"], unit
+
+    def _do_query_safety_limits(self):
+        self._console_mutex.lock()
+        try:
+            console = motion_interface.console
+            info = console.get_boot_info()
+            report = None
+            if info is not None and info.firmware_owns_safety_state:
+                report = console.get_fpga_attestation()
+            view = build_safety_limits_view(self._read_register_raw, info, report)
+            logger.info(f"Safety limits: {view['verdict']}")
+        except Exception as e:
+            logger.error(f"Error reading safety limits: {e}")
+            view = {"error": str(e)}
+        finally:
+            self._console_mutex.unlock()
+        self.safetyLimitsReceived.emit(view)
 
     @pyqtSlot()
     def queryConsoleOdometer(self) -> None:

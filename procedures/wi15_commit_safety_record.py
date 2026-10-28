@@ -287,8 +287,6 @@ def run_commit(
         info = bench.boot_info()
         data["boot_info"] = info
         if info is None or not info.firmware_owns_safety_state:
-            # Name what the console reported: a pre-release 1.8.2 build (say
-            # 1.8.2-dev.3) still answers boot-info v1 and does not load a record.
             answer = ("did not answer the boot-info request" if info is None
                       else f"answers boot-info v{info.struct_version}")
             raise CommitError(

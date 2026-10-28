@@ -135,17 +135,16 @@ def test_refusals_write_nothing(calibrated, bench_kwargs, reason):
     assert not any("may be incomplete" in line for line in lines)
 
 
-def test_pre_release_firmware_is_named_in_the_refusal(calibrated):
-    # QWW04Q10018, 2026-10-27: still on 1.8.2-dev.3 (boot-info v1) at commit time.
+def test_firmware_without_a_safety_record_is_named_in_the_refusal(calibrated):
     bench = FakeBench(boot=BootInfo(1, 0x08000000, 0x08000000))
-    bench.firmware_version = lambda: "1.8.2-dev.3"
+    bench.firmware_version = lambda: "1.8.1"
 
     code, lines = _run(calibrated, bench)
 
     assert code == commit.EXIT_FAIL and not bench.written
     path, data = _evidence(calibrated)
     assert path.parent.name == "C-1-safety-record-20261027T100000Z"
-    assert "1.8.2-dev.3" in data["failure_reason"]
+    assert "1.8.1" in data["failure_reason"]
     assert "boot-info v1" in data["failure_reason"]
     assert any("factory-baremetal" in line for line in lines)
 

@@ -1532,6 +1532,30 @@ Rectangle {
                             }
                         }
 
+                        // Safety Limits: read-only view of the EE/OPT limits and the record state
+                        Rectangle {
+                            Layout.fillWidth: true
+                            height: 34
+                            radius: 10
+                            color: enabled ? "#3A3F4B" : "#7F8C8D"
+                            border.color: "#3498DB"
+                            enabled: MOTIONInterface.consoleConnected
+
+                            Text {
+                                text: "Safety Limits"
+                                anchors.centerIn: parent
+                                color: parent.enabled ? "#3498DB" : "#BDC3C7"
+                                font.pixelSize: 16
+                                font.weight: Font.Bold
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                enabled: parent.enabled
+                                onClicked: safetyLimitsDialog.openAndRefresh()
+                            }
+                        }
+
                         // Soft Reset Button
                         Rectangle {
                             Layout.fillWidth: true
@@ -1573,6 +1597,169 @@ Rectangle {
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // Read-only view of the limits the console loaded from the safety records
+    // (safety_limits.py). Nothing here writes to the console.
+    Dialog {
+        id: safetyLimitsDialog
+        width: 760
+        height: 680
+        modal: true
+        x: (parent.width - width) / 2
+        y: (parent.height - height) / 2
+        background: Rectangle {
+            color: "#1E1E20"
+            radius: 8
+            border.color: "#3E4E6F"
+            border.width: 2
+        }
+
+        property var view: ({})
+        property bool busy: false
+
+        function openAndRefresh() {
+            open()
+            refresh()
+        }
+        function refresh() {
+            busy = true
+            MOTIONInterface.querySafetyLimits()
+        }
+
+        Connections {
+            target: MOTIONInterface
+            function onSafetyLimitsReceived(v) {
+                safetyLimitsDialog.view = v
+                safetyLimitsDialog.busy = false
+            }
+        }
+
+        component LimitTable: ColumnLayout {
+            property string heading: ""
+            property string status: ""
+            property color statusColor: "#BDC3C7"
+            property var rows: []
+            Layout.fillWidth: true
+            spacing: 2
+
+            RowLayout {
+                Layout.fillWidth: true
+                Text { text: heading; color: "#BDC3C7"; font.pixelSize: 14; font.bold: true }
+                Item { Layout.fillWidth: true }
+                Text { text: status; color: statusColor; font.pixelSize: 13; font.bold: true }
+            }
+            Repeater {
+                model: rows
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text { text: modelData.register; color: "#BDC3C7"; font.pixelSize: 13; Layout.preferredWidth: 260 }
+                    Text { text: modelData.raw; color: "#7F8C8D"; font.pixelSize: 13; Layout.preferredWidth: 120; horizontalAlignment: Text.AlignRight }
+                    Item { Layout.fillWidth: true }
+                    Text { text: modelData.value; color: modelData.ok ? "#3498DB" : "#E74C3C"; font.pixelSize: 13; font.bold: true }
+                }
+            }
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 10
+
+            Text {
+                text: "Safety Limits"
+                color: "#BDC3C7"
+                font.pixelSize: 18
+                font.bold: true
+            }
+            Text {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                font.pixelSize: 14
+                font.bold: true
+                color: safetyLimitsDialog.busy ? "#BDC3C7"
+                       : safetyLimitsDialog.view.error ? "#E74C3C"
+                       : safetyLimitsDialog.view.verdictOk ? "#2ECC71" : "#E67E22"
+                text: safetyLimitsDialog.busy ? "Reading ..."
+                      : safetyLimitsDialog.view.error ? "Read failed: " + safetyLimitsDialog.view.error
+                      : (safetyLimitsDialog.view.verdict || "")
+            }
+            Text {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: "#BDC3C7"
+                font.pixelSize: 13
+                visible: !safetyLimitsDialog.busy && safetyLimitsDialog.view.supported === true
+                text: "Attestation: " + safetyLimitsDialog.view.attestation +
+                      "    Interlocks: " + safetyLimitsDialog.view.interlocks +
+                      (safetyLimitsDialog.view.factory ? "    Image: Factory" : "    Image: Release")
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Text { text: "Register"; color: "#7F8C8D"; font.pixelSize: 12; Layout.preferredWidth: 260 }
+                Text { text: "Raw"; color: "#7F8C8D"; font.pixelSize: 12; Layout.preferredWidth: 120; horizontalAlignment: Text.AlignRight }
+                Item { Layout.fillWidth: true }
+                Text { text: "Value"; color: "#7F8C8D"; font.pixelSize: 12 }
+            }
+
+            Repeater {
+                model: safetyLimitsDialog.busy ? [] : (safetyLimitsDialog.view.devices || [])
+                LimitTable {
+                    heading: "Safety " + modelData.name + " (from its UFM record)"
+                    status: "UFM record " + modelData.record
+                    statusColor: modelData.valid ? "#2ECC71" : "#E74C3C"
+                    rows: modelData.rows
+                }
+            }
+
+            LimitTable {
+                visible: !safetyLimitsDialog.busy && safetyLimitsDialog.view.setpoints !== undefined
+                heading: "TA operating point (set by the host, bounded by the records)"
+                rows: safetyLimitsDialog.view.setpoints || []
+            }
+
+            Item { Layout.fillHeight: true }
+
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                spacing: 10
+
+                Button {
+                    text: "Refresh"
+                    enabled: !safetyLimitsDialog.busy && MOTIONInterface.consoleConnected
+                    Layout.preferredWidth: 100
+                    Layout.preferredHeight: 32
+                    background: Rectangle {
+                        color: parent.hovered ? "#4A90E2" : "#3A3F4B"
+                        radius: 4
+                        border.color: "#BDC3C7"
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        color: "#BDC3C7"
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: safetyLimitsDialog.refresh()
+                }
+                Button {
+                    text: "Close"
+                    Layout.preferredWidth: 100
+                    Layout.preferredHeight: 32
+                    background: Rectangle {
+                        color: parent.hovered ? "#4A90E2" : "#3A3F4B"
+                        radius: 4
+                        border.color: "#BDC3C7"
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        color: "#BDC3C7"
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: safetyLimitsDialog.close()
                 }
             }
         }

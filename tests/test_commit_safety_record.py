@@ -119,8 +119,8 @@ def test_a_passed_calibration_is_written_to_both_devices_and_attested(calibrated
 
 @pytest.mark.parametrize(("bench_kwargs", "reason"), [
     ({"boot": RELEASE}, "Release image"),
-    ({"boot": BootInfo(1, 0x08020400, 0x08020000)}, "1.8.2 or later"),
-    ({"boot": None}, "1.8.2 or later"),
+    ({"boot": BootInfo(1, 0x08020400, 0x08020000)}, "answers boot-info v1"),
+    ({"boot": None}, "did not answer the boot-info request"),
     ({"config": dict(CALIBRATED, OPT_DRIVE_CL=6200)}, "OPT_DRIVE_CL"),
 ])
 def test_refusals_write_nothing(calibrated, bench_kwargs, reason):
@@ -133,6 +133,20 @@ def test_refusals_write_nothing(calibrated, bench_kwargs, reason):
     _, data = _evidence(calibrated)
     assert data["status"] == "failed" and reason in data["failure_reason"]
     assert not any("may be incomplete" in line for line in lines)
+
+
+def test_firmware_without_a_safety_record_is_named_in_the_refusal(calibrated):
+    bench = FakeBench(boot=BootInfo(1, 0x08000000, 0x08000000))
+    bench.firmware_version = lambda: "1.8.1"
+
+    code, lines = _run(calibrated, bench)
+
+    assert code == commit.EXIT_FAIL and not bench.written
+    path, data = _evidence(calibrated)
+    assert path.parent.name == "C-1-safety-record-20261027T100000Z"
+    assert "1.8.1" in data["failure_reason"]
+    assert "boot-info v1" in data["failure_reason"]
+    assert any("factory-baremetal" in line for line in lines)
 
 
 def test_no_passed_safety_calibration_refuses(tmp_path):

@@ -281,18 +281,24 @@ def run_commit(
         if not serial:
             raise CommitError("the console has no serial number")
         data["console_serial"] = serial
-        data["console_firmware"] = bench.firmware_version()
+        evidence.name_for_unit(serial, run_id)
+        firmware = bench.firmware_version()
+        data["console_firmware"] = firmware
         info = bench.boot_info()
         data["boot_info"] = info
         if info is None or not info.firmware_owns_safety_state:
+            answer = ("did not answer the boot-info request" if info is None
+                      else f"answers boot-info v{info.struct_version}")
             raise CommitError(
-                "this console firmware does not load a safety record (it needs console "
-                "firmware 1.8.2 or later)")
+                f"the console reports firmware {firmware or 'unknown'} and {answer}, so it "
+                "does not load a safety record; install the Factory image "
+                "(openmotion-console-fw-<release>-factory-baremetal) of console firmware "
+                "1.8.2-rc.3 or later, check that the console reports '<release>-factory', "
+                "and run this procedure again")
         if not info.factory_image:
             raise CommitError(
                 "the console runs a Release image, which cannot write the safety record; "
                 "install the Factory image and run this procedure again")
-        evidence.name_for_unit(serial, run_id)
         output_func(f"Console {serial}, Factory image.")
 
         step("Step 2 of 5: Checking the Safety Calibration result ...")

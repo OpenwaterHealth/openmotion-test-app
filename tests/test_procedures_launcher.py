@@ -292,11 +292,16 @@ def test_registry_uses_package_modules_and_shared_output_dir(monkeypatch):
         "omotion.scripts.wi15_safety_calibration",
         "omotion.scripts.wi15_measurement_calibration",
         "procedures.wi15_commit_safety_record",
+        "omotion.scripts.seedless_cmin",
     ]
     for entry in entries:
         i = entry["args"].index("--output-dir")
+        # WI-00015 evidence shares one folder; the engineering C_min
+        # measurement keeps its reports apart from it.
+        folder = ("cmin_out" if entry["name"] == pc.SEEDLESS_CMIN
+                  else "wi15_out")
         assert entry["args"][i + 1] == os.path.join(
-            pc._PROCEDURE_OUTPUT_ROOT, "wi15_out")
+            pc._PROCEDURE_OUTPUT_ROOT, folder)
 
 
 def test_registry_prefills_the_operator_but_never_the_fixture_id(monkeypatch):
@@ -370,6 +375,7 @@ def test_registry_declares_which_procedures_honour_override(monkeypatch):
         "Safety Calibration": False,
         "Measurement Calibration (one sensor)": True,
         "Commit Safety Calibration to Unit": False,
+        "Seedless C_min (engineering)": False,
     }
 
 

@@ -113,6 +113,7 @@ _OVERRIDE_MODULE = "omotion.calibration.override"
 # Procedure names other code refers to (registry gating).
 SAFETY_CALIBRATION = "Safety Calibration"
 COMMIT_SAFETY_RECORD = "Commit Safety Calibration to Unit"
+SEEDLESS_CMIN = "Seedless C_min (engineering)"
 
 MAX_LOG_LINES = 5000
 
@@ -360,6 +361,20 @@ def _build_procedures() -> list[dict]:
             "procedures.wi15_commit_safety_record",
             common,
             requires_pass=SAFETY_CALIBRATION,
+        ),
+        # Engineering measurement, not WI-00015: speckle contrast of the
+        # unseeded TA (C_min) at the nominal image mean, on the static
+        # phantom. Reports only - never writes C_min to the unit. Temporarily
+        # widens the EE/OPT safety limits, so the console must run a Factory
+        # image (or pre-PTR-2026-1-5 firmware); the script checks before the
+        # laser fires. No override: it has no acceptance band to override.
+        _sdk_module_procedure(
+            SEEDLESS_CMIN,
+            "omotion.scripts.seedless_cmin",
+            [
+                *_operator_prefill_args(),
+                "--output-dir", os.path.join(_PROCEDURE_OUTPUT_ROOT, "cmin_out"),
+            ],
         ),
     ]
 

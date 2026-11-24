@@ -365,8 +365,9 @@ def _build_procedures() -> list[dict]:
         # Engineering measurement, not WI-00015: speckle contrast of the
         # unseeded TA (C_min) at the nominal image mean, on the static
         # phantom. Reports only - never writes C_min to the unit. Temporarily
-        # widens the EE/OPT safety limits, so the console must run a Factory
-        # image (or pre-PTR-2026-1-5 firmware); the script checks before the
+        # widens the EE/OPT safety limits beyond the WI-00015 envelope that
+        # console firmware owning the safety state enforces (on every image),
+        # so it needs firmware that allows them; the script checks before the
         # laser fires. No override: it has no acceptance band to override.
         _sdk_module_procedure(
             SEEDLESS_CMIN,

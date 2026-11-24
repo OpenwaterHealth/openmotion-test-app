@@ -91,9 +91,10 @@ line-buffered.
 **Seedless C_min (engineering)** runs `omotion.scripts.seedless_cmin` (SDK
 `docs/SeedlessCmin.md`): seed off, TA pulse lengthened until the image mean
 matches the seeded one, then 1 s of frames for C_min. Report only, nothing is
-written to the unit. It widens the EE/OPT safety limits for the run, so the
-console needs its Factory image (the script refuses before the laser
-otherwise). Its reports go to `cmin_out/`, apart from the WI-00015 evidence.
+written to the unit. It widens the EE/OPT safety limits for the run, which
+console firmware that owns the safety state (1.8.2, Factory image included)
+refuses: its WI-00015 envelope caps the pulse-width limit at 660 us. The
+script checks and refuses before the laser. Its reports go to `cmin_out/`, apart from the WI-00015 evidence.
 
 `openwater.spec` asserts at build time that `omotion.scripts` carries the
 `wi15_*` modules — the SDK it packages against must be new enough (they landed

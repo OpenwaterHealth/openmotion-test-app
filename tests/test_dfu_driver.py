@@ -100,6 +100,16 @@ def test_wrong_driver_blocks_and_names_it():
     issue = _evaluate(["STTub30"])
     assert "STTub30" in issue
     assert "Zadig" in issue
+    # The driver installer only adds a store INF, which an existing binding
+    # outranks, so it must not be offered as the fix here.
+    assert "OpenMotionDriver" not in issue
+
+
+def test_driverless_names_driver_installer_before_zadig():
+    issue = _evaluate([None], store_has_inf=False)
+    assert "OpenMotionDriver-x64.msi" in issue
+    assert "Zadig" in issue
+    assert issue.index("OpenMotionDriver") < issue.index("Zadig")
 
 
 def test_mixed_bad_instances_report_the_bound_driver():

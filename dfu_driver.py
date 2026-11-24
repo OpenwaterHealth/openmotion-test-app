@@ -54,6 +54,19 @@ _ZADIG_FIX = (
     "update."
 )
 
+# The Open-Motion driver installer (openmotion-sdk winusb-driver/, sdk#217;
+# also vendored in the bloodflow app's resources/) pnputil-installs
+# DFU_in_FS_Mode.inf, a WinUSB INF for 0483:DF11. That puts a DF11 INF in the
+# driver store, which clears the driverless case below. It does not clear the
+# wrong-driver case: an existing binding (e.g. STTub30) wins over a store INF,
+# so that message names Zadig only.
+_DRIVER_INSTALLER_FIX = (
+    "Run the Open-Motion driver installer (OpenMotionDriver-x64.msi, from "
+    "OpenMotionDriver-x64.zip) as administrator: it installs the DFU driver "
+    "along with the sensor drivers. Then retry the update. If the installer "
+    "is not at hand: "
+)
+
 _UNREADABLE = object()
 
 
@@ -153,6 +166,7 @@ def _evaluate(services: list[str | None] | None, store_has_inf: bool | None = Fa
         "This PC has seen the STM32 DFU device (USB 0483:DF11) but has no "
         "driver installed for it, so the update would enter DFU mode and "
         "then fail, leaving the device in DFU until power-cycled. "
+        + _DRIVER_INSTALLER_FIX
         + _ZADIG_FIX
     )
 

@@ -211,3 +211,34 @@ def test_non_tec_refusal_skips_tec_read(monkeypatch):
     assert c.startTrigger() is False
     assert c.tec_reads == 0
     assert "laser-safety fault latched" in c._trigger_refusal_text
+
+
+class _Config(dict):
+    def set(self, key, value):
+        self[key] = value
+
+
+class _RefusingConsole:
+    """Console FW 1.8.2 application image: TEC_TRIP is firmware-owned (0xFA)."""
+
+    last_config_refusal_reason = (
+        "names a firmware-owned safety parameter; writable only on a Factory image"
+    )
+
+    def read_config(self):
+        return _Config()
+
+    def write_config(self, config):
+        return None
+
+
+def test_refused_tec_trip_write_names_the_console_reason(monkeypatch):
+    """Bench run on console FW 1.8.2: the write is refused, so say why."""
+    c = _Connector(tec_good=True)
+    c.tecTripSetFailed = _Signal()
+    messages = []
+    c.tecTripSetFailed.emit = messages.append
+    monkeypatch.setattr(motion_connector, "motion_interface", _Interface(_RefusingConsole()))
+    assert MOTIONConnector.setTecTrip(c, 23) is False
+    assert messages and "TEC_TRIP=23" in messages[0]
+    assert "firmware-owned safety parameter" in messages[0]

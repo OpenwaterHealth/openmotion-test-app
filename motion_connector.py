@@ -4173,6 +4173,14 @@ class MOTIONConnector(QObject):
             updated = motion_interface.console.write_config(config)
             if updated is None:
                 msg = f"Failed to write TEC_TRIP={res} °C to device"
+                # Name the console's reason, e.g. 0xFA on console firmware
+                # 1.8.2+: TEC_TRIP is a firmware-owned safety parameter there,
+                # writable only on a Factory image (#130 bench run).
+                reason = getattr(
+                    motion_interface.console, "last_config_refusal_reason", None
+                )
+                if reason:
+                    msg += f": {reason}"
                 logger.error(msg)
                 self.tecTripSetFailed.emit(msg)
                 return False

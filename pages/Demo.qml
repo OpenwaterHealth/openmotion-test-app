@@ -1421,6 +1421,7 @@ Rectangle {
                                             validator: IntValidator { bottom: 1; top: 125 }
 
                                             property string tripError: ""
+                                            property string setFailure: ""
                                             background: Rectangle {
                                                 radius: 6
                                                 color: "#2B2B2E"
@@ -1486,6 +1487,22 @@ Rectangle {
                                         wrapMode: Text.WordWrap
                                         color: "#F39C12"
                                         font.pixelSize: 11
+                                    }
+
+                                    // Why the console refused a TEC Trip write.
+                                    Text {
+                                        Layout.fillWidth: true
+                                        visible: text.length > 0
+                                        text: tecTripField.setFailure
+                                        wrapMode: Text.WordWrap
+                                        color: "#E74C3C"
+                                        font.pixelSize: 11
+
+                                        Timer {
+                                            id: setFailureTimer
+                                            interval: 15000
+                                            onTriggered: tecTripField.setFailure = ""
+                                        }
                                     }
                                 }
                             }
@@ -2332,8 +2349,13 @@ Rectangle {
         }
 
         function onTecTripSetFailed(msg) {
-            tecTripField.tripError = msg
+            // Short marker inline; the console's full reason (e.g. 0xFA,
+            // firmware-owned safety parameter) wraps on the line below.
+            tecTripField.tripError = "not set"
             tripErrorTimer.restart()
+            tecTripField.setFailure = msg
+            setFailureTimer.restart()
+            tecTripField.text = MOTIONInterface.tecTripValue.toString()
         }
 
         // Apply FPGA scale overrides whenever user config is (re)loaded from device

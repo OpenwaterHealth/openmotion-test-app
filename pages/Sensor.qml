@@ -503,20 +503,49 @@ Rectangle {
         y: (parent.height - height) / 2
 
         property bool allProgrammed: false
+        property bool running: false
         property string summaryText: ""
-        // Per-camera verdict strings ("" = no result yet). Reassigned whole
-        // (not mutated) so the light bindings re-evaluate.
+        // Per-camera verdict and detail strings ("" = no result yet).
+        // Reassigned whole (not mutated) so the light bindings re-evaluate.
         property var cameraVerdicts: ["", "", "", "", "", "", "", ""]
+        property var cameraDetails: ["", "", "", "", "", "", "", ""]
+
+        // Opened when the sweep starts so the lights fill in live.
+        function startSweep() {
+            cameraVerdicts = ["", "", "", "", "", "", "", ""]
+            cameraDetails = ["", "", "", "", "", "", "", ""]
+            allProgrammed = false
+            summaryText = ""
+            running = true
+            open()
+        }
+
+        function resultCount() {
+            var n = 0
+            for (var i = 0; i < cameraVerdicts.length; i++)
+                if (cameraVerdicts[i] !== "") n++
+            return n
+        }
+
+        function lightColor(verdict) {
+            if (verdict === "PROGRAMMED") return "#27AE60"
+            if (verdict === "BLANK") return "#E74C3C"
+            if (verdict === "") return "#2C313C"
+            return "#7F8C8D"
+        }
 
         ColumnLayout {
             anchors.fill: parent
             spacing: 16
 
             Text {
-                text: nvcmCheckSummaryDialog.allProgrammed
-                      ? "All 8 cameras PROGRAMMED"
-                      : "One or more cameras not PROGRAMMED"
-                color: nvcmCheckSummaryDialog.allProgrammed ? "#27AE60" : "#E74C3C"
+                text: nvcmCheckSummaryDialog.running
+                      ? "Checking cameras… (" + nvcmCheckSummaryDialog.resultCount() + " of 8)"
+                      : nvcmCheckSummaryDialog.allProgrammed
+                        ? "All 8 cameras PROGRAMMED"
+                        : "One or more cameras not PROGRAMMED"
+                color: nvcmCheckSummaryDialog.running ? "#4A90E2"
+                       : nvcmCheckSummaryDialog.allProgrammed ? "#27AE60" : "#E74C3C"
                 font.pixelSize: 15
                 font.bold: true
             }
@@ -535,21 +564,57 @@ Rectangle {
                             height: 32
                             radius: 16
                             anchors.horizontalCenter: parent.horizontalCenter
-                            color: {
-                                var v = nvcmCheckSummaryDialog.cameraVerdicts[index] || ""
-                                if (v === "PROGRAMMED") return "#27AE60"
-                                if (v === "BLANK") return "#E74C3C"
-                                if (v === "") return "#2C313C"
-                                return "#7F8C8D"
-                            }
+                            color: nvcmCheckSummaryDialog.lightColor(
+                                       nvcmCheckSummaryDialog.cameraVerdicts[index] || "")
                             border.color: "#BDC3C7"
                             border.width: 1
+
+                            MouseArea {
+                                id: nvcmLightHover
+                                anchors.fill: parent
+                                hoverEnabled: true
+                            }
+                            ToolTip.visible: nvcmLightHover.containsMouse
+                            ToolTip.text: {
+                                var v = nvcmCheckSummaryDialog.cameraVerdicts[index] || ""
+                                var d = nvcmCheckSummaryDialog.cameraDetails[index] || ""
+                                if (v === "") return "Camera " + (index + 1) + ": no result yet"
+                                return "Camera " + (index + 1) + ": " + v + (d ? " — " + d : "")
+                            }
                         }
                         Text {
                             text: index + 1
                             color: "#BDC3C7"
                             font.pixelSize: 11
                             anchors.horizontalCenter: parent.horizontalCenter
+                        }
+                    }
+                }
+            }
+
+            // Legend
+            Row {
+                spacing: 16
+                Layout.alignment: Qt.AlignHCenter
+                Repeater {
+                    model: [
+                        { label: "Programmed", verdict: "PROGRAMMED" },
+                        { label: "Not programmed", verdict: "BLANK" },
+                        { label: "No verdict", verdict: "NO RESPONSE" }
+                    ]
+                    Row {
+                        spacing: 5
+                        Rectangle {
+                            width: 10
+                            height: 10
+                            radius: 5
+                            anchors.verticalCenter: parent.verticalCenter
+                            color: nvcmCheckSummaryDialog.lightColor(modelData.verdict)
+                        }
+                        Text {
+                            text: modelData.label
+                            color: "#BDC3C7"
+                            font.pixelSize: 11
                         }
                     }
                 }
@@ -1540,7 +1605,7 @@ Rectangle {
                                             onClicked: {
                                                 let tag = (sensorSelector.currentIndex === 0) ? "left" : "right";
                                                 nvcmCheckProgressText.text = "Starting NVCM check…";
-                                                nvcmCheckSummaryDialog.cameraVerdicts = ["", "", "", "", "", "", "", ""];
+                                                nvcmCheckSummaryDialog.startSweep();
                                                 MOTIONInterface.checkNvcmProgrammed(tag);
                                             }
                                         }
@@ -1584,11 +1649,15 @@ Rectangle {
                                         }
                                         function onNvcmCheckCameraResult(camera, verdict, detail) {
                                             var lights = nvcmCheckSummaryDialog.cameraVerdicts.slice()
+                                            var details = nvcmCheckSummaryDialog.cameraDetails.slice()
                                             lights[camera - 1] = verdict
+                                            details[camera - 1] = detail
                                             nvcmCheckSummaryDialog.cameraVerdicts = lights
+                                            nvcmCheckSummaryDialog.cameraDetails = details
                                         }
                                         function onNvcmCheckFinished(allProgrammed, summary) {
                                             nvcmCheckProgressText.text = ""
+                                            nvcmCheckSummaryDialog.running = false
                                             nvcmCheckSummaryDialog.allProgrammed = allProgrammed
                                             nvcmCheckSummaryDialog.summaryText = summary
                                             nvcmCheckSummaryDialog.open()

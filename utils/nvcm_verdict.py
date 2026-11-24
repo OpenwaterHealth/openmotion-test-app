@@ -17,18 +17,22 @@ SRAM-load paths differ by two orders of magnitude (0.11 s vs 12.5-13.9 s
 measured on hardware 2026-07-17), split at ``SRAM_LOAD_THRESHOLD_S``.
 
 Why not the ISC status-register probe (``OW_FACTORY_NVCM_CHECK``)?  Its
-STATUS bit 19 ("SDM Enable") tracks the NVCM Done *fuse*, not bootability:
-a part whose Done fuse is burned but whose image does not boot reads
-bit19=1 straight from cold power-up, while the firmware correctly
-SRAM-loads it on every scan (right sensor camera 8, observed 2026-07-17 —
-its config port even wedges after a keyless boot attempt).  The blob's
+STATUS bit 19 ("SDM Enable") does not track bootability: right sensor
+camera 8 reads bit19=1 from cold power-up yet does not boot, and the
+firmware SRAM-loads it on every scan (observed 2026-07-17 — its config port
+even wedges after a keyless boot attempt), while June bench data shows a
+programmed part reading bit19=0 in the same probe mode.  Bit 19 is not
+interpreted anywhere in this module.  The blob's
 content reads float 0xFF in this mode and the keyless 0x40 probe carries no
 signal (issue #44), so nothing in that blob reflects whether the design
 actually boots.  Driving the firmware's pin-drive boot test makes this
 checker agree with scan behavior by construction.
 
-Note the check is no longer read-only: a camera whose NVCM does not boot is
-left SRAM-configured and running — the same state a scan leaves it in.
+sensor-fw #91 later appended the firmware's pin-drive boot verdict to that
+blob, which gives a fast read-only path (``interpret_check_blob``).  The
+timed-program method above (``interpret_boot_probe``) remains the fallback
+for older firmware, and it is not read-only: a camera whose NVCM does not
+boot is left SRAM-configured and running, the same state a scan leaves it in.
 """
 
 # Elapsed-time split between "firmware skipped programming because the NVCM

@@ -33,6 +33,7 @@ python -m PyInstaller -y openwater.spec  # package .exe
 | `procedures_controller.py` | Procedures pane backend — resolves and spawns WI-00015 procedures, streams their stdout, answers their prompts. |
 | `procedures/` | App-local procedures on their way into the SDK (1.16.0): `safety_record.py` (EE/OPT UFM safety-record builder, mirrors console-fw `scripts/safety_ufm_record.py`) and `wi15_commit_safety_record.py` (writes a passed Safety Calibration into the safety FPGAs; Factory image only). |
 | `utils/procedure_runner.py` | The `--run-procedure` hook: turns the app exe into a runner for a bundled `omotion.scripts.*` module. |
+| `trigger_refusal.py` | Pure-Python text for a refused Start Trigger (#130): decodes the console's interlock byte via the SDK, adds the TEC re-arm wait (~5 s after the TEC recovers), and the TEC-Trip-below-laser-temperature warning. Shown next to Start Trigger in `Demo.qml`. |
 | `version.py` | Version string; updated from git tag in CI. |
 | `rthook_libusb_paths.py` | PyInstaller runtime hook — points the bundle at vendored libusb DLLs at exe launch. |
 | `dfu_driver.py` | ~170 lines. Windows DFU-driver preflight (#94): reads `HKLM\...\Enum\USB\VID_0483&PID_DF11` to verify a usable driver (WinUSB/libusbK) is recorded before any DFU entry. Blocks only on a positively-bad state; never-seen and unreadable instances pass, and driverless records pass as stale when the driver store (`DriverDatabase\DeviceIds\USB\VID_0483&PID_DF11`) holds a DF11 INF. |

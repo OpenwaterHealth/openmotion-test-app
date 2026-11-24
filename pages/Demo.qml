@@ -1476,6 +1476,17 @@ Rectangle {
                                             onTriggered: tecTripField.applyTrip()
                                         }
                                     }
+
+                                    // TEC Trip at or below the laser temperature blocks
+                                    // every Start Trigger until it is raised (#130).
+                                    Text {
+                                        Layout.fillWidth: true
+                                        visible: text.length > 0
+                                        text: MOTIONInterface.tecTripWarning
+                                        wrapMode: Text.WordWrap
+                                        color: "#F39C12"
+                                        font.pixelSize: 11
+                                    }
                                 }
                             }
                         }
@@ -1928,6 +1939,43 @@ Rectangle {
                                 font.pixelSize: 14
                                 Layout.columnSpan: 1
                                 Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
+                            }
+
+                            // Why the console refused the last Start Trigger, and the
+                            // TEC re-arm countdown (#130). Cleared by a successful start.
+                            Text {
+                                id: triggerRefusal
+                                property int rearmLeft: -1
+                                Layout.columnSpan: 4
+                                Layout.fillWidth: true
+                                Layout.maximumWidth: parent.width
+                                visible: MOTIONInterface.triggerRefusalText.length > 0
+                                wrapMode: Text.WordWrap
+                                font.pixelSize: 12
+                                color: "#E74C3C"
+                                text: {
+                                    var t = MOTIONInterface.triggerRefusalText
+                                    if (rearmLeft > 0)
+                                        t += " Retry in " + rearmLeft + " s."
+                                    else if (rearmLeft === 0)
+                                        t += " Ready to retry."
+                                    return t
+                                }
+
+                                Timer {
+                                    id: rearmTimer
+                                    interval: 1000
+                                    repeat: true
+                                    running: triggerRefusal.rearmLeft > 0
+                                    onTriggered: triggerRefusal.rearmLeft -= 1
+                                }
+
+                                Connections {
+                                    target: MOTIONInterface
+                                    function onTriggerRefusalChanged() {
+                                        triggerRefusal.rearmLeft = MOTIONInterface.triggerRearmSec
+                                    }
+                                }
                             }
                         }
                     }

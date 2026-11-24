@@ -366,9 +366,9 @@ def _build_procedures() -> list[dict]:
         # unseeded TA (C_min) at the nominal image mean, on the static
         # phantom. Reports only - never writes C_min to the unit. Temporarily
         # widens the EE/OPT safety limits beyond the WI-00015 envelope that
-        # console firmware owning the safety state enforces (on every image),
-        # so it needs firmware that allows them; the script checks before the
-        # laser fires. No override: it has no acceptance band to override.
+        # 1.8.2 Release/Debug enforce on pass-through writes, so it needs 1.8.1
+        # or a Factory image that skips that check (console-fw #107); the
+        # script checks before the laser fires. No override: it has no acceptance band to override.
         _sdk_module_procedure(
             SEEDLESS_CMIN,
             "omotion.scripts.seedless_cmin",

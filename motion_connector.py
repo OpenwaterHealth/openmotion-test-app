@@ -27,7 +27,7 @@ from pathlib import Path
 from omotion.GitHubReleases import GitHubReleases
 from motion_singleton import motion_interface
 from histogram_classifier import classify_histogram
-from omotion.config import OW_RESP
+from omotion.config import OW_RESP, TRIG_INTERLOCK_TEC
 from utils.nvcm_verdict import interpret_boot_probe, interpret_check_blob
 from fpga_laser_config import (
     FpgaModel,
@@ -80,6 +80,7 @@ except Exception:  # pragma: no cover
 
 from dfu_driver import dfu_driver_issue
 from safety_limits import build_view as build_safety_limits_view
+from trigger_refusal import NO_WAIT, describe_start_refusal, tec_trip_warning
 
 
 def _firmware_kind(target: str):
@@ -1433,6 +1434,10 @@ class MOTIONConnector(QObject):
     tecTripValueChanged = pyqtSignal()
     taGainSetFailed = pyqtSignal(str)
     tecTripSetFailed = pyqtSignal(str)  # error message when reading/writing TEC_TRIP fails
+    # Why the last Start Trigger was refused, and the TEC re-arm wait (#130).
+    triggerRefusalChanged = pyqtSignal()
+    # TEC Trip at or below the laser temperature (#130); "" when fine.
+    tecTripWarningChanged = pyqtSignal()
 
     userConfigLoaded = pyqtSignal(
         float, float, float, float, float
@@ -1506,6 +1511,13 @@ class MOTIONConnector(QObject):
         # safety path gates on this rather than reporting a trip we never
         # measured (same reasoning as the SDK's safety_known, bloodflow#107).
         self._tec_trip_known = False
+        # Monotonic time the TEC was last seen to recover (tripped -> good), or
+        # a TEC Trip was written above the laser temperature. The console
+        # re-arms its TEC interlock about 5 s after that (#130).
+        self._tec_good_since = None
+        self._tec_trip_warning = ""
+        self._trigger_refusal_text = ""
+        self._trigger_rearm_sec = NO_WAIT
 
         self._tec_dac = 0.0
 
@@ -2462,6 +2474,55 @@ class MOTIONConnector(QObject):
     @pyqtProperty(bool, notify=tecStatusChanged)
     def tecGood(self):
         return self._tec_good
+
+    @pyqtProperty(str, notify=triggerRefusalChanged)
+    def triggerRefusalText(self):
+        """Why the console refused the last Start Trigger; "" after a start
+        succeeds (#130)."""
+        return self._trigger_refusal_text
+
+    @pyqtProperty(int, notify=triggerRefusalChanged)
+    def triggerRearmSec(self):
+        """Seconds until the console re-arms after a TEC refusal, counted from
+        the refusal; -1 when there is no wait to show."""
+        return self._trigger_rearm_sec
+
+    def _set_trigger_refusal(self, text: str, rearm_sec: int = NO_WAIT):
+        self._trigger_refusal_text = text
+        self._trigger_rearm_sec = rearm_sec
+        self.triggerRefusalChanged.emit()
+
+    def _describe_start_refusal(self, console) -> dict:
+        """Decode the console's refusal; on a TEC refusal, read the TEC once so
+        the text can say whether it is still tripped and how long to wait."""
+        status = getattr(console, "last_start_refusal", None)
+        if status is not None and status & TRIG_INTERLOCK_TEC:
+            self.tec_status()  # fresh LT + trip state; emits tecStatusChanged
+        return describe_start_refusal(
+            status,
+            tec_known=self._tec_trip_known,
+            tec_good=self._tec_good,
+            laser_temp_c=self._tec_voltage if self._tec_trip_known else None,
+            trip_c=getattr(self, "_tec_trip_value", 0) or None,
+            tec_good_since=self._tec_good_since,
+            now=time.monotonic(),
+        )
+
+    @pyqtProperty(str, notify=tecTripWarningChanged)
+    def tecTripWarning(self):
+        """Warning when TEC Trip is at or below the laser temperature (#130)."""
+        return self._tec_trip_warning
+
+    def _update_tec_trip_warning(self):
+        text = tec_trip_warning(
+            getattr(self, "_tec_trip_value", 0) or None,
+            self._tec_voltage if self._tec_trip_known else None,
+        )
+        if text != self._tec_trip_warning:
+            self._tec_trip_warning = text
+            if text:
+                logger.warning(text)
+            self.tecTripWarningChanged.emit()
 
     @pyqtProperty(float, notify=tecDacChanged)
     def tecDAC(self):
@@ -3432,6 +3493,8 @@ class MOTIONConnector(QObject):
     @pyqtSlot(str, result=bool)
     def startTrigger(self, triggerjson=None):
         self._console_mutex.lock()
+        if self._trigger_refusal_text:
+            self._set_trigger_refusal("")
         try:
             if triggerjson:
                 json_trigger_data = json.loads(triggerjson)
@@ -3443,6 +3506,9 @@ class MOTIONConnector(QObject):
                 )
                 if not trigger_setting:
                     logger.error("Error while setting trigger trigger not started")
+                    self._set_trigger_refusal(
+                        "Console did not accept the trigger settings; trigger not started."
+                    )
                     return False
 
                 logger.info(f"Trigger Setting: {trigger_setting}")
@@ -3463,10 +3529,17 @@ class MOTIONConnector(QObject):
 
                 self._trigger_state = "ON"
                 self.triggerStateChanged.emit("ON")
+            else:
+                refusal = self._describe_start_refusal(motion_interface.console)
+                logger.error(refusal["text"])
+                self._set_trigger_refusal(refusal["text"], refusal["rearm_sec"])
             return success
 
         except Exception as e:
+            # LaserSafetyLimitError (nothing sent to the console), a rejected
+            # trigger field, or a transport error: show it next to the button.
             logger.error(f"Unexpected error while setting trigger: {e}")
+            self._set_trigger_refusal(f"Start Trigger failed: {e}")
             return False
         finally:
             self._console_mutex.unlock()
@@ -4071,6 +4144,7 @@ class MOTIONConnector(QObject):
             value = int(round(float(config.get("TEC_TRIP") or 0)))
             logger.info(f"TEC_TRIP read from device: {value} °C")
             self.set_tec_trip_value(value)
+            self._update_tec_trip_warning()
         except Exception as e:
             logger.error(f"Error querying TEC trip temperature: {e}")
         finally:
@@ -4099,12 +4173,27 @@ class MOTIONConnector(QObject):
             updated = motion_interface.console.write_config(config)
             if updated is None:
                 msg = f"Failed to write TEC_TRIP={res} °C to device"
+                # Name the console's reason, e.g. 0xFA on console firmware
+                # 1.8.2+: TEC_TRIP is a firmware-owned safety parameter there,
+                # writable only on a Factory image (#130 bench run).
+                reason = getattr(
+                    motion_interface.console, "last_config_refusal_reason", None
+                )
+                if reason:
+                    msg += f": {reason}"
                 logger.error(msg)
                 self.tecTripSetFailed.emit(msg)
                 return False
 
             logger.info(f"TEC trip temperature set to {res} °C")
             self.set_tec_trip_value(res)
+            # Fresh laser temperature, so the warning reflects this write
+            # rather than the last 1 Hz poll (which only runs while triggering).
+            self.tec_status()
+            self._update_tec_trip_warning()
+            if self._tec_trip_known and res > self._tec_voltage:
+                # The comparator clears now; the console re-arms ~5 s later.
+                self._tec_good_since = time.monotonic()
             return True
         except Exception as e:
             msg = f"Error setting TEC trip temperature: {e}"
@@ -4727,8 +4816,11 @@ class MOTIONConnector(QObject):
             # Core/Src/uart_comms.c) is the only writer of that field, so the
             # bit is the TEC_TRIP over-temp result — False means tripped and
             # the firmware has opened the safety disconnect (#89).
+            if bool(ok) and self._tec_trip_known and not self._tec_good:
+                self._tec_good_since = time.monotonic()  # trip just cleared
             self._tec_good = bool(ok)
             self._tec_trip_known = True
+            self._update_tec_trip_warning()
 
             # Long-run health sample -> goes ONLY to run.log
 

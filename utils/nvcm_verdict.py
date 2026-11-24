@@ -17,28 +17,28 @@ SRAM-load paths differ by two orders of magnitude (0.11 s vs 12.5-13.9 s
 measured on hardware 2026-07-17), split at ``SRAM_LOAD_THRESHOLD_S``.
 
 Why not the ISC status-register probe (``OW_FACTORY_NVCM_CHECK``)?  Its
-STATUS bit 19 ("SDM Enable") tracks the NVCM Done *fuse*, not bootability:
-a part whose Done fuse is burned but whose image does not boot reads
-bit19=1 straight from cold power-up, while the firmware correctly
-SRAM-loads it on every scan (right sensor camera 8, observed 2026-07-17 —
-its config port even wedges after a keyless boot attempt).  The blob's
+STATUS bit 19 ("SDM Enable") does not track bootability: right sensor
+camera 8 reads bit19=1 from cold power-up yet does not boot, and the
+firmware SRAM-loads it on every scan (observed 2026-07-17 — its config port
+even wedges after a keyless boot attempt), while June bench data shows a
+programmed part reading bit19=0 in the same probe mode.  Bit 19 is not
+interpreted anywhere in this module.  The blob's
 content reads float 0xFF in this mode and the keyless 0x40 probe carries no
 signal (issue #44), so nothing in that blob reflects whether the design
 actually boots.  Driving the firmware's pin-drive boot test makes this
 checker agree with scan behavior by construction.
 
-Note the check is no longer read-only: a camera whose NVCM does not boot is
-left SRAM-configured and running — the same state a scan leaves it in.
+sensor-fw #91 later appended the firmware's pin-drive boot verdict to that
+blob, which gives a fast read-only path (``interpret_check_blob``).  The
+timed-program method above (``interpret_boot_probe``) remains the fallback
+for older firmware, and it is not read-only: a camera whose NVCM does not
+boot is left SRAM-configured and running, the same state a scan leaves it in.
 """
 
 # Elapsed-time split between "firmware skipped programming because the NVCM
 # design booted" (~0.1 s) and "firmware had to SRAM-load" (>10 s).
 SRAM_LOAD_THRESHOLD_S = 2.0
 
-
-# step_status bit set when the probe's STATUS register read succeeded
-# (sensor-fw crosslink.h FPGA_NVCM_STEP_STATUS).
-STEP_STATUS = 1 << 3
 
 # OW_FACTORY_NVCM_CHECK blob: 27 fixed bytes, then 16 B per NVCM row read,
 # then (sensor-fw #91) one pin-drive boot verdict byte.
@@ -54,10 +54,7 @@ def interpret_check_blob(blob: bytes) -> tuple[str, str] | None:
 
     Returns None when the byte is absent (pre-#91 firmware or no usable
     response) — the caller must fall back to interpret_boot_probe()'s
-    reset + timed-program method. When the register reads in the same blob
-    show the Done fuse burned (STATUS bit 19) on a part that does not boot,
-    the detail says so: that part is OTP-burned and can never be
-    NVCM-flashed to a bootable state.
+    reset + timed-program method.
     """
     if len(blob) < _FIXED_LEN + 1:
         return None
@@ -74,12 +71,7 @@ def interpret_check_blob(blob: bytes) -> tuple[str, str] | None:
     if booted != 0:
         return ("INCONCLUSIVE",
                 f"unexpected boot-probe byte 0x{booted:02X}")
-    fuse_burned = bool(blob[5] & STEP_STATUS) and bool(blob[7] & 0x08)
-    if fuse_burned:
-        return ("BLANK",
-                "no NVCM boot (pin probe) — Done fuse is burned but the "
-                "image does not boot; this part cannot be NVCM-flashed again")
-    return ("BLANK", "no NVCM boot (pin probe) — NVCM blank")
+    return ("BLANK", "no NVCM boot (pin probe)")
 
 
 def interpret_boot_probe(reset_ok: bool, program_ok: bool,

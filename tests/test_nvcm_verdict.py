@@ -45,20 +45,14 @@ def test_check_blob_booted_is_programmed():
     assert "pin probe" in detail
 
 
-def test_check_blob_no_boot_blank_fuse_clear():
-    verdict, detail = interpret_check_blob(
-        make_blob(status=b"\x00\x00\x02\x08", boot_byte=0))
+@pytest.mark.parametrize("status", [b"\x00\x00\x02\x08", b"\x00\x08\x02\x08"])
+def test_check_blob_no_boot_is_blank_regardless_of_bit19(status):
+    """The verdict is behavioral only: no boot -> BLANK, whether or not the
+    Done-fuse indicator (STATUS bit 19) is set — bit 19's semantics are not
+    established well enough to hang claims on (right cam 8, issue #44)."""
+    verdict, detail = interpret_check_blob(make_blob(status=status, boot_byte=0))
     assert verdict == "BLANK"
-    assert "NVCM blank" in detail
-
-
-def test_check_blob_no_boot_with_burned_fuse_is_flagged():
-    """Right cam 8's exact signature: STATUS bit 19 set (Done fuse burned)
-    but the design does not boot — the OTP part is dead for NVCM."""
-    verdict, detail = interpret_check_blob(
-        make_blob(status=b"\x00\x08\x02\x08", boot_byte=0))
-    assert verdict == "BLANK"
-    assert "cannot be NVCM-flashed again" in detail
+    assert "pin probe" in detail
 
 
 def test_check_blob_probe_refused_is_no_response():

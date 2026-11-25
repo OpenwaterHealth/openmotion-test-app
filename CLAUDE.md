@@ -88,6 +88,17 @@ no-override rule structural, not just policy) *and* `PYTHONUNBUFFERED` /
 `PYTHONUTF8` — which is why the runner reconfigures its own streams to UTF-8
 line-buffered.
 
+**Seedless C_min (engineering)** runs `omotion.scripts.seedless_cmin` (SDK
+`docs/SeedlessCmin.md`): seeded warm-up, seed off, TA pulse lengthened at
+the unit's own drive current until the image mean matches the seeded one (or,
+if 2150 us falls short, at 2150 us as it is), then three 1 s captures for a
+per-camera C_min. The operator picks the side(s) in
+the terminal. Report only, nothing is written to the unit. It widens the EE/OPT
+safety limits for the run, which 1.8.2 Release and Debug images refuse (their
+WI-00015 envelope caps the pulse-width limit at 660 us); it runs on 1.8.1 and
+on a Factory image whose pass-through writes skip that range check
+(console-fw PR #107). The script checks and refuses before the laser. Its reports go to `cmin_out/`, apart from the WI-00015 evidence.
+
 `openwater.spec` asserts at build time that `omotion.scripts` carries the
 `wi15_*` modules — the SDK it packages against must be new enough (they landed
 in openmotion-sdk PR #232, branch `next`). A build against the latest *published*
